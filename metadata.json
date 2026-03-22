@@ -1,0 +1,5 @@
+{
+  "name": "Remix: Remix: ORBI_Institutional_Core_V2.0.1 Preview",
+  "description": "Key Documentation Updates:\nOrbi TrustBridge (Secure Escrow): Added detailed lifecycles for conditional payments, including locking funds in PaySafe, multi-party release, and AI-assisted dispute resolution via Neural Sentinel AI.\nEnterprise Treasury \u0026 Multi-Sig: Documented the new multi-signature approval workflow for large corporate withdrawals and the automated treasury auto-sweep logic.\nHard Budget Enforcement: Clarified the mechanics of departmental cost centers that physically block transactions exceeding allocated limits.\nAPI Specification: Updated the INTEGRATION_MANUAL.md and INTEGRATION_GUIDE.md with new endpoints for escrow operations (/v1/escrow/*) and treasury management (/v1/enterprise/treasury/*).\nCore Architecture: Refined the BANKING_ENGINE_V2.md and CORE_BANKING_ARCHITECTURE.md to explain the underlying ledger logic for these new institutional capabilities.",
+  "requestFramePermissions": []
+}

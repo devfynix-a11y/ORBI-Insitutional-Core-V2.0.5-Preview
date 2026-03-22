@@ -1,0 +1,33 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "outDir": "dist",
+    "rootDir": ".",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "lib": ["ESNext", "DOM", "DOM.Iterable"]
+  },
+  "include": [
+    "server.ts",
+    "backend/**/*",
+    "services/**/*",
+    "types.ts",
+    "api/**/*",
+    "ledger/**/*",
+    "iam/**/*",
+    "strategy/**/*",
+    "wealth/**/*",
+    "core/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "components",
+    "hooks",
+    "**/*.test.ts"
+  ]
+}

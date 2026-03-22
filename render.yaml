@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: orbi-sovereign-node
+    env: node
+    plan: starter
+    region: ohio
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: BACKEND_URL
+        value: "https://orbi-financial-technologies-c0re-v2026.onrender.com"
+      - key: RP_ID
+        value: "orbi-financial-technologies-c0re-v2026.onrender.com"
+      - key: ORIGIN
+        value: "https://orbi-financial-technologies-c0re-v2026.onrender.com"
+      - key: APP_ID
+        value: "OBI_INSTITUTIONAL_CORE_V25"
+      - key: API_KEY
+        sync: false
+      - key: KMS_MASTER_SALT
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: REDIS_URL
+        value: "redis://red-d6ubkhs50q8c73fumq4g:6379"
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: KYC_BUCKET
+        sync: false

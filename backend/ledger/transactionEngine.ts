@@ -1,0 +1,880 @@
+
+import { User, Transaction, LedgerEntry, Wallet, TransactionStatus } from '../../types.js';
+import { UUID } from '../../services/utils.js';
+import { getSupabase, getAdminSupabase } from '../supabaseClient.js';
+import { DataVault } from '../security/encryption.js';
+import { Audit } from '../security/audit.js';
+
+import { RegulatoryService } from './regulatoryService.js';
+import { TransactionService } from '../../ledger/transactionService.js';
+import { TransactionStateMachine } from './stateMachine.js';
+import { ReconciliationEngine } from './reconciliationEngine.js';
+import { MonitoringService } from '../infrastructure/MonitoringService.js';
+
+import { Messaging } from '../features/MessagingService.js';
+import { SocketRegistry } from '../infrastructure/SocketRegistry.js';
+
+/**
+ * ORBI ATOMIC BANKING ENGINE (V12.0 Titanium)
+ * -------------------------------------------
+ * Orchestrates multi-leg transactions with ACID-like consistency
+ * in a distributed cloud environment.
+ */
+export class BankingEngineService {
+    
+    public async process(user: User, intent: any): Promise<{ success: boolean, transaction?: Transaction, error?: string }> {
+        const { amount, currency, description, type, sourceWalletId, targetWalletId, categoryId, isSimulation, statusOverride } = intent;
+        
+        console.info(`[BankingEngine] Processing ${type} for user ${user.id} [Simulation: ${isSimulation}]`);
+
+        try {
+            const txId = UUID.generate();
+            const referenceId = intent.referenceId || `REF-${UUID.generateShortCode(12)}`;
+            intent.referenceId = referenceId;
+            const timestamp = new Date().toISOString();
+
+            // 1. STATE: CREATED
+            let currentStatus: TransactionStatus = 'created';
+            TransactionStateMachine.transition(txId, 'created', 'created', { intent });
+
+            // 2. Calculate Regulatory Fees
+            const fees = await RegulatoryService.calculateFees(amount, type);
+
+            // 3. Resolve Ledger Legs (Only if not held for review)
+            const shouldSkipLegs = statusOverride === 'held_for_review';
+            
+            // STATE: PENDING (Resolving legs and checking balance)
+            TransactionStateMachine.transition(txId, currentStatus, 'pending', { fees });
+            currentStatus = 'pending';
+            const { legs, balance } = shouldSkipLegs ? { legs: [], balance: 0 } : await this.deriveLegs(user.id, intent, txId, fees);
+
+            // STATE: AUTHORIZED (Balance verified in deriveLegs)
+            TransactionStateMachine.transition(txId, currentStatus, 'authorized', { balance });
+            currentStatus = 'authorized';
+
+            // Re-extract potentially auto-resolved fields from intent
+            const resolvedSourceWalletId = intent.sourceWalletId || sourceWalletId;
+            const resolvedTargetWalletId = intent.targetWalletId || targetWalletId;
+
+            // Determine final initial status
+            let initialStatus: TransactionStatus = statusOverride || 'completed';
+            
+            // Only use 'processing' if it's a transfer that will be settled via PaySafe escrow
+            const isTransfer = type === 'INTERNAL_TRANSFER' || type === 'PEER_TRANSFER';
+            const usedEscrow = legs.some(l => l.description?.includes('PaySafe Secure Lock'));
+            
+            if (!statusOverride && isTransfer && usedEscrow) {
+                initialStatus = 'processing';
+            }
+
+            // --- ENTERPRISE BUDGET ENFORCEMENT ---
+            if (categoryId && !isSimulation) {
+                const txService = new TransactionService();
+                await txService.enforceBudgetLimits(user.id, categoryId, amount, txId, referenceId);
+            }
+
+            if (isSimulation) {
+                return {
+                    success: true,
+                    transaction: {
+                        id: txId,
+                        user_id: user.id,
+                        amount,
+                        description: `[SIM] ${description}`,
+                        type: (type === 'INTERNAL_TRANSFER' || type === 'PEER_TRANSFER') ? 'transfer' : 
+                              (type === 'DEPOSIT') ? 'deposit' : 
+                              (type === 'WITHDRAWAL') ? 'withdrawal' : 'expense',
+                        currency: currency || intent.currency || 'USD',
+                        status: initialStatus,
+                        status_history: [
+                            { status: 'created', timestamp },
+                            { status: 'pending', timestamp },
+                            { status: 'authorized', timestamp },
+                            { status: initialStatus, timestamp }
+                        ],
+                        date: timestamp,
+                        createdAt: timestamp,
+                        walletId: resolvedSourceWalletId,
+                        toWalletId: resolvedTargetWalletId,
+                        referenceId: intent.referenceId,
+                        categoryId: categoryId,
+                        metadata: {
+                            ...intent.metadata,
+                            available_balance: balance
+                        },
+                        tax_info: { 
+                            vat: fees.vat, 
+                            fee: fees.fee, 
+                            gov_fee: fees.gov_fee,
+                            rate: fees.rate 
+                        }
+                    }
+                };
+            }
+
+            // 4. STATE: PROCESSING (Committing to DB)
+            TransactionStateMachine.transition(txId, currentStatus, 'processing', { initialStatus });
+            currentStatus = 'processing';
+
+            // Atomic Commit via Supabase RPC or Local Simulation
+            const sb = getAdminSupabase() || getSupabase();
+            if (sb) {
+                // In production, this would be a single database transaction/RPC
+                await this.commitToCloud(user.id, txId, intent, legs, initialStatus);
+                
+                // --- OPTIMIZATION: Background non-critical post-transaction tasks ---
+                
+                // If it's a transfer and not held for review, settle
+                if (initialStatus === 'processing' && statusOverride !== 'held_for_review') {
+                    // Fire and forget settlement to avoid blocking the response
+                    this.completeSettlement(txId).catch(err => 
+                        console.error(`[BankingEngine] Background Settlement Failed for ${txId}:`, err)
+                    );
+                } else if (initialStatus === 'completed' && (type === 'INTERNAL_TRANSFER' || type === 'PEER_TRANSFER')) {
+                    // Direct transfer - send notifications in background
+                    this.sendTransferNotifications(txId).catch(err => 
+                        console.error(`[BankingEngine] Background Notification Failed for ${txId}:`, err)
+                    );
+                }
+                
+                // 3. POST-TRANSACTION MULTI-LEDGER AUDIT (Background)
+                this.verifyLedgerIntegrity(txId).then(integrity => {
+                    if (!integrity.valid) {
+                        Audit.log('SECURITY', user.id, 'LEDGER_INTEGRITY_VIOLATION', { txId, failures: integrity.failures });
+                        console.error(`[BankingEngine] Integrity Violation detected for TX ${txId}`);
+                    }
+                }).catch(err => console.error(`[BankingEngine] Integrity Check Failed for ${txId}:`, err));
+            } else {
+                await this.commitToLocal(user.id, txId, intent, legs);
+            }
+
+            // Background Audit Log
+            Audit.log('FINANCIAL', user.id, 'TRANSACTION_COMMITTED', { txId, type, amount }).catch(() => {});
+
+            const transaction = {
+                id: txId,
+                user_id: user.id,
+                amount,
+                description,
+                type: (type === 'INTERNAL_TRANSFER' || type === 'PEER_TRANSFER') ? 'transfer' : 
+                      (type === 'DEPOSIT') ? 'deposit' : 
+                      (type === 'WITHDRAWAL') ? 'withdrawal' : 'expense',
+                currency: currency || intent.currency || 'USD',
+                status: initialStatus,
+                status_history: [
+                    { status: 'created' as TransactionStatus, timestamp },
+                    { status: 'pending' as TransactionStatus, timestamp },
+                    { status: 'authorized' as TransactionStatus, timestamp },
+                    { status: initialStatus, timestamp }
+                ],
+                date: timestamp,
+                createdAt: timestamp,
+                walletId: resolvedSourceWalletId,
+                toWalletId: resolvedTargetWalletId,
+                referenceId: intent.referenceId,
+                categoryId: categoryId,
+                metadata: intent.metadata,
+                tax_info: { 
+                    vat: fees.vat, 
+                    fee: fees.fee, 
+                    gov_fee: fees.gov_fee,
+                    rate: fees.rate 
+                }
+            };
+
+            // REAL-TIME: Notify user about the new transaction and balance update
+            SocketRegistry.notifyTransactionUpdate(user.id, transaction);
+            if (balance !== undefined && intent.sourceWalletId) {
+                SocketRegistry.notifyBalanceUpdate(user.id, intent.sourceWalletId, balance);
+            }
+
+            // Verify transaction integrity against intent
+            this.verifyTransaction(intent, transaction);
+
+            return {
+                success: true,
+                transaction
+            };
+
+        } catch (e: any) {
+            console.error(`[BankingEngine] Critical Failure: ${e.message}`);
+            return { success: false, error: e.message };
+        }
+    }
+
+    private async deriveLegs(userId: string, intent: any, txId: string, fees: any): Promise<{ legs: LedgerEntry[], balance: number }> {
+        let { amount, sourceWalletId, targetWalletId, type, recipientId, recipient_customer_id } = intent;
+        const legs: LedgerEntry[] = [];
+
+        const sb = getAdminSupabase() || getSupabase();
+
+        // Resolve recipientId from customer_id if provided
+        if (!recipientId && recipient_customer_id && (type === 'INTERNAL_TRANSFER' || type === 'PEER_TRANSFER')) {
+            const adminSb = getAdminSupabase();
+            if (adminSb) {
+                let recipientData: any = null;
+                
+                const { data: userData } = await adminSb.from('users')
+                    .select('id')
+                    .ilike('customer_id', recipient_customer_id.trim())
+                    .maybeSingle();
+                
+                recipientData = userData;
+
+                if (!recipientData) {
+                    // Try staff table
+                    const { data: staffData } = await adminSb.from('staff')
+                        .select('id')
+                        .ilike('customer_id', recipient_customer_id.trim())
+                        .maybeSingle();
+                    recipientData = staffData;
+                }
+
+                if (recipientData) {
+                    recipientId = recipientData.id;
+                    intent.recipientId = recipientId;
+                } else {
+                    throw new Error(`RECIPIENT_NOT_FOUND: Customer ID ${recipient_customer_id} does not exist.`);
+                }
+            }
+        }
+
+        // Resolve sender's operating vault if sourceWalletId is missing
+        if (!sourceWalletId) {
+            if (type === 'DEPOSIT') {
+                // Use System Faucet Wallet
+                sourceWalletId = '00000000-0000-0000-0000-000000000000';
+                intent.sourceWalletId = sourceWalletId;
+            } else if (sb) {
+                const { data } = await sb.from('platform_vaults')
+                    .select('id')
+                    .eq('user_id', userId)
+                    .eq('vault_role', 'OPERATING')
+                    .maybeSingle();
+                if (data) {
+                    sourceWalletId = data.id;
+                    intent.sourceWalletId = sourceWalletId;
+                }
+            }
+        }
+
+        // Resolve recipient's operating vault if targetWalletId is missing but recipientId is present
+        if (!targetWalletId && recipientId && (type === 'INTERNAL_TRANSFER' || type === 'PEER_TRANSFER')) {
+            if (sb) {
+                const { data } = await sb.from('platform_vaults')
+                    .select('id')
+                    .eq('user_id', recipientId)
+                    .eq('vault_role', 'OPERATING')
+                    .maybeSingle();
+                if (data) {
+                    targetWalletId = data.id;
+                    intent.targetWalletId = targetWalletId;
+                }
+            }
+        }
+
+        // --- BALANCE HARDENING ---
+        const totalDebit = amount + fees.total;
+        const txService = new TransactionService();
+        
+        let currentBalance = 0;
+        let walletName = intent.metadata?.sub_wallet_type || 'Operating Wallet';
+
+        const sourceCurrency = intent.metadata?.source_currency || intent.currency || 'USD';
+        const targetCurrency = intent.metadata?.target_currency || intent.currency || 'USD';
+        const isCrossCurrency = intent.metadata?.cross_currency === true;
+        const fxDetails = intent.metadata?.fx_details;
+
+        // Skip balance check for DEPOSIT type (Faucet/External Source)
+        if (type !== 'DEPOSIT') {
+            // If it's a sub-wallet transfer, we check the sub-wallet balance
+            currentBalance = await txService.getLatestBalance(userId, sourceWalletId);
+            
+            // Try to get wallet name for better error message
+            const sb = getAdminSupabase() || getSupabase();
+            if (sb) {
+                const { data: w } = await sb.from('wallets').select('name').eq('id', sourceWalletId).maybeSingle();
+                if (w) walletName = w.name;
+                else {
+                    const { data: v } = await sb.from('platform_vaults').select('name').eq('id', sourceWalletId).maybeSingle();
+                    if (v) walletName = v.name;
+                }
+            }
+
+            // Allow simulation to proceed even with insufficient funds to show fees
+            if (currentBalance < totalDebit && !intent.isSimulation) {
+                throw new Error(`INSUFFICIENT_FUNDS: Required ${totalDebit} ${sourceCurrency} (incl. fees), but only ${currentBalance} available in ${walletName} (${sourceWalletId.substring(0,8)}...).`);
+            }
+        } else {
+            currentBalance = Number.MAX_SAFE_INTEGER;
+        }
+
+        // --- SUB-WALLET SHIFT (Goal/Budget -> Operating) ---
+        if (intent.metadata?.is_sub_wallet_transfer && intent.metadata?.intermediate_operating_wallet) {
+            const operatingWalletId = intent.metadata.intermediate_operating_wallet;
+            const subWalletId = sourceWalletId;
+            
+            // 1. Shift from Sub-wallet to Operating
+            legs.push({
+                transactionId: txId,
+                walletId: subWalletId,
+                type: 'DEBIT',
+                amount: totalDebit,
+                currency: 'USD',
+                description: `Shift from ${intent.metadata.sub_wallet_type}: ${intent.description}`,
+                timestamp: new Date().toISOString()
+            });
+
+            legs.push({
+                transactionId: txId,
+                walletId: operatingWalletId,
+                type: 'CREDIT',
+                amount: totalDebit,
+                currency: 'USD',
+                description: `Shift Inbound from ${intent.metadata.sub_wallet_type}: ${txId}`,
+                timestamp: new Date().toISOString()
+            });
+
+            // Update sourceWalletId to Operating for the subsequent legs (PaySafe or Direct)
+            sourceWalletId = operatingWalletId;
+        }
+
+        if ((type === 'INTERNAL_TRANSFER' || type === 'PEER_TRANSFER') && targetWalletId) {
+            // Fetch the user's PaySafe Vault (Sender's Escrow)
+            let internalVaultId = intent.metadata?.source_internal_vault_id;
+            
+            if (!internalVaultId && sb) {
+                const { data } = await sb.from('platform_vaults')
+                    .select('id')
+                    .eq('user_id', userId)
+                    .eq('vault_role', 'INTERNAL_TRANSFER')
+                    .maybeSingle();
+                if (data) internalVaultId = data.id;
+            }
+
+            if (internalVaultId) {
+                // 1. Debit Source Operating (Total Amount: Base + Fees)
+                legs.push({
+                    transactionId: txId,
+                    walletId: sourceWalletId,
+                    type: 'DEBIT',
+                    amount: totalDebit,
+                    currency: sourceCurrency,
+                    description: `PaySafe Transfer Lock: ${intent.description}`,
+                    timestamp: new Date().toISOString()
+                });
+
+                // 2. Handle Cross-Currency Clearing if needed
+                if (isCrossCurrency && fxDetails) {
+                    const fxClearingId = await RegulatoryService.resolveSystemNode('FX_CLEARING');
+                    
+                    // Credit FX Clearing in Source Currency
+                    legs.push({
+                        transactionId: txId,
+                        walletId: fxClearingId,
+                        type: 'CREDIT',
+                        amount: amount,
+                        currency: sourceCurrency,
+                        description: `FX Clearing (Source): ${sourceCurrency} -> ${targetCurrency}`,
+                        timestamp: new Date().toISOString()
+                    });
+
+                    // Debit FX Clearing in Target Currency
+                    legs.push({
+                        transactionId: txId,
+                        walletId: fxClearingId,
+                        type: 'DEBIT',
+                        amount: fxDetails.finalAmount + fxDetails.fee,
+                        currency: targetCurrency,
+                        description: `FX Clearing (Target): ${sourceCurrency} -> ${targetCurrency}`,
+                        timestamp: new Date().toISOString()
+                    });
+
+                    // 3. Credit PaySafe (Converted Amount: Escrow Lock)
+                    legs.push({
+                        transactionId: txId,
+                        walletId: internalVaultId,
+                        type: 'CREDIT',
+                        amount: fxDetails.finalAmount,
+                        currency: targetCurrency,
+                        description: `PaySafe Secure Lock (Converted): ${intent.description}`,
+                        timestamp: new Date().toISOString()
+                    });
+
+                    // 4. Credit Fee Collector (FX Fee in Target Currency)
+                    const feeCollectorId = await RegulatoryService.resolveSystemNode('FEE_COLLECTOR');
+                    legs.push({
+                        transactionId: txId,
+                        walletId: feeCollectorId,
+                        type: 'CREDIT',
+                        amount: fxDetails.fee,
+                        currency: targetCurrency,
+                        description: `FX Fee Collection: ${txId}`,
+                        timestamp: new Date().toISOString()
+                    });
+                } else {
+                    // Standard single-currency PaySafe lock
+                    legs.push({
+                        transactionId: txId,
+                        walletId: internalVaultId,
+                        type: 'CREDIT',
+                        amount: amount,
+                        currency: sourceCurrency,
+                        description: `PaySafe Secure Lock: ${intent.description}`,
+                        timestamp: new Date().toISOString()
+                    });
+                }
+
+                // 5. Credit Fee Collector (Regulatory Fees in Source Currency)
+                const feeCollectorId = await RegulatoryService.resolveSystemNode('FEE_COLLECTOR');
+                legs.push({
+                    transactionId: txId,
+                    walletId: feeCollectorId,
+                    type: 'CREDIT',
+                    amount: fees.total,
+                    currency: sourceCurrency,
+                    description: `PaySafe Fee Collection: ${txId}`,
+                    timestamp: new Date().toISOString()
+                });
+
+                return { legs, balance: currentBalance };
+            } else {
+                // If no internal vault, we MUST fail if it's an internal transfer 
+                // to prevent direct settlement which the user said is unsafe.
+                throw new Error("INFRASTRUCTURE_ERROR: PaySafe (INTERNAL_TRANSFER) vault not found. Secure escrow is required for this operation.");
+            }
+        }
+
+        // Standard direct legs for external or if internal vault not found
+        legs.push({
+            transactionId: txId,
+            walletId: sourceWalletId,
+            type: 'DEBIT',
+            amount: totalDebit,
+            currency: sourceCurrency,
+            description: `Settlement: ${intent.description}`,
+            timestamp: new Date().toISOString()
+        });
+
+        if (targetWalletId) {
+            if (isCrossCurrency && fxDetails) {
+                const fxClearingId = await RegulatoryService.resolveSystemNode('FX_CLEARING');
+                
+                // Credit FX Clearing in Source Currency
+                legs.push({
+                    transactionId: txId,
+                    walletId: fxClearingId,
+                    type: 'CREDIT',
+                    amount: amount,
+                    currency: sourceCurrency,
+                    description: `FX Clearing (Source): ${sourceCurrency} -> ${targetCurrency}`,
+                    timestamp: new Date().toISOString()
+                });
+
+                // Debit FX Clearing in Target Currency
+                legs.push({
+                    transactionId: txId,
+                    walletId: fxClearingId,
+                    type: 'DEBIT',
+                    amount: fxDetails.finalAmount + fxDetails.fee,
+                    currency: targetCurrency,
+                    description: `FX Clearing (Target): ${sourceCurrency} -> ${targetCurrency}`,
+                    timestamp: new Date().toISOString()
+                });
+
+                // Credit Target Wallet (Converted Amount)
+                legs.push({
+                    transactionId: txId,
+                    walletId: targetWalletId,
+                    type: 'CREDIT',
+                    amount: fxDetails.finalAmount,
+                    currency: targetCurrency,
+                    description: `Inbound (Converted): ${intent.description}`,
+                    timestamp: new Date().toISOString()
+                });
+
+                // Credit Fee Collector (FX Fee in Target Currency)
+                const feeCollectorId = await RegulatoryService.resolveSystemNode('FEE_COLLECTOR');
+                legs.push({
+                    transactionId: txId,
+                    walletId: feeCollectorId,
+                    type: 'CREDIT',
+                    amount: fxDetails.fee,
+                    currency: targetCurrency,
+                    description: `FX Fee Collection: ${txId}`,
+                    timestamp: new Date().toISOString()
+                });
+            } else {
+                legs.push({
+                    transactionId: txId,
+                    walletId: targetWalletId,
+                    type: 'CREDIT',
+                    amount: amount,
+                    currency: sourceCurrency,
+                    description: `Inbound: ${intent.description}`,
+                    timestamp: new Date().toISOString()
+                });
+            }
+        }
+
+        // Credit Fees for external transactions too (Regulatory Fees in Source Currency)
+        const feeCollectorId = await RegulatoryService.resolveSystemNode('FEE_COLLECTOR');
+        legs.push({
+            transactionId: txId,
+            walletId: feeCollectorId,
+            type: 'CREDIT',
+            amount: fees.total,
+            currency: sourceCurrency,
+            description: `Fee Collection: ${txId}`,
+            timestamp: new Date().toISOString()
+        });
+
+        return { legs, balance: currentBalance };
+    }
+
+    private async commitToCloud(userId: string, txId: string, intent: any, legs: LedgerEntry[], status: TransactionStatus = 'completed') {
+        const txService = new TransactionService();
+        await txService.postTransactionWithLedger({
+            id: txId,
+            referenceId: intent.referenceId,
+            user_id: userId,
+            amount: intent.amount,
+            description: intent.description,
+            type: (intent.type.toLowerCase() === 'internal_transfer' || intent.type.toLowerCase() === 'peer_transfer') ? 'transfer' : 
+                  (intent.type.toLowerCase() === 'deposit') ? 'deposit' : 
+                  (intent.type.toLowerCase() === 'withdrawal') ? 'withdrawal' : 'expense',
+            currency: intent.currency || 'USD',
+            status: status,
+            walletId: intent.sourceWalletId,
+            toWalletId: intent.targetWalletId,
+            categoryId: intent.categoryId,
+            date: new Date().toISOString(),
+            metadata: intent.metadata
+        }, legs);
+    }
+
+    /**
+     * SETTLEMENT ENGINE (V2.0)
+     * ------------------------
+     * Finalizes a staged internal transfer by moving funds from the 
+     * internal transaction wallet to the target operating wallet.
+     */
+    public async completeSettlement(txId: string, txData?: any): Promise<boolean> {
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) return false;
+
+        try {
+            const txService = new TransactionService();
+            
+            // Use provided txData or fetch from DB
+            let tx = txData;
+            if (!tx) {
+                const { data } = await sb.from('transactions').select('*').eq('id', txId).single();
+                tx = data;
+            }
+
+            if (!tx || tx.status !== 'processing') {
+                console.warn(`[BankingEngine] Settlement aborted for ${txId}: Transaction not in processing state.`);
+                return false;
+            }
+
+            // CHECK IF ALREADY SETTLED LEGS EXIST TO PREVENT DOUBLE SETTLEMENT
+            const existingLegs = await txService.getLedgerEntries(txId);
+            const hasSettlementLegs = existingLegs.some(l => l.description?.includes('PaySafe Settlement'));
+            if (hasSettlementLegs) {
+                console.info(`[BankingEngine] Settlement already finalized for ${txId}. Updating status.`);
+                await txService.updateTransactionStatus(txId, 'completed', 'Settlement finalized by processor.');
+                return true;
+            }
+
+            const amount = Number(await DataVault.decrypt(tx.amount));
+            const targetWalletId = tx.to_wallet_id;
+            const currency = tx.currency || 'USD';
+            const targetCurrency = tx.metadata?.target_currency || currency;
+            const targetAmount = tx.metadata?.fx_details?.finalAmount || amount;
+            
+            // Resolve Internal Vault
+            const { data: internalVault } = await sb.from('platform_vaults')
+                .select('id')
+                .eq('user_id', tx.user_id)
+                .eq('vault_role', 'INTERNAL_TRANSFER')
+                .maybeSingle();
+
+            if (!internalVault) {
+                console.warn(`[BankingEngine] Settlement aborted for ${txId}: Missing internal vault.`);
+                return false;
+            }
+
+            if (!targetWalletId) throw new Error("SETTLEMENT_ERROR: Missing target wallet.");
+
+            const legs: LedgerEntry[] = [
+                {
+                    transactionId: txId,
+                    walletId: internalVault.id,
+                    type: 'DEBIT',
+                    amount: targetAmount,
+                    currency: targetCurrency,
+                    description: `PaySafe Release: ${txId}`,
+                    timestamp: new Date().toISOString()
+                },
+                {
+                    transactionId: txId,
+                    walletId: targetWalletId,
+                    type: 'CREDIT',
+                    amount: targetAmount,
+                    currency: targetCurrency,
+                    description: `PaySafe Settlement: ${txId}`,
+                    timestamp: new Date().toISOString()
+                }
+            ];
+
+            // Post the remaining legs
+            await txService.addLedgerEntries(txId, legs);
+            
+            // 5. FORENSIC VERIFICATION (Zero-Sum Check)
+            const reconResult = await ReconciliationEngine.verifyZeroSum(txId);
+            const isValid = reconResult.isValid === true;
+            const sum = reconResult.sum || 0;
+            
+            if (!isValid) {
+                console.error(`[BankingEngine] CRITICAL: Zero-sum violation detected for TX ${txId}. Residual: ${sum}`);
+                
+                // Trigger Real-time Alert
+                await MonitoringService.notifyCritical('ZERO_SUM_VIOLATION', {
+                    transactionId: txId,
+                    residual: sum,
+                    userId: tx.user_id
+                });
+
+                // In a real banking system, we might block settlement or flag for manual review
+                await txService.updateTransactionStatus(txId, 'held_for_review', `Zero-sum violation detected: ${sum}`);
+                return false;
+            }
+
+            // Update status to completed
+            TransactionStateMachine.transition(txId, 'processing', 'completed', { settlement: true });
+            await txService.updateTransactionStatus(txId, 'completed', 'Settlement finalized by processor.');
+            
+            // Notification for both parties (Background)
+            this.sendTransferNotifications(txId, tx, amount).catch(() => {});
+
+            Audit.log('FINANCIAL', tx.user_id, 'TRANSACTION_SETTLED', { txId }).catch(() => {});
+            return true;
+        } catch (e: any) {
+            console.error(`[BankingEngine] Settlement Failed for ${txId}: ${e.message}`);
+            
+            // Determine if error is transient
+            const isTransient = e.message.includes('LEDGER_FAULT') || 
+                                e.message.includes('LEDGER_COMMIT_FAULT') ||
+                                e.message.includes('timeout') ||
+                                e.message.includes('fetch failed');
+            
+            if (isTransient) {
+                throw e; // Throw transient errors so the reaper doesn't incorrectly reverse the transaction
+            }
+            
+            return false;
+        }
+    }
+
+    /**
+     * Sends notifications to both sender and recipient for a successful transfer.
+     */
+    public async sendTransferNotifications(txId: string, txData?: any, decryptedAmount?: number): Promise<void> {
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) return;
+
+        try {
+            let tx = txData;
+            if (!tx) {
+                const { data } = await sb.from('transactions').select('*').eq('id', txId).single();
+                tx = data;
+            }
+            if (!tx) return;
+
+            const amount = decryptedAmount || Number(await DataVault.decrypt(tx.amount));
+            const targetAmount = tx.metadata?.fx_details?.finalAmount || amount;
+            const targetWalletId = tx.to_wallet_id;
+            const fromWalletId = tx.from_wallet_id || tx.walletId;
+            const senderId = tx.user_id;
+
+            // Resolve Recipient User ID
+            let recipientId = null;
+            const { data: wallet } = await sb.from('wallets').select('user_id, account_number').eq('id', targetWalletId).maybeSingle();
+            if (wallet) recipientId = wallet.user_id;
+            
+            if (!recipientId) {
+                const { data: vault } = await sb.from('platform_vaults').select('user_id').eq('id', targetWalletId).maybeSingle();
+                if (vault) recipientId = vault.user_id;
+            }
+
+            // Fetch Sender Details
+            const { data: senderProfile } = await sb.from('users').select('full_name, customer_id, language').eq('id', senderId).maybeSingle();
+            const { data: senderAuth } = await sb.auth.admin.getUserById(senderId);
+            const { data: senderWallet } = await sb.from('wallets').select('account_number').eq('id', fromWalletId).maybeSingle();
+            
+            // Fetch Recipient Details
+            let recipientProfile = null;
+            let recipientAuth = null;
+            if (recipientId) {
+                const { data: rp } = await sb.from('users').select('full_name, customer_id, language').eq('id', recipientId).maybeSingle();
+                recipientProfile = rp;
+                const { data: ra } = await sb.auth.admin.getUserById(recipientId);
+                recipientAuth = ra;
+            }
+
+            const senderName = senderProfile?.full_name || senderAuth?.user?.user_metadata?.full_name || 'Customer';
+            const senderAccount = senderWallet?.account_number || senderProfile?.customer_id || 'Orbi Account';
+            const recipientName = recipientProfile?.full_name || recipientAuth?.user?.user_metadata?.full_name || 'Customer';
+            const recipientAccount = wallet?.account_number || recipientProfile?.customer_id || 'Orbi Account';
+            
+            const currency = tx.currency || 'Tsh';
+            const targetCurrency = tx.metadata?.target_currency || currency;
+            const timestamp = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase();
+            const refId = tx.reference_id || tx.referenceId || txId;
+
+            console.log(`[BankingEngine] Resolving notifications for tx ${txId}. Sender: ${senderName}, Recipient: ${recipientName}`);
+
+            const promises = [];
+            
+            // Notification for Recipient
+            if (recipientId) {
+                 const recipientLang = recipientProfile?.language || 'en';
+                 const isSw = recipientLang === 'sw';
+                 const footer = isSw 
+                    ? "Asante kwa kuichagua ORBI, tunathamini imani yako. Timu ya Kifedha ya ORBI"
+                    : "Thank you For choosing ORBI, We value your trust. The ORBI Financial Team";
+                 const isSalary = tx.type === 'salary';
+                 const isEscrow = tx.type === 'escrow';
+                 const month = new Date().toLocaleString(isSw ? 'sw-TZ' : 'en-US', { month: 'long' });
+                 
+                 let subject = isSw ? 'Fedha Zimepokelewa' : 'Funds Received';
+                 if (isSalary) subject = isSw ? 'Mshahara Umepokelewa' : 'Salary Received';
+                 if (isEscrow) subject = isSw ? 'Malipo ya Escrow Yanasubiri' : 'Pending Escrow Payment';
+                 
+                 let recipientMsg = '';
+                 let templateName = 'Transfer_Received';
+                 let variables: any = {
+                     amount: targetAmount.toLocaleString(),
+                     currency: targetCurrency,
+                     timestamp,
+                     refId
+                 };
+
+                 if (isSalary) {
+                     templateName = 'Salary_Received';
+                     variables.employeeName = recipientName;
+                     variables.month = month;
+                     recipientMsg = isSw
+                        ? `Ndugu ${recipientName}, mshahara wako wa mwezi ${month} kiasi cha ${targetCurrency} ${targetAmount.toLocaleString()} umeingia kwenye akaunti yako ya ORBI saa ${timestamp}. Kumbukumbu ${refId}. ${footer}`
+                        : `Dear ${recipientName}, your salary for ${month} of ${targetCurrency} ${targetAmount.toLocaleString()} has been credited to your ORBI account at ${timestamp}. Reference ${refId}. ${footer}`;
+                 } else if (isEscrow) {
+                     templateName = 'Escrow_Created';
+                     // Escrow_Created template only requires currency and amount
+                     variables = {
+                         currency: targetCurrency,
+                         amount: targetAmount.toLocaleString()
+                     };
+                     recipientMsg = isSw
+                        ? `Una malipo yanayosubiri ya ${targetCurrency} ${targetAmount.toLocaleString()} kutoka kwa mteja. Fedha zimefungwa kwenye Orbi PaySafe na zitatolewa baada ya uthibitisho wa uwasilishaji.`
+                        : `You have a pending payment of ${targetCurrency} ${targetAmount.toLocaleString()} from a customer. Funds are locked in Orbi PaySafe and will be released upon delivery confirmation.`;
+                 } else {
+                     variables.recipientName = recipientName;
+                     variables.senderName = senderName;
+                     recipientMsg = isSw
+                        ? `Ndugu ${recipientName} umefanikiwa kupokea ${targetCurrency} ${targetAmount.toLocaleString()}/= kwenye akaunti yako ya ORBI kutoka kwa ${senderName} saa ${timestamp}. Kumbukumbu ${refId} . ${footer}`
+                        : `Dear ${recipientName} you have successfully received ${targetCurrency} ${targetAmount.toLocaleString()}/= on your ORBI account from ${senderName} at ${timestamp}. Reference ${refId} . ${footer}`;
+                 }
+                 
+                 promises.push(Messaging.dispatch(recipientId, 'info', subject, recipientMsg, { 
+                     sms: true,
+                     email: true,
+                     template: templateName,
+                     variables
+                 }));
+                 
+                 // REAL-TIME: Notify recipient about the new transaction and balance update
+                 SocketRegistry.notifyTransactionUpdate(recipientId, { ...tx, status: 'completed' });
+                 if (targetWalletId) {
+                     const txService = new TransactionService();
+                     const newBalance = await txService.getLatestBalance(recipientId, targetWalletId);
+                     SocketRegistry.notifyBalanceUpdate(recipientId, targetWalletId, newBalance);
+                     SocketRegistry.send(recipientId, { type: 'REFRESH_WALLETS', payload: { walletId: targetWalletId } });
+                 }
+            }
+
+            // Notification for Sender
+            const senderLang = senderProfile?.language || 'en';
+            const isSenderSw = senderLang === 'sw';
+            const senderFooter = isSenderSw 
+                ? "Asante kwa kuichagua ORBI, tunathamini imani yako. Timu ya Kifedha ya ORBI"
+                : "Thank you For choosing ORBI, We value your trust. The ORBI Financial Team";
+            const senderSubject = isSenderSw ? 'Uhamisho Umekamilika' : 'Transfer Completed';
+            const senderMsg = isSenderSw
+                ? `Ndugu ${senderName} umefanikiwa kutuma ${currency} ${amount.toLocaleString()}/= kutoka kwenye akaunti yako ya ORBI kwenda kwa ${recipientName} saa ${timestamp}. Kumbukumbu ${refId} . ${senderFooter}`
+                : `Dear ${senderName} you have successfully sent ${currency} ${amount.toLocaleString()}/= from your ORBI account to ${recipientName} at ${timestamp}. Reference ${refId} . ${senderFooter}`;
+            
+            promises.push(Messaging.dispatch(senderId, 'info', senderSubject, senderMsg, { 
+                sms: true,
+                email: true,
+                template: 'Transfer_Sent',
+                variables: {
+                    senderName,
+                    amount: amount.toLocaleString(),
+                    currency,
+                    recipientName,
+                    timestamp,
+                    refId
+                }
+            }));
+
+            await Promise.all(promises);
+
+        } catch (e: any) {
+            console.warn(`[BankingEngine] Notification dispatch failed for ${txId}: ${e.message}`);
+        }
+    }
+
+    private async commitToLocal(userId: string, txId: string, intent: any, legs: LedgerEntry[]) {
+        // Local storage simulation
+        console.info("[BankingEngine] Committing to local volatile vault.");
+    }
+
+    private async verifyLedgerIntegrity(txId: string): Promise<{ valid: boolean, failures: string[] }> {
+        const txService = new TransactionService();
+        const legs = await txService.getLedgerEntries(txId);
+        
+        if (legs.length === 0) return { valid: false, failures: ['NO_LEGS_FOUND'] };
+
+        let sum = 0;
+        const failures: string[] = [];
+
+        for (const leg of legs) {
+            if (leg.entry_type === 'CREDIT') sum += leg.amount;
+            else sum -= leg.amount;
+        }
+
+        // Double-entry bookkeeping must sum to zero
+        if (Math.abs(sum) > 0.0001) {
+            failures.push(`BALANCE_MISMATCH: Sum is ${sum}`);
+        }
+
+        return { valid: failures.length === 0, failures };
+    }
+
+    public async getHistory(userId: string, limit: number = 50): Promise<any[]> {
+        const txService = new TransactionService();
+        return await txService.getLatestTransactions(userId, limit);
+    }
+
+    private verifyTransaction(intent: any, tx: any) {
+        if (Number(tx.amount) !== Number(intent.amount)) throw new Error(`VERIFICATION_FAILURE: Amount mismatch. Expected ${intent.amount}, got ${tx.amount}`);
+        if (tx.currency !== intent.currency) throw new Error(`VERIFICATION_FAILURE: Currency mismatch. Expected ${intent.currency}, got ${tx.currency}`);
+        // Only verify if walletId is present in tx (it might not be for some transaction types or if not returned)
+        if (tx.walletId && tx.walletId !== intent.sourceWalletId) throw new Error(`VERIFICATION_FAILURE: Source wallet mismatch. Expected ${intent.sourceWalletId}, got ${tx.walletId}`);
+        // Only verify if toWalletId is present in tx
+        if (tx.toWalletId && tx.toWalletId !== intent.targetWalletId) throw new Error(`VERIFICATION_FAILURE: Target wallet mismatch. Expected ${intent.targetWalletId}, got ${tx.toWalletId}`);
+    }
+}
+
+export const BankingEngine = new BankingEngineService();

@@ -1,0 +1,251 @@
+# Frontend Integration Guide
+
+## Real-Time Notifications (Nexus Stream)
+
+To receive real-time notifications, connect to the WebSocket endpoint `/nexus-stream`.
+
+### Endpoint
+`wss://<YOUR_APP_URL>/nexus-stream`
+
+### Authentication
+Send an `AUTH` event immediately after connection with your JWT:
+```json
+{
+    "event": "AUTH",
+    "token": "<JWT_ACCESS_TOKEN>"
+}
+```
+
+### React Hook Example (`useNexusStream.ts`)
+
+```typescript
+import { useEffect, useRef, useState } from 'react';
+import { toast } from 'sonner'; // Or your preferred toast library
+
+type NexusEvent = 
+    | { type: 'NOTIFICATION'; payload: { id: string; category: string; subject: string; body: string; timestamp: string } }
+    | { type: 'ACTIVITY_LOG'; payload: { activity_type: string; status: string; device_info: string } }
+    | { type: 'AUTH_SUCCESS'; ts: number }
+    | { type: 'KYC_UPDATE'; payload: { status: string; level: number } };
+
+export const useNexusStream = (token: string | undefined) => {
+    const socketRef = useRef<WebSocket | null>(null);
+    const [isConnected, setIsConnected] = useState(false);
+
+    useEffect(() => {
+        if (!token) return;
+
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const host = window.location.host;
+        const wsUrl = `${protocol}//${host}/nexus-stream`;
+        
+        const ws = new WebSocket(wsUrl);
+        socketRef.current = ws;
+
+        ws.onopen = () => {
+            console.log('[Nexus] Connected');
+            setIsConnected(true);
+            ws.send(JSON.stringify({ event: 'AUTH', token }));
+        };
+
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data) as NexusEvent;
+                if (data.type === 'NOTIFICATION') {
+                    toast(data.payload.subject, { description: data.payload.body });
+                }
+            } catch (e) {
+                console.error('[Nexus] Parse Error', e);
+            }
+        };
+
+        ws.onclose = () => setIsConnected(false);
+
+        return () => ws.close();
+    }, [token]);
+
+    return { isConnected };
+};
+```
+
+## Notification Management API
+
+### Get Notifications
+`GET /api/v1/notifications?limit=50&offset=0`
+
+### Mark as Read
+`PATCH /api/v1/notifications/:id/read`
+
+### Mark All as Read
+`PATCH /api/v1/notifications/read-all`
+
+### Delete Notification
+`DELETE /api/v1/notifications/:id`
+
+## Transaction Status Visibility
+Clients should monitor the `status` field of transactions to provide real-time feedback to users.
+
+### Status Values
+*   `pending`: Transaction is in queue or awaiting external settlement.
+*   `completed`: Funds have been successfully moved and ledger legs are balanced.
+*   `failed`: Transaction was rejected (e.g., Insufficient Funds, Sentinel Block).
+*   `reversed`: Transaction was rolled back due to a dispute or error.
+
+## Handling Transaction Errors
+
+## Multi-Currency & FX Engine
+
+The system supports real-time currency conversion for cross-currency transfers. The backend `FXEngine` normalizes all amounts to USD for AML checks and applies a standard 0.5% conversion fee for actual transactions.
+
+### Get FX Quote (Before Transfer)
+
+Before a user confirms a transfer involving two different currencies, you should fetch a live quote to display the exchange rate, the fee, and the final amount they will receive.
+
+**Endpoint:** `GET /api/v1/fx/quote?from=USD&to=TZS&amount=100`
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "originalAmount": 100,
+    "fromCurrency": "USD",
+    "toCurrency": "TZS",
+    "exchangeRate": 2550,
+    "fee": 1275,
+    "finalAmount": 253725
+  }
+}
+```
+
+**Frontend Implementation Example:**
+```tsx
+const fetchQuote = async (amount: number, from: string, to: string) => {
+    if (from === to) return null;
+    const res = await fetch(`/api/v1/fx/quote?from=${from}&to=${to}&amount=${amount}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const { data } = await res.json();
+    return data; // { exchangeRate, fee, finalAmount, ... }
+};
+
+// In your UI:
+// <p>Exchange Rate: 1 {from} = {data.exchangeRate} {to}</p>
+// <p>Conversion Fee (0.5%): {data.fee} {to}</p>
+// <p>Recipient Gets: {data.finalAmount} {to}</p>
+```
+
+### Autonomous Transfer Payloads
+
+The system is designed to be autonomous. You can initiate transfers without knowing internal UUIDs.
+
+#### Standard Transfer (Operating to Operating)
+```json
+{
+  "type": "INTERNAL_TRANSFER",
+  "category": "Transfer",
+  "amount": 10000,
+  "currency": "TZS",
+  "recipient_customer_id": "OBI-839204",
+  "description": "Payment for services",
+  "walletType": "internal_vault"
+}
+```
+
+#### Sub-Wallet Transfer (Goal/Budget to Recipient)
+```json
+{
+  "type": "INTERNAL_TRANSFER",
+  "category": "Transfer",
+  "walletType": "GOAL", 
+  "sourceWalletId": "UUID_OF_THE_GOAL", 
+  "amount": 5000,
+  "currency": "TZS",
+  "recipient_customer_id": "OBI-839204",
+  "description": "Savings used for payment"
+}
+```
+
+### Complete Frontend Example (`api.ts`)
+
+Here is a robust `fetch` function you can drop into your frontend code. It handles the token, idempotency key, and error parsing.
+
+```typescript
+// frontend/src/services/api.ts
+
+interface PaymentRequest {
+  amount: number;
+  currency: string;
+  recipient_customer_id: string; // The Customer ID (e.g., OB25-XXXX)
+  description: string;
+  type?: 'INTERNAL_TRANSFER' | 'EXTERNAL_PAYMENT';
+}
+
+export const sendTransaction = async (data: PaymentRequest, token: string) => {
+  // 1. Generate a unique key to prevent double-charging on network retries
+  const idempotencyKey = crypto.randomUUID(); 
+
+  try {
+    const response = await fetch('https://<YOUR_BACKEND_URL>/v1/transactions/settle', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        'x-idempotency-key': idempotencyKey
+      },
+      body: JSON.stringify({
+        ...data,
+        type: data.type || 'INTERNAL_TRANSFER', // Default to internal
+        walletType: 'internal_vault' // Explicitly target the operating vault
+      })
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      // Handle Backend Errors (e.g., "VALIDATION_ERROR", "INSUFFICIENT_FUNDS")
+      throw new Error(result.error || result.message || 'Transaction failed');
+    }
+
+    return result.data; // Success!
+
+  } catch (error) {
+    console.error('Payment Error:', error);
+    throw error;
+  }
+};
+```
+
+### Insufficient Funds (400 Bad Request)
+When calling `POST /v1/transactions/settle`, the server may return a `400` error with the code `INSUFFICIENT_FUNDS`.
+
+**Recommended UI Behavior**:
+1.  **Preventive**: Use the `available_balance` returned from `POST /v1/transactions/preview` to disable the "Confirm" button if `total > available_balance`.
+2.  **Reactive**: If the API returns `INSUFFICIENT_FUNDS`, display a specific error message: "Your balance is insufficient to cover the transaction amount plus fees."
+
+### Sentinel Block (403 Forbidden)
+If the AI security engine blocks a request, the API returns `SENTINEL_BLOCK`.
+
+**Recommended UI Behavior**:
+Display a security alert: "This transaction was flagged by our security system. Please contact support."
+
+## Admin Portal: Forensic Ledger Integration
+The Admin Portal should utilize the forensic endpoints to provide staff with a "Deep Dive" view of any transaction.
+
+### Implementation Pattern
+1.  **List View**: Fetch all transactions using `GET /v1/admin/transactions`.
+2.  **Detail View**: When a staff member clicks a transaction, fetch its ledger legs using `GET /v1/admin/transactions/:id/ledger`.
+3.  **Visualization**: Display the ledger legs in a table showing the flow between vaults (e.g., `OPERATING` -> `INTERNAL_TRANSFER` -> `OPERATING`).
+
+### Ledger Leg Object
+```json
+{
+  "id": "uuid",
+  "wallet_id": "uuid",
+  "entry_type": "DEBIT | CREDIT",
+  "amount": 5000.00,
+  "balance_after": 15000.00,
+  "description": "P2P Escrow Lock",
+  "created_at": "2026-03-01T..."
+}
+```

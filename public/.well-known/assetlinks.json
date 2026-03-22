@@ -1,0 +1,15 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls",
+      "delegate_permission/common.get_login_creds"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.example.orbi_mobileapp",
+      "sha256_cert_fingerprints": [
+        "89:EA:FE:BD:11:8B:28:C2:53:2F:32:4F:50:94:D4:AD:67:47:B8:2C:54:EF:95:72:39:3D:2D:31:1E:DD:83:0A"
+      ]
+    }
+  }
+]

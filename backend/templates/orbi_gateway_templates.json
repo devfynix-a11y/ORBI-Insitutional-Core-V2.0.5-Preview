@@ -1,0 +1,321 @@
+[
+  {
+    "name": "OTP_Message",
+    "channel": "sms",
+    "language": "en",
+    "messageType": "transactional",
+    "body": "ORBI Financial Technologies:\n\nHello {{name}}, your One-Time Password (OTP) for {{deviceName}} is {{otp}}. It will expire in 5 minutes.\n\nFor your security, do not share this code with anyone.\n\n{{androidHash}}"
+  },
+  {
+    "name": "OTP_Message",
+    "channel": "sms",
+    "language": "sw",
+    "messageType": "transactional",
+    "body": "ORBI Financial Technologies:\n\nHabari {{name}}, msimbo wako wa muda (OTP) kwa kifaa {{deviceName}} ni {{otp}}. Msimbo huu utaisha muda wake ndani ya dakika 5.\n\nKwa usalama wako, usimpe mtu yeyote msimbo huu.\n\n{{androidHash}}"
+  },
+  {
+    "name": "OTP_Message",
+    "channel": "email",
+    "language": "en",
+    "messageType": "transactional",
+    "body": "Hello {{name}}, your OTP for {{deviceName}} is {{otp}}. It expires in 5 minutes."
+  },
+  {
+    "name": "OTP_Message",
+    "channel": "email",
+    "language": "sw",
+    "messageType": "transactional",
+    "body": "Habari {{name}}, OTP yako kwa kifaa {{deviceName}} ni {{otp}}. Itaisha ndani ya dakika 5."
+  },
+
+  {
+    "name": "Welcome_Message",
+    "channel": "sms",
+    "language": "en",
+    "messageType": "promotional",
+    "body": "ORBI Financial Technologies:\n\nHello {{name}}, welcome to ORBI! Your account is now active.\n\nContinue enjoying our services, ORBI truly values your goals!"
+  },
+  {
+    "name": "Welcome_Message",
+    "channel": "sms",
+    "language": "sw",
+    "messageType": "promotional",
+    "body": "ORBI Financial Technologies:\n\nHabari {{name}}, karibu ORBI! Akaunti yako imeamilishwa.\n\nEndelea kufurahia huduma zetu, ORBI tunathamini sana malengo yako!"
+  },
+
+  {
+    "name": "Transfer_Sent",
+    "channel": "sms",
+    "language": "en",
+    "messageType": "transactional",
+    "body": "ORBI Financial Technologies:\n\nRef: {{refId}}. You sent {{currency}} {{amount}}/= to {{recipientName}} at {{timestamp}}.\n\nContinue enjoying our services, ORBI truly values your goals!"
+  },
+  {
+    "name": "Transfer_Sent",
+    "channel": "sms",
+    "language": "sw",
+    "messageType": "transactional",
+    "body": "ORBI Financial Technologies:\n\nKumb: {{refId}}. Umetuma {{currency}} {{amount}}/= kwenda kwa {{recipientName}} saa {{timestamp}}.\n\nEndelea kufurahia huduma zetu, ORBI tunathamini sana malengo yako!"
+  },
+
+  {
+    "name": "Transfer_Received",
+    "channel": "sms",
+    "language": "en",
+    "messageType": "transactional",
+    "body": "ORBI Financial Technologies:\n\nRef: {{refId}}. You received {{currency}} {{amount}}/= from {{senderName}} at {{timestamp}}.\n\nContinue enjoying our services, ORBI truly values your goals!"
+  },
+  {
+    "name": "Transfer_Received",
+    "channel": "sms",
+    "language": "sw",
+    "messageType": "transactional",
+    "body": "ORBI Financial Technologies:\n\nKumb: {{refId}}. Umepokea {{currency}} {{amount}}/= kutoka kwa {{senderName}} saa {{timestamp}}.\n\nEndelea kufurahia huduma zetu, ORBI tunathamini sana malengo yako!"
+  },
+
+  {
+    "name": "Security_Alert_Message",
+    "channel": "sms",
+    "language": "en",
+    "messageType": "transactional",
+    "body": "ORBI Financial Technologies:\n\nRef: {{refId}}. Security Alert: {{subject}}\n\n{{body}}\n\nCall support: +255764258114"
+  },
+  {
+    "name": "Security_Alert_Message",
+    "channel": "sms",
+    "language": "sw",
+    "messageType": "transactional",
+    "body": "ORBI Financial Technologies:\n\nKumb: {{refId}}. Tahadhari ya Usalama: {{subject}}\n\n{{body}}\n\nWasiliana nasi: +255764258114"
+  },
+
+  {
+    "name": "LOW_BALANCE",
+    "channel": "push",
+    "language": "en",
+    "messageType": "transactional",
+    "body": "Hi {{name}}, your balance is below {{threshold}}."
+  },
+  {
+    "name": "LOW_BALANCE",
+    "channel": "push",
+    "language": "sw",
+    "messageType": "transactional",
+    "body": "Habari {{name}}, salio lako liko chini ya {{threshold}}."
+  },
+
+  {
+    "name": "OTP_Message",
+    "channel": "whatsapp",
+    "language": "en",
+    "components": [
+      {
+        "type": "body",
+        "text": "Hello {{name}}, your ORBI OTP is {{otp}} for {{deviceName}}. It expires in 5 minutes."
+      },
+      {
+        "type": "footer",
+        "text": "ORBI Financial Technologies"
+      }
+    ]
+  },
+  {
+    "name": "OTP_Message",
+    "channel": "whatsapp",
+    "language": "sw",
+    "components": [
+      {
+        "type": "body",
+        "text": "Habari {{name}}, OTP yako ya ORBI ni {{otp}} kwa kifaa {{deviceName}}. Itaisha ndani ya dakika 5."
+      },
+      {
+        "type": "footer",
+        "text": "ORBI Financial Technologies"
+      }
+    ]
+  },
+
+  {
+    "name": "Transfer_Sent",
+    "channel": "whatsapp",
+    "language": "en",
+    "components": [
+      {
+        "type": "body",
+        "text": "Ref: {{refId}}. You sent {{currency}} {{amount}}/= to {{recipientName}} at {{timestamp}}."
+      },
+      {
+        "type": "footer",
+        "text": "Continue enjoying our services, ORBI truly values your goals!"
+      }
+    ]
+  },
+  {
+    "name": "Transfer_Sent",
+    "channel": "whatsapp",
+    "language": "sw",
+    "components": [
+      {
+        "type": "body",
+        "text": "Kumb: {{refId}}. Umetuma {{currency}} {{amount}}/= kwenda kwa {{recipientName}} saa {{timestamp}}."
+      },
+      {
+        "type": "footer",
+        "text": "Endelea kufurahia huduma zetu, ORBI tunathamini sana malengo yako!"
+      }
+    ]
+  },
+  {
+    "name": "Escrow_Created",
+    "channel": "sms",
+    "language": "en",
+    "messageType": "transactional",
+    "body": "ORBI Financial Technologies:\n\nRef: {{refId}}. Escrow of {{currency}} {{amount}}/= created for {{recipientName}}."
+  },
+  {
+    "name": "Escrow_Created",
+    "channel": "whatsapp",
+    "language": "en",
+    "components": [
+      {
+        "type": "body",
+        "text": "Ref: {{refId}}. Escrow of {{currency}} {{amount}}/= created for {{recipientName}}."
+      },
+      {
+        "type": "footer",
+        "text": "ORBI Financial Technologies"
+      }
+    ]
+  },
+  {
+    "name": "Escrow_Released",
+    "channel": "sms",
+    "language": "en",
+    "messageType": "transactional",
+    "body": "ORBI Financial Technologies:\n\nRef: {{refId}}. Escrow of {{currency}} {{amount}}/= has been released to {{recipientName}}."
+  },
+  {
+    "name": "Escrow_Released",
+    "channel": "whatsapp",
+    "language": "en",
+    "components": [
+      {
+        "type": "body",
+        "text": "Ref: {{refId}}. Escrow of {{currency}} {{amount}}/= has been released to {{recipientName}}."
+      },
+      {
+        "type": "footer",
+        "text": "ORBI Financial Technologies"
+      }
+    ]
+  },
+  {
+    "name": "Salary_Received",
+    "channel": "sms",
+    "language": "en",
+    "messageType": "transactional",
+    "body": "ORBI Financial Technologies:\n\nHello {{name}}, your salary of {{currency}} {{amount}}/= for {{month}} has been credited to your account."
+  },
+  {
+    "name": "Salary_Received",
+    "channel": "whatsapp",
+    "language": "en",
+    "components": [
+      {
+        "type": "body",
+        "text": "Hello {{name}}, your salary of {{currency}} {{amount}}/= for {{month}} has been credited to your account."
+      },
+      {
+        "type": "footer",
+        "text": "ORBI Financial Technologies"
+      }
+    ]
+  },
+  {
+    "name": "Treasury_Withdrawal_Request",
+    "channel": "sms",
+    "language": "en",
+    "messageType": "transactional",
+    "body": "ORBI Financial Technologies:\n\nWithdrawal request of {{currency}} {{amount}}/= by {{employeeName}}. Reason: {{reason}}."
+  },
+  {
+    "name": "Treasury_Withdrawal_Request",
+    "channel": "whatsapp",
+    "language": "en",
+    "components": [
+      {
+        "type": "body",
+        "text": "Withdrawal request of {{currency}} {{amount}}/= by {{employeeName}}. Reason: {{reason}}."
+      },
+      {
+        "type": "footer",
+        "text": "ORBI Financial Technologies"
+      }
+    ]
+  },
+  {
+    "name": "Promo_Message",
+    "channel": "sms",
+    "language": "en",
+    "messageType": "promotional",
+    "body": "ORBI Financial Technologies:\n\n{{body}}"
+  },
+  {
+    "name": "Promo_Message",
+    "channel": "whatsapp",
+    "language": "en",
+    "components": [
+      {
+        "type": "body",
+        "text": "{{body}}"
+      },
+      {
+        "type": "footer",
+        "text": "ORBI Financial Technologies"
+      }
+    ]
+  },
+  {
+    "name": "Transactional_Message",
+    "channel": "sms",
+    "language": "en",
+    "messageType": "transactional",
+    "body": "ORBI Financial Technologies:\n\nRef: {{refId}}. {{body}}"
+  },
+  {
+    "name": "Transactional_Message",
+    "channel": "whatsapp",
+    "language": "en",
+    "components": [
+      {
+        "type": "body",
+        "text": "Ref: {{refId}}. {{body}}"
+      },
+      {
+        "type": "footer",
+        "text": "ORBI Financial Technologies"
+      }
+    ]
+  },
+  {
+    "name": "New_Device_Alert",
+    "channel": "sms",
+    "language": "en",
+    "messageType": "transactional",
+    "body": "Ref: {{refId}}. ORBI Financial Technologies:\n\nSecurity Alert: A new device '{{deviceName}}' has been used to access your account.\n\nIf this was not you, please contact support immediately: +255764258114"
+  },
+  {
+    "name": "New_Device_Alert",
+    "channel": "whatsapp",
+    "language": "en",
+    "components": [
+      {
+        "type": "body",
+        "text": "Security Alert: A new device '{{deviceName}}' has been used to access your account.\n\nIf this was not you, please contact support immediately."
+      },
+      {
+        "type": "footer",
+        "text": "ORBI Financial Technologies"
+      }
+    ]
+  }
+]

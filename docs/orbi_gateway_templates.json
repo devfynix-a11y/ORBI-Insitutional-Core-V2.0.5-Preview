@@ -1,0 +1,578 @@
+[
+  {
+    "name": "OTP_Message",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI Security Verification:\nYour Orbi verification code is: {{otp}}. It expires in 5 minutes. {{androidHash}}",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "OTP_Message",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI Usalama:\nNamba yako ya siri ya muda (OTP) ya Orbi ni: {{otp}}. Itatumika kwa dakika 5 pekee. {{androidHash}}",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "OTP_Message",
+    "language": "en",
+    "subject": "ORBI Verification",
+    "body": "Your Orbi verification code is: {{otp}}",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "OTP_Message",
+    "language": "sw",
+    "subject": "Uthibitisho wa ORBI",
+    "body": "Namba yako ya siri ya muda (OTP) ya Orbi ni: {{otp}}",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "OTP_Message",
+    "language": "en",
+    "subject": "ORBI Security Verification",
+    "body": "<h2>ORBI Security</h2><p>Hello {{name}},</p><p>Your Orbi verification code is: <strong>{{otp}}</strong>. It expires in 5 minutes.</p>",
+    "channel": "email",
+    "messageType": "transactional"
+  },
+  {
+    "name": "OTP_Message",
+    "language": "sw",
+    "subject": "Uthibitisho wa Usalama wa ORBI",
+    "body": "<h2>ORBI Usalama</h2><p>Habari {{name}},</p><p>Namba yako ya siri ya muda (OTP) ya Orbi ni: <strong>{{otp}}</strong>. Itatumika kwa dakika 5 pekee.</p>",
+    "channel": "email",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Security_Alert_Message",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI Financial Technologies:\nSecurity Alert: {{subject}}. Details: {{body}}\nFrom Orbi Security System, contact support immediately incase of any issue. Call: +255764258114",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Security_Alert_Message",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI Financial Technologies:\nTaarifa ya Usalama: {{subject}}. Maelezo: {{body}}\nKutoka Mifumo ya Usalama ya ORBI. Tafadhali wasiliana nasi haraka kwa tatizo lolote. Simu: +255764258114",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Security_Alert_Message",
+    "language": "en",
+    "subject": "Security Alert: {{subject}}",
+    "body": "{{body}}",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Security_Alert_Message",
+    "language": "sw",
+    "subject": "Taarifa ya Usalama: {{subject}}",
+    "body": "{{body}}",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Security_Alert_Message",
+    "language": "en",
+    "subject": "Security Alert: {{subject}}",
+    "body": "<h2>ORBI Security Alert</h2><p><strong>{{subject}}</strong></p><p>{{body}}</p><p>Contact support immediately incase of any issue. Call: +255764258114</p>",
+    "channel": "email",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Security_Alert_Message",
+    "language": "sw",
+    "subject": "Taarifa ya Usalama: {{subject}}",
+    "body": "<h2>Taarifa ya Usalama ya ORBI</h2><p><strong>{{subject}}</strong></p><p>{{body}}</p><p>Tafadhali wasiliana nasi haraka kwa tatizo lolote. Simu: +255764258114</p>",
+    "channel": "email",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Salary_Received",
+    "language": "en",
+    "subject": "",
+    "body": "Ref:{{refId}}. Dear {{employeeName}}, your salary for {{month}} of {{currency}} {{amount}} has been credited to your ORBI account at {{timestamp}}. {{footer}}",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Salary_Received",
+    "language": "sw",
+    "subject": "",
+    "body": "Kumb:{{refId}}. Ndugu {{employeeName}}, mshahara wako wa mwezi {{month}} kiasi cha {{currency}} {{amount}} umeingia kwenye akaunti yako ya ORBI saa {{timestamp}}. {{footer}}",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Salary_Received",
+    "language": "en",
+    "subject": "Salary Received",
+    "body": "{{refId}}. Your salary of {{currency}} {{amount}} for {{month}} has been credited.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Salary_Received",
+    "language": "sw",
+    "subject": "Mshahara Umepokelewa",
+    "body": "{{refId}}. Mshahara wako wa {{currency}} {{amount}} kwa mwezi {{month}} umeingia.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Salary_Received",
+    "language": "en",
+    "subject": "Salary Credited: {{month}}",
+    "body": "<h2>Salary Received</h2><p>{{refId}}. Dear {{employeeName}},</p><p>Your salary for {{month}} of <strong>{{currency}} {{amount}}</strong> has been credited to your ORBI account at {{timestamp}}.</p><p>{{footer}}</p>",
+    "channel": "email",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Salary_Received",
+    "language": "sw",
+    "subject": "Mshahara Umepokelewa: {{month}}",
+    "body": "<h2>Mshahara Umepokelewa</h2><p>{{refId}}. Ndugu {{employeeName}},</p><p>Mshahara wako wa mwezi {{month}} kiasi cha <strong>{{currency}} {{amount}}</strong> umeingia kwenye akaunti yako ya ORBI saa {{timestamp}}.</p><p>{{footer}}</p>",
+    "channel": "email",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Transfer_Received",
+    "language": "en",
+    "subject": "",
+    "body": "Ref:{{refId}}. Dear {{recipientName}}, confirmed you have received {{currency}} {{amount}}/= on your ORBI account from {{senderName}} at {{timestamp}}. {{footer}}",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Transfer_Received",
+    "language": "sw",
+    "subject": "",
+    "body": "Kumb:{{refId}}. Ndugu {{recipientName}}, imethibitishwa umepokea {{currency}} {{amount}}/= kwenye akaunti yako ya ORBI kutoka kwa {{senderName}} saa {{timestamp}}. {{footer}}",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Transfer_Received",
+    "language": "en",
+    "subject": "Transfer Received",
+    "body": "{{refId}}. Confirmed you received {{currency}} {{amount}} from {{senderName}}.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Transfer_Received",
+    "language": "sw",
+    "subject": "Muamala Umepokelewa",
+    "body": "{{refId}}. Imethibitishwa umepokea {{currency}} {{amount}} kutoka kwa {{senderName}}.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Transfer_Received",
+    "language": "en",
+    "subject": "Transfer Received: {{currency}} {{amount}}",
+    "body": "<h2>Transfer Received</h2><p>{{refId}}. Dear {{recipientName}},</p><p>Confirmed you have received <strong>{{currency}} {{amount}}</strong> on your ORBI account from {{senderName}} at {{timestamp}}.</p><p>{{footer}}</p>",
+    "channel": "email",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Transfer_Received",
+    "language": "sw",
+    "subject": "Muamala Umepokelewa: {{currency}} {{amount}}",
+    "body": "<h2>Muamala Umepokelewa</h2><p>{{refId}}. Ndugu {{recipientName}},</p><p>Imethibitishwa umepokea <strong>{{currency}} {{amount}}</strong> kwenye akaunti yako ya ORBI kutoka kwa {{senderName}} saa {{timestamp}}.</p><p>{{footer}}</p>",
+    "channel": "email",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Transfer_Sent",
+    "language": "en",
+    "subject": "",
+    "body": "Ref:{{refId}}. Dear {{senderName}}, confirmed you have sent {{currency}} {{amount}}/= from your ORBI account to {{recipientName}} at {{timestamp}}. {{footer}}",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Transfer_Sent",
+    "language": "sw",
+    "subject": "",
+    "body": "Kumb:{{refId}}. Ndugu {{senderName}}, imethibitishwa umetuma {{currency}} {{amount}}/= kutoka kwenye akaunti yako ya ORBI kwenda kwa {{recipientName}} saa {{timestamp}}. {{footer}}",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Transfer_Sent",
+    "language": "en",
+    "subject": "Transfer Sent",
+    "body": "{{refId}}. Confirmed you sent {{currency}} {{amount}} to {{recipientName}}.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Transfer_Sent",
+    "language": "sw",
+    "subject": "Muamala Umetumwa",
+    "body": "{{refId}}. Imethibitishwa umetuma {{currency}} {{amount}} kwenda kwa {{recipientName}}.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Transfer_Sent",
+    "language": "en",
+    "subject": "Transfer Sent: {{currency}} {{amount}}",
+    "body": "<h2>Transfer Sent</h2><p>{{refId}}. Dear {{senderName}},</p><p>Confirmed you have sent <strong>{{currency}} {{amount}}</strong> from your ORBI account to {{recipientName}} at {{timestamp}}.</p><p>{{footer}}</p>",
+    "channel": "email",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Transfer_Sent",
+    "language": "sw",
+    "subject": "Muamala Umetumwa: {{currency}} {{amount}}",
+    "body": "<h2>Muamala Umetumwa</h2><p>{{refId}}. Ndugu {{senderName}},</p><p>Imethibitishwa umetuma <strong>{{currency}} {{amount}}</strong> kutoka kwenye akaunti yako ya ORBI kwenda kwa {{recipientName}} saa {{timestamp}}.</p><p>{{footer}}</p>",
+    "channel": "email",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Escrow_Created",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI Financial Technologies:\nYou have a pending payment of {{currency}} {{amount}}/= from a customer. Funds are locked in Orbi PaySafe and will be released upon delivery confirmation.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Escrow_Created",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI Financial Technologies:\nUna malipo yanayosubiri ya {{currency}} {{amount}} kutoka kwa mteja. Fedha zimewekwa salama kwenye Orbi PaySafe na zitatolewa baada ya uthibitisho wa kupokea mzigo.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Escrow_Created",
+    "language": "en",
+    "subject": "PaySafe Escrow Created",
+    "body": "Pending payment of {{currency}} {{amount}} locked in PaySafe.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Escrow_Created",
+    "language": "sw",
+    "subject": "Malipo ya PaySafe",
+    "body": "Malipo ya {{currency}} {{amount}} yamewekwa salama kwenye PaySafe.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Escrow_Created",
+    "language": "en",
+    "subject": "PaySafe Escrow Created: {{currency}} {{amount}}",
+    "body": "<h2>PaySafe Escrow Created</h2><p>You have a pending payment of <strong>{{currency}} {{amount}}</strong> from a customer.</p><p>Funds are locked in Orbi PaySafe and will be released upon delivery confirmation.</p>",
+    "channel": "email",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Escrow_Created",
+    "language": "sw",
+    "subject": "Malipo ya PaySafe: {{currency}} {{amount}}",
+    "body": "<h2>Malipo ya PaySafe</h2><p>Una malipo yanayosubiri ya <strong>{{currency}} {{amount}}</strong> kutoka kwa mteja.</p><p>Fedha zimewekwa salama kwenye Orbi PaySafe na zitatolewa baada ya uthibitisho wa kupokea mzigo.</p>",
+    "channel": "email",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Escrow_Released",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI Financial Technologies:\nPaySafe funds of {{currency}} {{amount}} have been released to your operating account.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Escrow_Released",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI Financial Technologies:\nMalipo ya {{currency}} {{amount}} yametolewa kwenye akaunti yako ya uendeshaji.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Escrow_Released",
+    "language": "en",
+    "subject": "PaySafe Funds Released",
+    "body": "{{currency}} {{amount}} has been released to your account.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Escrow_Released",
+    "language": "sw",
+    "subject": "Malipo Yametolewa",
+    "body": "{{currency}} {{amount}} imetolewa kwenye akaunti yako.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Escrow_Released",
+    "language": "en",
+    "subject": "PaySafe Funds Released",
+    "body": "<h2>PaySafe Funds Released</h2><p>PaySafe funds of <strong>{{currency}} {{amount}}</strong> have been released to your operating account.</p>",
+    "channel": "email",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Escrow_Released",
+    "language": "sw",
+    "subject": "Malipo Yametolewa",
+    "body": "<h2>Malipo Yametolewa</h2><p>Malipo ya <strong>{{currency}} {{amount}}</strong> yametolewa kwenye akaunti yako ya uendeshaji.</p>",
+    "channel": "email",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Treasury_Withdrawal_Request",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI Financial Technologies:\nA new treasury withdrawal request for {{currency}} {{amount}} requires your approval. Reason: {{reason}}",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Treasury_Withdrawal_Request",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI Financial Technologies:\nOmbi jipya la kutoa fedha za hazina la {{currency}} {{amount}} linahitaji idhini yako. Sababu: {{reason}}",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Treasury_Withdrawal_Request",
+    "language": "en",
+    "subject": "Treasury Approval Needed",
+    "body": "Withdrawal request for {{currency}} {{amount}} requires approval.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Treasury_Withdrawal_Request",
+    "language": "sw",
+    "subject": "Idhini Inahitajika",
+    "body": "Ombi la kutoa {{currency}} {{amount}} linahitaji idhini yako.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Treasury_Withdrawal_Request",
+    "language": "en",
+    "subject": "Action Required: Treasury Withdrawal Request",
+    "body": "<h2>Treasury Withdrawal Request</h2><p>A new treasury withdrawal request for <strong>{{currency}} {{amount}}</strong> requires your approval.</p><p>Reason: {{reason}}</p>",
+    "channel": "email",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Treasury_Withdrawal_Request",
+    "language": "sw",
+    "subject": "Hatua Inahitajika: Ombi la Kutoa Fedha",
+    "body": "<h2>Ombi la Kutoa Fedha za Hazina</h2><p>Ombi jipya la kutoa fedha za hazina la <strong>{{currency}} {{amount}}</strong> linahitaji idhini yako.</p><p>Sababu: {{reason}}</p>",
+    "channel": "email",
+    "messageType": "transactional"
+  },
+  {
+    "name": "LOW_BALANCE",
+    "language": "en",
+    "subject": "",
+    "body": "Hi {{name}}, your account balance is below {{threshold}}. Please top up to continue enjoying our services.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "LOW_BALANCE",
+    "language": "sw",
+    "subject": "",
+    "body": "Habari {{name}}, salio la akaunti yako ni chini ya {{threshold}}. Tafadhali ongeza salio kuendelea kufurahia huduma zetu.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "LOW_BALANCE",
+    "language": "en",
+    "subject": "Low Balance Alert",
+    "body": "Your balance is below {{threshold}}.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "LOW_BALANCE",
+    "language": "sw",
+    "subject": "Salio Lipo Chini",
+    "body": "Salio lako ni chini ya {{threshold}}.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "LOW_BALANCE",
+    "language": "en",
+    "subject": "Low Balance Alert",
+    "body": "<h2>Low Balance Alert</h2><p>Hi {{name}},</p><p>Your account balance is below <strong>{{threshold}}</strong>. Please top up to continue enjoying our services.</p>",
+    "channel": "email",
+    "messageType": "transactional"
+  },
+  {
+    "name": "LOW_BALANCE",
+    "language": "sw",
+    "subject": "Taarifa ya Salio",
+    "body": "<h2>Taarifa ya Salio</h2><p>Habari {{name}},</p><p>Salio la akaunti yako ni chini ya <strong>{{threshold}}</strong>. Tafadhali ongeza salio kuendelea kufurahia huduma zetu.</p>",
+    "channel": "email",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Transactional_Message",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI Financial Technologies:\n{{body}}",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Transactional_Message",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI Financial Technologies:\n{{body}}",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Transactional_Message",
+    "language": "en",
+    "subject": "ORBI Update",
+    "body": "{{body}}",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Transactional_Message",
+    "language": "sw",
+    "subject": "Taarifa kutoka ORBI",
+    "body": "{{body}}",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Transactional_Message",
+    "language": "en",
+    "subject": "ORBI Account Update",
+    "body": "<h2>ORBI Financial Technologies</h2><p>{{body}}</p>",
+    "channel": "email",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Transactional_Message",
+    "language": "sw",
+    "subject": "Taarifa ya Akaunti ya ORBI",
+    "body": "<h2>ORBI Financial Technologies</h2><p>{{body}}</p>",
+    "channel": "email",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Welcome_Message",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI Financial Technologies:\nHello {{name}}, welcome to Orbi! Your account is now active. We are excited to help you manage your assets securely.",
+    "channel": "sms",
+    "messageType": "promotional"
+  },
+  {
+    "name": "Welcome_Message",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI Financial Technologies:\nHabari {{name}}, karibu Orbi! Akaunti yako imefunguliwa na kukamilika. Tunafurahi kukusaidia kusimamia mali zako kwa usalama.",
+    "channel": "sms",
+    "messageType": "promotional"
+  },
+  {
+    "name": "Welcome_Message",
+    "language": "en",
+    "subject": "Welcome to Orbi!",
+    "body": "Hello {{name}}, your account is now active.",
+    "channel": "push",
+    "messageType": "promotional"
+  },
+  {
+    "name": "Welcome_Message",
+    "language": "sw",
+    "subject": "Karibu Orbi!",
+    "body": "Habari {{name}}, akaunti yako imefunguliwa.",
+    "channel": "push",
+    "messageType": "promotional"
+  },
+  {
+    "name": "Welcome_Message",
+    "language": "en",
+    "subject": "Welcome to Orbi!",
+    "body": "<h2>Welcome to Orbi!</h2><p>Hello {{name}},</p><p>Your account is now active. We are excited to help you manage your assets securely.</p>",
+    "channel": "email",
+    "messageType": "promotional"
+  },
+  {
+    "name": "Welcome_Message",
+    "language": "sw",
+    "subject": "Karibu Orbi!",
+    "body": "<h2>Karibu Orbi!</h2><p>Habari {{name}},</p><p>Akaunti yako imefunguliwa na kukamilika. Tunafurahi kukusaidia kusimamia mali zako kwa usalama.</p>",
+    "channel": "email",
+    "messageType": "promotional"
+  },
+  {
+    "name": "Promo_Message",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI Financial Technologies:\nExclusive Offer: {{body}}",
+    "channel": "sms",
+    "messageType": "promotional"
+  },
+  {
+    "name": "Promo_Message",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI Financial Technologies:\nOfa Maalum: {{body}}",
+    "channel": "sms",
+    "messageType": "promotional"
+  },
+  {
+    "name": "Promo_Message",
+    "language": "en",
+    "subject": "Exclusive Offer",
+    "body": "{{body}}",
+    "channel": "push",
+    "messageType": "promotional"
+  },
+  {
+    "name": "Promo_Message",
+    "language": "sw",
+    "subject": "Ofa Maalum",
+    "body": "{{body}}",
+    "channel": "push",
+    "messageType": "promotional"
+  },
+  {
+    "name": "Promo_Message",
+    "language": "en",
+    "subject": "ORBI Exclusive Offer",
+    "body": "<h2>Special Offer for You</h2><p>{{body}}</p>",
+    "channel": "email",
+    "messageType": "promotional"
+  },
+  {
+    "name": "Promo_Message",
+    "language": "sw",
+    "subject": "Ofa Maalum kutoka ORBI",
+    "body": "<h2>Ofa Maalum Kwako</h2><p>{{body}}</p>",
+    "channel": "email",
+    "messageType": "promotional"
+  }
+]
