@@ -1700,6 +1700,130 @@ CREATE TABLE IF NOT EXISTS public.fraud_checks (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- PAYMENT CARD PROCESSING (PCI-DSS Compliant)
+CREATE TABLE IF NOT EXISTS public.card_tokens (
+    id TEXT PRIMARY KEY,
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    masked_card_number TEXT NOT NULL,
+    tokenized_card_number TEXT NOT NULL, -- Encrypted
+    expiry_month INTEGER NOT NULL,
+    expiry_year INTEGER NOT NULL,
+    cardholder_name TEXT NOT NULL,
+    card_brand TEXT NOT NULL CHECK (card_brand IN ('VISA', 'MASTERCARD', 'AMEX', 'DISCOVERY')),
+    card_type TEXT DEFAULT 'CREDIT' CHECK (card_type IN ('CREDIT', 'DEBIT')),
+    last_four_digits TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    is_default BOOLEAN DEFAULT FALSE,
+    status TEXT DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'INACTIVE', 'EXPIRED')),
+    encrypted_cvv TEXT, -- Encrypted CVV for one-click payments
+    billing_address JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE,
+    UNIQUE(user_id, fingerprint)
+);
+
+CREATE TABLE IF NOT EXISTS public.card_transactions (
+    id TEXT PRIMARY KEY,
+    card_token_id TEXT REFERENCES public.card_tokens(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    merchant_id UUID REFERENCES public.merchants(id) ON DELETE SET NULL,
+    amount NUMERIC NOT NULL,
+    currency TEXT DEFAULT 'TZS',
+    status TEXT DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'AUTHORIZED', 'SETTLED', 'FAILED', 'DECLINED', 'REVERSED')),
+    authorization_code TEXT,
+    rrn TEXT, -- Retrieval Reference Number
+    stan_number TEXT, -- System Trace Audit Number
+    response_code TEXT,
+    response_message TEXT,
+    risk_score NUMERIC DEFAULT 0,
+    fraud_flags TEXT[] DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    settled_at TIMESTAMP WITH TIME ZONE,
+    metadata JSONB DEFAULT '{}'::jsonb
+);
+
+-- Card Transaction Audit Trail
+CREATE TABLE IF NOT EXISTS public.card_transaction_audit (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    card_transaction_id TEXT REFERENCES public.card_transactions(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    old_status TEXT,
+    new_status TEXT,
+    actor TEXT DEFAULT 'system',
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Merchant Card Acceptance Settings
+CREATE TABLE IF NOT EXISTS public.merchant_card_settings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    merchant_id UUID REFERENCES public.merchants(id) ON DELETE CASCADE,
+    min_amount NUMERIC DEFAULT 0,
+    max_amount NUMERIC,
+    accepted_card_brands TEXT[] DEFAULT ARRAY['VISA', 'MASTERCARD'],
+    avs_enabled BOOLEAN DEFAULT TRUE,
+    cvv_required BOOLEAN DEFAULT TRUE,
+    three_d_secure_enabled BOOLEAN DEFAULT TRUE,
+    fraud_check_level TEXT DEFAULT 'MEDIUM' CHECK (fraud_check_level IN ('LOW', 'MEDIUM', 'HIGH')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(merchant_id)
+);
+
+-- Card Network Processing Fees
+CREATE TABLE IF NOT EXISTS public.card_processing_fees (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    card_brand TEXT NOT NULL,
+    transaction_type TEXT NOT NULL,
+    percentage_fee NUMERIC DEFAULT 0.025, -- 2.5% default
+    fixed_fee NUMERIC DEFAULT 0.30,
+    currency TEXT DEFAULT 'TZS',
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Indexes for Card Processing
+CREATE INDEX IF NOT EXISTS idx_card_tokens_user ON public.card_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_card_tokens_status ON public.card_tokens(status);
+CREATE INDEX IF NOT EXISTS idx_card_tokens_fingerprint ON public.card_tokens(fingerprint);
+CREATE INDEX IF NOT EXISTS idx_card_transactions_user ON public.card_transactions(user_id);
+CREATE INDEX IF NOT EXISTS idx_card_transactions_card_token ON public.card_transactions(card_token_id);
+CREATE INDEX IF NOT EXISTS idx_card_transactions_status ON public.card_transactions(status);
+CREATE INDEX IF NOT EXISTS idx_card_transactions_merchant ON public.card_transactions(merchant_id);
+CREATE INDEX IF NOT EXISTS idx_card_transactions_created ON public.card_transactions(created_at);
+CREATE INDEX IF NOT EXISTS idx_card_transaction_audit_user ON public.card_transaction_audit(user_id);
+CREATE INDEX IF NOT EXISTS idx_merchant_card_settings_merchant ON public.merchant_card_settings(merchant_id);
+
+-- Enable RLS for Card Tables
+ALTER TABLE public.card_tokens ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.card_transactions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.card_transaction_audit ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.merchant_card_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.card_processing_fees ENABLE ROW LEVEL SECURITY;
+
+-- Card Processing RLS Policies
+DROP POLICY IF EXISTS "Users manage own card tokens" ON public.card_tokens;
+CREATE POLICY "Users manage own card tokens" ON public.card_tokens
+    FOR ALL USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Service role card tokens bypass" ON public.card_tokens;
+CREATE POLICY "Service role card tokens bypass" ON public.card_tokens
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Users view own card transactions" ON public.card_transactions;
+CREATE POLICY "Users view own card transactions" ON public.card_transactions
+    FOR SELECT USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Service role card transactions bypass" ON public.card_transactions;
+CREATE POLICY "Service role card transactions bypass" ON public.card_transactions
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Admins view card settings" ON public.merchant_card_settings;
+CREATE POLICY "Admins view card settings" ON public.merchant_card_settings
+    FOR SELECT USING ((SELECT public.get_auth_role()) IN ('SUPER_ADMIN', 'ADMIN'));
+
 CREATE TABLE IF NOT EXISTS public.background_jobs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     type TEXT NOT NULL,

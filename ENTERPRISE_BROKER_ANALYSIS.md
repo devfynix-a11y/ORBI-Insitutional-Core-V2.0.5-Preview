@@ -4,7 +4,7 @@
 
 The current banking infrastructure utilizes a robust, database-backed outbox pattern and background job queue using PostgreSQL (Supabase). This approach provides excellent durability, transactional consistency, and eliminates the need for external dependencies for basic asynchronous processing.
 
-### Key Components:
+### Key Components
 
 1. **`InternalBroker`**: Manages background jobs via the `background_jobs` table. Uses optimistic locking to prevent concurrent execution.
 2. **`EventBus`**: Implements the Outbox Pattern via the `outbox_events` table. Ensures guaranteed at-least-once delivery of domain events.
