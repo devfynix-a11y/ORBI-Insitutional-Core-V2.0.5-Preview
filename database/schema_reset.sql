@@ -511,6 +511,10 @@ CREATE TABLE public.agents (
     display_name TEXT NOT NULL,
     status TEXT DEFAULT 'pending',
     commission_enabled BOOLEAN DEFAULT TRUE,
+    service_pay_number TEXT UNIQUE,
+    cash_withdraw_till TEXT UNIQUE,
+    service_wallet_id UUID,
+    commission_wallet_id UUID,
     metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -630,6 +634,8 @@ CREATE UNIQUE INDEX idx_service_actor_customer_unique_reset
 CREATE INDEX idx_agents_user_reset ON public.agents(user_id);
 CREATE INDEX idx_agent_wallets_agent_reset ON public.agent_wallets(agent_id);
 CREATE INDEX idx_agent_wallets_owner_user_reset ON public.agent_wallets(owner_user_id);
+CREATE UNIQUE INDEX idx_agents_service_pay_number_reset ON public.agents(service_pay_number) WHERE service_pay_number IS NOT NULL;
+CREATE UNIQUE INDEX idx_agents_cash_withdraw_till_reset ON public.agents(cash_withdraw_till) WHERE cash_withdraw_till IS NOT NULL;
 CREATE INDEX idx_merchant_transactions_owner_reset ON public.merchant_transactions(owner_user_id);
 CREATE INDEX idx_merchant_transactions_customer_reset ON public.merchant_transactions(customer_user_id);
 CREATE INDEX idx_agent_transactions_owner_reset ON public.agent_transactions(owner_user_id);

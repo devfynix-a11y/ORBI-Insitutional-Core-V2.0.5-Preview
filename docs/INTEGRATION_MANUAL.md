@@ -195,6 +195,9 @@ The authoritative upgrade path is:
     * `role` is promoted to `MERCHANT` or `AGENT`
     * `registry_type` is promoted to `MERCHANT` or `AGENT`
     * agent approvals provision the `agents` operational record
+    * agent approvals generate a scan-to-pay `service_pay_number`
+    * agent approvals generate a direct cash service `cash_withdraw_till`
+    * both identifiers are linked to the agent service / commission wallet path
 6.  Mobile clients refresh profile/session state and expose the relevant merchant or agent UI.
 
 This model prevents direct self-promotion while preserving a single public signup flow.
@@ -776,6 +779,7 @@ Agent cash transaction:
   - Canonical money movement remains in `transactions` and `financial_ledger`
   - Agent-specific operational projection is written to `agent_transactions`
   - Agent operational wallet projection is written to `agent_wallets`
+  - Agent approval also writes `service_pay_number` and `cash_withdraw_till` to the agent profile and wallet projection metadata
 - Business interpretation:
   - Treated as service-operator cash activity rather than normal retail wallet usage
   - Supports agent-level visibility for deposit, withdrawal, float, and field activity
@@ -1100,8 +1104,16 @@ Both endpoints return projected operational wallet rows, for example:
       "status": "active",
       "metadata": {
         "management_tier": "linked",
-        "source_wallet_id": "canonical-wallet-uuid"
-      }
+        "source_wallet_id": "canonical-wallet-uuid",
+        "service_pay_number": "5212345678",
+        "cash_withdraw_till": "71123456",
+        "wallet_link_role": "agent_service_float",
+        "handles_commissions": true
+      },
+      "service_pay_number": "5212345678",
+      "cash_withdraw_till": "71123456",
+      "service_wallet_id": "canonical-wallet-uuid",
+      "commission_wallet_id": "canonical-wallet-uuid"
     }
   ]
 }

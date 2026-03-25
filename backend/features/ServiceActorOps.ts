@@ -6,6 +6,7 @@ import { UUID } from '../../services/utils.js';
 import type { AuthService } from '../../iam/authService.js';
 import type { User, UserRole } from '../../types.js';
 import { Messaging } from './MessagingService.js';
+import { createHash } from 'crypto';
 
 type ServiceActorRole = 'MERCHANT' | 'AGENT';
 
@@ -63,6 +64,138 @@ class ServiceActorOperations {
 
     private actorDeskLabel(role: ServiceActorRole) {
         return role === 'MERCHANT' ? 'Merchant desk' : 'Agent desk';
+    }
+
+    private deriveNumericCode(seed: string, totalLength: number, prefix: string) {
+        const hash = createHash('sha256').update(seed).digest('hex');
+        let digits = '';
+        for (let i = 0; i < hash.length && digits.length < totalLength - prefix.length; i += 2) {
+            digits += String(parseInt(hash.slice(i, i + 2), 16) % 10);
+        }
+        return `${prefix}${digits}`.slice(0, totalLength);
+    }
+
+    private async generateUniqueAgentNumber(
+        column: 'service_pay_number' | 'cash_withdraw_till',
+        seed: string,
+        totalLength: number,
+        prefix: string,
+    ) {
+        const sb = this.getDb();
+        if (!sb) throw new Error('DB_OFFLINE');
+
+        for (let attempt = 0; attempt < 8; attempt++) {
+            const candidate = this.deriveNumericCode(`${seed}:${column}:${attempt}`, totalLength, prefix);
+            const { data: existing } = await sb
+                .from('agents')
+                .select('id')
+                .eq(column, candidate)
+                .maybeSingle();
+
+            if (!existing?.id) {
+                return candidate;
+            }
+        }
+
+        throw new Error(`AGENT_${column.toUpperCase()}_GENERATION_FAILED`);
+    }
+
+    private async ensureAgentOperationalIdentity(
+        agentId: string,
+        userId: string,
+        primaryWalletId?: string | null,
+    ) {
+        const sb = this.getDb();
+        if (!sb) throw new Error('DB_OFFLINE');
+
+        const { data: agent } = await sb
+            .from('agents')
+            .select('id,user_id,service_pay_number,cash_withdraw_till,service_wallet_id,commission_wallet_id,metadata')
+            .eq('id', agentId)
+            .maybeSingle();
+        if (!agent) throw new Error('AGENT_PROFILE_NOT_FOUND');
+
+        const { data: user } = await sb
+            .from('users')
+            .select('customer_id,metadata')
+            .eq('id', userId)
+            .maybeSingle();
+
+        const identitySeed = `${userId}:${user?.customer_id || agentId}`;
+        const servicePayNumber =
+            agent.service_pay_number ||
+            (await this.generateUniqueAgentNumber('service_pay_number', identitySeed, 10, '52'));
+        const cashWithdrawTill =
+            agent.cash_withdraw_till ||
+            (await this.generateUniqueAgentNumber('cash_withdraw_till', identitySeed, 8, '71'));
+        const serviceWalletId = agent.service_wallet_id || primaryWalletId || null;
+        const commissionWalletId = agent.commission_wallet_id || primaryWalletId || null;
+        const agentMetadata = {
+            ...(agent.metadata || {}),
+            operational_numbers: {
+                service_pay_number: servicePayNumber,
+                cash_withdraw_till: cashWithdrawTill,
+            },
+            wallet_links: {
+                service_wallet_id: serviceWalletId,
+                commission_wallet_id: commissionWalletId,
+            },
+        };
+
+        const { error: updateAgentError } = await sb
+            .from('agents')
+            .update({
+                service_pay_number: servicePayNumber,
+                cash_withdraw_till: cashWithdrawTill,
+                service_wallet_id: serviceWalletId,
+                commission_wallet_id: commissionWalletId,
+                metadata: agentMetadata,
+                updated_at: new Date().toISOString(),
+            })
+            .eq('id', agentId);
+        if (updateAgentError) {
+            throw new Error(`AGENT_OPERATIONAL_IDENTITY_UPDATE_FAILED: ${updateAgentError.message}`);
+        }
+
+        const adminSb = getAdminSupabase();
+        if (adminSb) {
+            const { data: authUserResult, error: authUserError } = await adminSb.auth.admin.getUserById(userId);
+            if (authUserError) throw new Error(authUserError.message);
+
+            const currentMetadata = authUserResult?.user?.user_metadata || {};
+            const updatedUserMetadata = {
+                ...(user?.metadata || {}),
+                service_actor_identity: {
+                    ...(user?.metadata?.service_actor_identity || {}),
+                    agent: {
+                        service_pay_number: servicePayNumber,
+                        cash_withdraw_till: cashWithdrawTill,
+                        service_wallet_id: serviceWalletId,
+                        commission_wallet_id: commissionWalletId,
+                    },
+                },
+            };
+
+            await sb.from('users').update({ metadata: updatedUserMetadata }).eq('id', userId);
+
+            const { error: updateAuthError } = await adminSb.auth.admin.updateUserById(userId, {
+                user_metadata: {
+                    ...currentMetadata,
+                    agent_service_pay_number: servicePayNumber,
+                    agent_cash_withdraw_till: cashWithdrawTill,
+                    agent_service_wallet_id: serviceWalletId,
+                    agent_commission_wallet_id: commissionWalletId,
+                },
+            });
+            if (updateAuthError) throw new Error(updateAuthError.message);
+        }
+
+        return {
+            servicePayNumber,
+            cashWithdrawTill,
+            serviceWalletId,
+            commissionWalletId,
+        };
     }
 
     private async notifyServiceCustomerRegistration(actorId: string, actorRole: ServiceActorRole, customerUserId: string) {
@@ -267,6 +400,10 @@ class ServiceActorOperations {
                 display_name: displayName,
                 status: 'active',
                 commission_enabled: true,
+                service_pay_number: null,
+                cash_withdraw_till: null,
+                service_wallet_id: null,
+                commission_wallet_id: null,
                 metadata: {
                     actor_role: 'AGENT',
                     branch: actor?.user_metadata?.branch || null,
@@ -343,6 +480,16 @@ class ServiceActorOperations {
             .eq('user_id', userId)
             .eq('status', 'active');
 
+        const primaryBaseWallet =
+            (baseWallets || []).find((wallet: any) => wallet.is_primary === true) ||
+            (baseWallets || [])[0] ||
+            null;
+        const operationalIdentity = await this.ensureAgentOperationalIdentity(
+            agent.id,
+            userId,
+            primaryBaseWallet?.id || null,
+        );
+
         for (const wallet of baseWallets || []) {
             const { data: existing } = await sb
                 .from('agent_wallets')
@@ -364,6 +511,11 @@ class ServiceActorOperations {
                 metadata: {
                     management_tier: wallet.management_tier,
                     source_wallet_id: wallet.id,
+                    service_pay_number: operationalIdentity.servicePayNumber,
+                    cash_withdraw_till: operationalIdentity.cashWithdrawTill,
+                    wallet_link_role:
+                        wallet.id === operationalIdentity.serviceWalletId ? 'agent_service_float' : 'linked',
+                    handles_commissions: wallet.id === operationalIdentity.commissionWalletId,
                 },
                 updated_at: new Date().toISOString(),
             };
@@ -382,7 +534,13 @@ class ServiceActorOperations {
             .order('is_primary', { ascending: false })
             .order('created_at', { ascending: true });
 
-        return data || [];
+        return (data || []).map((wallet: any) => ({
+            ...wallet,
+            service_pay_number: operationalIdentity.servicePayNumber,
+            cash_withdraw_till: operationalIdentity.cashWithdrawTill,
+            service_wallet_id: operationalIdentity.serviceWalletId,
+            commission_wallet_id: operationalIdentity.commissionWalletId,
+        }));
     }
 
     public async getMerchantWallets(userId: string) {
@@ -397,11 +555,28 @@ class ServiceActorOperations {
         if (actorRole === 'MERCHANT') {
             await this.ensureMerchantProfile({ id: userId });
             await this.syncMerchantWallets(userId);
-            return;
+            return null;
         }
 
-        await this.ensureAgentProfile({ id: userId });
-        await this.syncAgentWallets(userId);
+        const agent = await this.ensureAgentProfile({ id: userId });
+        const wallets = await this.syncAgentWallets(userId);
+        const primaryWallet =
+            wallets.find((wallet: any) => wallet.is_primary) ||
+            wallets[0] ||
+            null;
+        const operationalIdentity = await this.ensureAgentOperationalIdentity(
+            agent.id,
+            userId,
+            primaryWallet?.base_wallet_id || primaryWallet?.id || null,
+        );
+
+        return {
+            actor_role: 'AGENT',
+            service_pay_number: operationalIdentity.servicePayNumber,
+            cash_withdraw_till: operationalIdentity.cashWithdrawTill,
+            service_wallet_id: operationalIdentity.serviceWalletId,
+            commission_wallet_id: operationalIdentity.commissionWalletId,
+        };
     }
 
     public async getMerchantTransactions(userId: string, limit = 50, offset = 0) {

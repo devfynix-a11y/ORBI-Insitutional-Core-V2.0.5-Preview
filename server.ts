@@ -1960,6 +1960,7 @@ v1.post('/admin/service-access/requests/:id/review', authenticate as any, valida
             updated_at: now,
         };
 
+        let provisioning: any = null;
         if (decision === 'APPROVED') {
             updatePayload.approved_at = now;
             await syncUserIdentityClassification(existing.user_id, {
@@ -1970,7 +1971,7 @@ v1.post('/admin/service-access/requests/:id/review', authenticate as any, valida
                     service_access_approved_role: existing.requested_role,
                 },
             });
-            await ServiceActorOps.provisionApprovedActorAccess(
+            provisioning = await ServiceActorOps.provisionApprovedActorAccess(
                 existing.user_id,
                 existing.requested_role,
             );
@@ -2000,7 +2001,7 @@ v1.post('/admin/service-access/requests/:id/review', authenticate as any, valida
             requestedRole: existing.requested_role,
         });
 
-        res.json({ success: true, data });
+        res.json({ success: true, data, provisioning });
     } catch (e: any) {
         console.error('[Admin] Service Access Review Error:', e);
         res.status(500).json({ success: false, error: e.message });

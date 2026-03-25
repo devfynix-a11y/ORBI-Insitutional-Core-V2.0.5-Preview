@@ -665,6 +665,10 @@ CREATE TABLE IF NOT EXISTS public.agents (
     display_name TEXT NOT NULL,
     status TEXT DEFAULT 'pending',
     commission_enabled BOOLEAN DEFAULT TRUE,
+    service_pay_number TEXT UNIQUE,
+    cash_withdraw_till TEXT UNIQUE,
+    service_wallet_id UUID,
+    commission_wallet_id UUID,
     metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -688,6 +692,18 @@ CREATE TABLE IF NOT EXISTS public.agent_wallets (
 
 DO $$
 BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='agents' AND column_name='service_pay_number') THEN
+        ALTER TABLE public.agents ADD COLUMN service_pay_number TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='agents' AND column_name='cash_withdraw_till') THEN
+        ALTER TABLE public.agents ADD COLUMN cash_withdraw_till TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='agents' AND column_name='service_wallet_id') THEN
+        ALTER TABLE public.agents ADD COLUMN service_wallet_id UUID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='agents' AND column_name='commission_wallet_id') THEN
+        ALTER TABLE public.agents ADD COLUMN commission_wallet_id UUID;
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='agent_wallets' AND column_name='owner_user_id') THEN
         ALTER TABLE public.agent_wallets ADD COLUMN owner_user_id UUID REFERENCES public.users(id) ON DELETE CASCADE;
     END IF;
@@ -701,6 +717,13 @@ BEGIN
         ALTER TABLE public.agent_wallets ADD COLUMN is_primary BOOLEAN DEFAULT FALSE;
     END IF;
 END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_service_pay_number
+    ON public.agents(service_pay_number)
+    WHERE service_pay_number IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_cash_withdraw_till
+    ON public.agents(cash_withdraw_till)
+    WHERE cash_withdraw_till IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS public.merchant_transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
