@@ -1,3 +1,9 @@
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='staff' AND column_name='address') THEN
+        ALTER TABLE public.staff ADD COLUMN address TEXT;
+    END IF;
+END $$;
 -- ORBI SOVEREIGN MASTER ARCHITECTURE V93.0 (ULTIMATE CONSOLIDATED RESET)
 -- WARNING: THIS SCRIPT WILL DROP AND RECREATE ALL TABLES
 
@@ -603,8 +609,8 @@ CREATE TABLE public.service_access_requests (
     user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
     requested_role TEXT NOT NULL,
     requested_registry_type TEXT NOT NULL,
-    current_role TEXT,
-    current_registry_type TEXT,
+    current_user_role TEXT,
+    current_user_registry_type TEXT,
     status TEXT DEFAULT 'pending',
     business_name TEXT,
     phone TEXT,

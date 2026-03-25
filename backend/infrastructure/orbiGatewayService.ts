@@ -7,7 +7,9 @@ export class OrbiGatewayService {
 
     constructor() {
         this.apiKey = process.env.ORBI_GATEWAY_API_KEY;
-        this.baseUrl = process.env.ORBI_GATEWAY_URL || process.env.ORBI_GATEWAY_BASE_URL;
+        this.baseUrl = this.normalizeBaseUrl(
+            process.env.ORBI_GATEWAY_URL || process.env.ORBI_GATEWAY_BASE_URL
+        );
         
         if (!this.apiKey) {
             console.warn('OrbiGatewayService: ORBI_GATEWAY_API_KEY is missing.');
@@ -15,6 +17,12 @@ export class OrbiGatewayService {
         if (!this.baseUrl) {
             console.warn('OrbiGatewayService: ORBI_GATEWAY_URL is missing.');
         }
+    }
+
+    private normalizeBaseUrl(url?: string): string | undefined {
+        const raw = url?.trim();
+        if (!raw) return undefined;
+        return raw.replace(/\/+$/, '').replace(/\/api$/, '');
     }
 
     private normalizePhone(phone: string): string {
@@ -38,7 +46,8 @@ export class OrbiGatewayService {
         const normalizedRecipient = this.normalizePhone(recipient);
 
         try {
-            const response = await fetch(`${this.baseUrl}/api/send-sms`, {
+            const endpoint = `${this.baseUrl}/api/send-sms`;
+            const response = await fetch(endpoint, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -57,7 +66,7 @@ export class OrbiGatewayService {
 
             if (!response.ok) {
                 const errorText = await response.text();
-                console.error(`OrbiGatewayService: Failed to send SMS. Status: ${response.status}, Error: ${errorText}`);
+                console.error(`OrbiGatewayService: Failed to send SMS. Endpoint: ${endpoint}, Status: ${response.status}, Error: ${errorText}`);
                 return false;
             }
 
@@ -76,7 +85,8 @@ export class OrbiGatewayService {
         }
 
         try {
-            const response = await fetch(`${this.baseUrl}/api/send-email`, {
+            const endpoint = `${this.baseUrl}/api/send-email`;
+            const response = await fetch(endpoint, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -97,7 +107,7 @@ export class OrbiGatewayService {
 
             if (!response.ok) {
                 const errorText = await response.text();
-                console.error(`OrbiGatewayService: Failed to send Email. Status: ${response.status}, Error: ${errorText}`);
+                console.error(`OrbiGatewayService: Failed to send Email. Endpoint: ${endpoint}, Status: ${response.status}, Error: ${errorText}`);
                 return false;
             }
 
@@ -129,7 +139,8 @@ export class OrbiGatewayService {
 
             console.log(`[OrbiGatewayService] Full Push Payload for POST request: ${JSON.stringify(payload, null, 2)}`);
 
-            const response = await fetch(`${this.baseUrl}/api/send-push`, {
+            const endpoint = `${this.baseUrl}/api/send-push`;
+            const response = await fetch(endpoint, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -140,7 +151,7 @@ export class OrbiGatewayService {
 
             if (!response.ok) {
                 const errorText = await response.text();
-                console.error(`OrbiGatewayService: Failed to send Push. Status: ${response.status}, Error: ${errorText}`);
+                console.error(`OrbiGatewayService: Failed to send Push. Endpoint: ${endpoint}, Status: ${response.status}, Error: ${errorText}`);
                 return false;
             }
 
@@ -183,7 +194,8 @@ export class OrbiGatewayService {
 
             console.log(`[OrbiGatewayService] Full Template Payload for POST request: ${JSON.stringify(payload, null, 2)}`);
 
-            const response = await fetch(`${this.baseUrl}/api/send-template`, {
+            const endpoint = `${this.baseUrl}/api/send-template`;
+            const response = await fetch(endpoint, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -194,7 +206,7 @@ export class OrbiGatewayService {
 
             if (!response.ok) {
                 const errorText = await response.text();
-                console.error(`OrbiGatewayService: Failed to send template message. Status: ${response.status}, Error: ${errorText}`);
+                console.error(`OrbiGatewayService: Failed to send template message. Endpoint: ${endpoint}, Status: ${response.status}, Error: ${errorText}`);
                 return false;
             }
 

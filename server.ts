@@ -48,6 +48,7 @@ import { RecoveryService } from './services/security/recoveryService.js';
 import { OTPService } from './backend/security/otpService.js';
 import { Sessions } from './backend/src/modules/session/session.service.js';
 import { Messaging } from './backend/features/MessagingService.js';
+import { ServiceActorOps } from './backend/features/ServiceActorOps.js';
 
 // Helper for Gemini calls with retry logic
 async function callGeminiWithRetry(ai: GoogleGenAI, params: any, retries = 3, delay = 1000): Promise<any> {
@@ -1468,8 +1469,8 @@ v1.post('/service-access/requests', authenticate as any, validate(ServiceAccessR
             user_id: session.sub,
             requested_role: requestedRole,
             requested_registry_type: requestedRegistryType,
-            current_role: currentRole,
-            current_registry_type: currentRegistryType,
+            current_user_role: currentRole,
+            current_user_registry_type: currentRegistryType,
             business_name: req.body.business_name,
             phone: req.body.phone || session.user?.phone || session.user?.user_metadata?.phone || null,
             note: req.body.note,
@@ -1893,7 +1894,7 @@ v1.post('/admin/users/register', authenticate as any, validate(ManagedIdentityCr
 v1.get('/admin/service-access/requests', authenticate as any, async (req, res) => {
     const session = (req as any).session;
     const role = session.role || session.user?.role;
-    if (role !== 'ADMIN' && role !== 'SUPER_ADMIN' && role !== 'CUSTOMER_CARE' && role !== 'AUDIT') {
+    if (role !== 'ADMIN' && role !== 'SUPER_ADMIN' && role !== 'CUSTOMER_CARE' && role !== 'AUDIT' && role !== 'HUMAN_RESOURCE') {
         return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
     }
 
@@ -1925,7 +1926,7 @@ v1.get('/admin/service-access/requests', authenticate as any, async (req, res) =
 v1.post('/admin/service-access/requests/:id/review', authenticate as any, validate(ServiceAccessRequestReviewSchema), async (req, res) => {
     const session = (req as any).session;
     const role = session.role || session.user?.role;
-    if (role !== 'ADMIN' && role !== 'SUPER_ADMIN') {
+    if (role !== 'ADMIN' && role !== 'SUPER_ADMIN' && role !== 'CUSTOMER_CARE' && role !== 'HUMAN_RESOURCE') {
         return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
     }
 
@@ -1969,6 +1970,10 @@ v1.post('/admin/service-access/requests/:id/review', authenticate as any, valida
                     service_access_approved_role: existing.requested_role,
                 },
             });
+            await ServiceActorOps.provisionApprovedActorAccess(
+                existing.user_id,
+                existing.requested_role,
+            );
 
             await Messaging.dispatchServiceActivity(
                 existing.user_id,

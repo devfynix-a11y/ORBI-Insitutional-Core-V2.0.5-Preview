@@ -18,7 +18,37 @@ import { TemplateName, TemplatePayloads } from '../templates/template_types.js';
  * Orchestrates direct-to-user alerts and AI-synthesized system notifications.
  */
 class MessagingService {
+    private readonly profileCache = new Map<string, { value: any; expiresAt: number }>();
+    private readonly profileInflight = new Map<string, Promise<any>>();
+    private readonly PROFILE_CACHE_TTL_MS = 30_000;
+
     private async getUserProfile(userId: string): Promise<any> {
+        const now = Date.now();
+        const cached = this.profileCache.get(userId);
+        if (cached && cached.expiresAt > now) {
+            return cached.value;
+        }
+
+        const inflight = this.profileInflight.get(userId);
+        if (inflight) {
+            return inflight;
+        }
+
+        const loadPromise = this.loadUserProfile(userId);
+        this.profileInflight.set(userId, loadPromise);
+        try {
+            const profile = await loadPromise;
+            this.profileCache.set(userId, {
+                value: profile,
+                expiresAt: now + this.PROFILE_CACHE_TTL_MS,
+            });
+            return profile;
+        } finally {
+            this.profileInflight.delete(userId);
+        }
+    }
+
+    private async loadUserProfile(userId: string): Promise<any> {
         const sb = getAdminSupabase();
         if (sb) {
             let { data: profile } = await sb.from('users')
@@ -636,7 +666,7 @@ CEO, ORBI`
         const sb = getAdminSupabase();
         if (sb) {
             const { data } = await sb.from('user_messages')
-                .select('*')
+                .select('id,user_id,subject,body,category,is_read,created_at')
                 .eq('user_id', userId)
                 .order('created_at', { ascending: false })
                 .range(offset, offset + limit - 1);

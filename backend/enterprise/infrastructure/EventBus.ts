@@ -1,6 +1,7 @@
 import { CloudEvent } from '../EnterpriseTypes.js';
 import { UUID } from '../../../services/utils.js';
 import { getAdminSupabase } from '../../../services/supabaseClient.js';
+import { RedisStreams } from '../../infrastructure/RedisStreams.js';
 
 /**
  * Enterprise Event Bus
@@ -24,24 +25,33 @@ export class EventBus {
 
         console.log(`[EventBus] 📢 Publishing Event: ${type}`, event.id);
         
-        // 1. Save to Outbox for durability (guaranteed delivery)
+        // 1. Save to outbox for durability, then fan out via Redis Streams when available.
         const sb = getAdminSupabase();
         if (sb) {
             try {
-                await sb.from('outbox_events').insert({
+                const { data: outboxRow, error } = await sb.from('outbox_events').insert({
                     event_type: type,
                     payload: event,
                     status: 'PENDING'
-                });
+                }).select('id').single();
+
+                if (error) {
+                    throw error;
+                }
+
+                if (RedisStreams.isAvailable() && outboxRow?.id) {
+                    const { stream } = RedisStreams.getOutboxConfig();
+                    await RedisStreams.publish(stream, {
+                        event_id: String(outboxRow.id),
+                        event_type: String(type),
+                    });
+                }
             } catch (e) {
                 console.error("[EventBus] Failed to save to outbox", e);
             }
         }
 
-        // 2. In production, this would push to Kafka, RabbitMQ, or Redis Streams.
-        // e.g., await KafkaProducer.send({ topic: 'fintech-events', messages: [{ value: JSON.stringify(event) }] });
-        
-        // For the preview environment, we simulate async dispatch
+        // 2. Preview-only local simulation remains for enterprise sidecar consumers.
         this.simulateAsyncConsumers(event);
     }
 

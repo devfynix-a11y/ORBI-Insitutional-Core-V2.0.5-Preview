@@ -4,20 +4,25 @@ import { getAdminSupabase } from '../../services/supabaseClient.js';
 class SocketRegistryService {
     private clients: Map<string, Set<WebSocket>> = new Map();
     private isListening = false;
+    private broadcastChannel: ReturnType<NonNullable<ReturnType<typeof getAdminSupabase>>['channel']> | null = null;
+    private broadcastChannelReady: Promise<void> | null = null;
 
     constructor() {
         this.setupRealtime();
     }
 
     private setupRealtime() {
-        if (this.isListening) return;
+        if (this.broadcastChannelReady) return;
         const sb = getAdminSupabase();
         if (!sb) {
             console.warn("[SocketRegistry] Supabase client not available. Cross-node broadcast disabled.");
             return;
         }
 
-        sb.channel('system_broadcasts')
+        const channel = sb.channel('system_broadcasts');
+        this.broadcastChannel = channel;
+        this.broadcastChannelReady = new Promise((resolve) => {
+            channel
             .on('broadcast', { event: 'user_notification' }, (payload) => {
                 const { userId, message } = payload.payload;
                 this.sendLocal(userId, message);
@@ -26,8 +31,10 @@ class SocketRegistryService {
                 if (status === 'SUBSCRIBED') {
                     this.isListening = true;
                     console.info("[SocketRegistry] Subscribed to Supabase Realtime for cross-node broadcasts.");
+                    resolve();
                 }
             });
+        });
     }
 
     public register(userId: string, ws: WebSocket) {
@@ -64,10 +71,10 @@ class SocketRegistryService {
         }
 
         // If not local, broadcast to other nodes
-        const sb = getAdminSupabase();
-        if (sb) {
+        if (this.broadcastChannel && this.broadcastChannelReady) {
             try {
-                await sb.channel('system_broadcasts').send({
+                await this.broadcastChannelReady;
+                await this.broadcastChannel.send({
                     type: 'broadcast',
                     event: 'user_notification',
                     payload: { userId, message: payload }

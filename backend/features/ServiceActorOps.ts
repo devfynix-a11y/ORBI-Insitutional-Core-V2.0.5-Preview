@@ -173,18 +173,20 @@ class ServiceActorOperations {
         const candidateWalletIds = [transaction?.to_wallet_id, transaction?.wallet_id, transaction?.from_wallet_id]
             .filter((value, index, arr) => Boolean(value) && arr.indexOf(value) === index);
 
-        for (const walletId of candidateWalletIds) {
-            const { data: wallet } = await sb
-                .from('wallets')
-                .select('user_id')
-                .eq('id', walletId)
-                .maybeSingle();
-
-            if (wallet?.user_id && wallet.user_id !== actorUserId) {
-                return wallet.user_id;
-            }
+        if (candidateWalletIds.length === 0) {
+            return null;
         }
 
+        const { data: wallets } = await sb
+            .from('wallets')
+            .select('id,user_id')
+            .in('id', candidateWalletIds);
+
+        const walletMap = new Map((wallets || []).map((wallet: any) => [wallet.id, wallet.user_id]));
+        for (const walletId of candidateWalletIds) {
+            const userId = walletMap.get(walletId);
+            if (userId && userId !== actorUserId) return userId;
+        }
         return null;
     }
 
@@ -194,7 +196,7 @@ class ServiceActorOperations {
 
         const { data } = await sb
             .from('wallets')
-            .select('*')
+            .select('id,currency')
             .eq('user_id', userId)
             .eq('status', 'active')
             .order('is_primary', { ascending: false })
@@ -218,7 +220,7 @@ class ServiceActorOperations {
 
         const { data: existing } = await sb
             .from('merchants')
-            .select('*')
+            .select('id')
             .eq('owner_user_id', actorId)
             .maybeSingle();
 
@@ -234,7 +236,7 @@ class ServiceActorOperations {
             },
         };
 
-        const { data, error } = await sb.from('merchants').insert(payload).select('*').single();
+        const { data, error } = await sb.from('merchants').insert(payload).select('id').single();
         if (error) throw new Error(`MERCHANT_PROFILE_CREATE_FAILED: ${error.message}`);
         return data;
     }
@@ -252,7 +254,7 @@ class ServiceActorOperations {
 
         const { data: existing } = await sb
             .from('agents')
-            .select('*')
+            .select('id')
             .eq('user_id', actorId)
             .maybeSingle();
 
@@ -270,7 +272,7 @@ class ServiceActorOperations {
                     branch: actor?.user_metadata?.branch || null,
                 },
             })
-            .select('*')
+            .select('id')
             .single();
 
         if (error) throw new Error(`AGENT_PROFILE_CREATE_FAILED: ${error.message}`);
@@ -284,7 +286,7 @@ class ServiceActorOperations {
         const merchant = await this.ensureMerchantProfile({ id: userId });
         const { data: baseWallets } = await sb
             .from('wallets')
-            .select('*')
+            .select('id,name,type,is_primary,balance,currency,status,management_tier')
             .eq('user_id', userId)
             .eq('status', 'active');
 
@@ -337,7 +339,7 @@ class ServiceActorOperations {
         const agent = await this.ensureAgentProfile({ id: userId });
         const { data: baseWallets } = await sb
             .from('wallets')
-            .select('*')
+            .select('id,name,type,is_primary,balance,currency,status,management_tier')
             .eq('user_id', userId)
             .eq('status', 'active');
 
@@ -389,6 +391,17 @@ class ServiceActorOperations {
 
     public async getAgentWallets(userId: string) {
         return this.syncAgentWallets(userId);
+    }
+
+    public async provisionApprovedActorAccess(userId: string, actorRole: ServiceActorRole) {
+        if (actorRole === 'MERCHANT') {
+            await this.ensureMerchantProfile({ id: userId });
+            await this.syncMerchantWallets(userId);
+            return;
+        }
+
+        await this.ensureAgentProfile({ id: userId });
+        await this.syncAgentWallets(userId);
     }
 
     public async getMerchantTransactions(userId: string, limit = 50, offset = 0) {

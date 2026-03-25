@@ -1,3 +1,9 @@
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='staff' AND column_name='address') THEN
+        ALTER TABLE public.staff ADD COLUMN address TEXT;
+    END IF;
+END $$;
 -- ORBI SOVEREIGN MASTER SCHEMA V93.0 (IDEMPOTENT MASTER KEY)
 -- This script is designed to be run multiple times without data loss.
 -- It adds missing columns, tables, and updates functions to the latest version.
@@ -634,12 +640,11 @@ CREATE TABLE IF NOT EXISTS public.merchant_fees (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_merchants_owner ON public.merchants(owner_user_id);
-CREATE INDEX IF NOT EXISTS idx_merchant_wallets_merchant ON public.merchant_wallets(merchant_id);
-CREATE INDEX IF NOT EXISTS idx_merchant_wallets_owner_user ON public.merchant_wallets(owner_user_id);
-
 DO $$
 BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='merchants' AND column_name='owner_user_id') THEN
+        ALTER TABLE public.merchants ADD COLUMN owner_user_id UUID REFERENCES public.users(id) ON DELETE CASCADE;
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='merchant_wallets' AND column_name='owner_user_id') THEN
         ALTER TABLE public.merchant_wallets ADD COLUMN owner_user_id UUID REFERENCES public.users(id) ON DELETE CASCADE;
     END IF;
@@ -681,6 +686,22 @@ CREATE TABLE IF NOT EXISTS public.agent_wallets (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='agent_wallets' AND column_name='owner_user_id') THEN
+        ALTER TABLE public.agent_wallets ADD COLUMN owner_user_id UUID REFERENCES public.users(id) ON DELETE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='agent_wallets' AND column_name='base_wallet_id') THEN
+        ALTER TABLE public.agent_wallets ADD COLUMN base_wallet_id UUID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='agent_wallets' AND column_name='wallet_type') THEN
+        ALTER TABLE public.agent_wallets ADD COLUMN wallet_type TEXT DEFAULT 'operating';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='agent_wallets' AND column_name='is_primary') THEN
+        ALTER TABLE public.agent_wallets ADD COLUMN is_primary BOOLEAN DEFAULT FALSE;
+    END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS public.merchant_transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     transaction_id UUID UNIQUE REFERENCES public.transactions(id) ON DELETE CASCADE,
@@ -698,6 +719,16 @@ CREATE TABLE IF NOT EXISTS public.merchant_transactions (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='merchant_transactions' AND column_name='owner_user_id') THEN
+        ALTER TABLE public.merchant_transactions ADD COLUMN owner_user_id UUID REFERENCES public.users(id) ON DELETE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='merchant_transactions' AND column_name='customer_user_id') THEN
+        ALTER TABLE public.merchant_transactions ADD COLUMN customer_user_id UUID REFERENCES public.users(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS public.agent_transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     transaction_id UUID UNIQUE REFERENCES public.transactions(id) ON DELETE CASCADE,
@@ -714,6 +745,16 @@ CREATE TABLE IF NOT EXISTS public.agent_transactions (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='agent_transactions' AND column_name='owner_user_id') THEN
+        ALTER TABLE public.agent_transactions ADD COLUMN owner_user_id UUID REFERENCES public.users(id) ON DELETE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='agent_transactions' AND column_name='customer_user_id') THEN
+        ALTER TABLE public.agent_transactions ADD COLUMN customer_user_id UUID REFERENCES public.users(id) ON DELETE SET NULL;
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS public.service_actor_customer_links (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -758,8 +799,8 @@ CREATE TABLE IF NOT EXISTS public.service_access_requests (
     user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
     requested_role TEXT NOT NULL,
     requested_registry_type TEXT NOT NULL,
-    current_role TEXT,
-    current_registry_type TEXT,
+    current_user_role TEXT,
+    current_user_registry_type TEXT,
     status TEXT DEFAULT 'pending',
     business_name TEXT,
     phone TEXT,
@@ -774,6 +815,56 @@ CREATE TABLE IF NOT EXISTS public.service_access_requests (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'service_access_requests'
+          AND column_name = 'current_role'
+    ) THEN
+        ALTER TABLE public.service_access_requests
+            RENAME COLUMN "current_role" TO current_user_role;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'service_access_requests'
+          AND column_name = 'current_registry_type'
+    ) THEN
+        ALTER TABLE public.service_access_requests
+            RENAME COLUMN "current_registry_type" TO current_user_registry_type;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'service_access_requests'
+          AND column_name = 'current_user_role'
+    ) THEN
+        ALTER TABLE public.service_access_requests
+            ADD COLUMN current_user_role TEXT;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'service_access_requests'
+          AND column_name = 'current_user_registry_type'
+    ) THEN
+        ALTER TABLE public.service_access_requests
+            ADD COLUMN current_user_registry_type TEXT;
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_merchants_owner ON public.merchants(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_merchant_wallets_merchant ON public.merchant_wallets(merchant_id);
+CREATE INDEX IF NOT EXISTS idx_merchant_wallets_owner_user ON public.merchant_wallets(owner_user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_service_actor_customer_unique
     ON public.service_actor_customer_links(actor_user_id, customer_user_id);
 CREATE INDEX IF NOT EXISTS idx_agents_user ON public.agents(user_id);
@@ -1600,6 +1691,8 @@ CREATE TABLE IF NOT EXISTS public.background_jobs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_background_jobs_status ON public.background_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_background_jobs_claim ON public.background_jobs(status, attempts, created_at);
+CREATE INDEX IF NOT EXISTS idx_outbox_events_pending ON public.outbox_events(status, created_at);
 
 -- 4. JWT Revocation Blocklist
 CREATE TABLE IF NOT EXISTS public.revoked_tokens (
