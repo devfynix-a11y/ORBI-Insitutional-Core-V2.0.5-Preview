@@ -44,6 +44,10 @@ export interface Wallet {
     initialBalance: number;
     createdAt?: string;
     user_id?: string;
+    status?: string;
+    is_locked?: boolean;
+    locked_at?: string;
+    lock_reason?: string;
     metadata?: any;
 }
 

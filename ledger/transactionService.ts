@@ -9,6 +9,7 @@ import { Messaging } from '../backend/features/MessagingService.js';
 import { SocketRegistry } from '../backend/infrastructure/SocketRegistry.js';
 import { TransactionStateMachine } from '../backend/ledger/stateMachine.js';
 import { RiskComplianceEngine } from '../backend/security/RiskComplianceEngine.js';
+import { PerfMonitor } from '../backend/infrastructure/PerfMonitor.js';
 
 /**
  * INSTITUTIONAL LEDGER SERVICE (V22.0 Titanium)
@@ -652,10 +653,13 @@ export class TransactionService {
             return [];
         }
 
-        try {
+        return await PerfMonitor.track(`Ledger.getLatestTransactions:${userId}:${limit}:${offset}`, async () => {
+            try {
             // 1. Get User's Wallet IDs (to find incoming transactions)
-            const { data: wallets } = await sb.from('wallets').select('id').eq('user_id', userId);
-            const { data: vaults } = await sb.from('platform_vaults').select('id').eq('user_id', userId);
+            const [{ data: wallets }, { data: vaults }] = await Promise.all([
+                sb.from('wallets').select('id').eq('user_id', userId),
+                sb.from('platform_vaults').select('id').eq('user_id', userId),
+            ]);
             
             const walletIds = [
                 ...(wallets?.map(w => w.id) || []),
@@ -667,7 +671,7 @@ export class TransactionService {
             // 2. Query Transactions (Outgoing OR Incoming)
             let query = sb
                 .from('transactions')
-                .select('*')
+                .select('id, reference_id, user_id, amount, currency, description, type, status, created_at, wallet_id, to_wallet_id, metadata, category_id')
                 .order('created_at', { ascending: false })
                 .range(offset, offset + limit - 1);
 
@@ -699,8 +703,13 @@ export class TransactionService {
                 if (tx.user_id) allUserIds.add(tx.user_id);
             });
 
-            const { data: walletNames } = await sb.from('wallets').select('id, name, user_id').in('id', Array.from(allWalletIds));
-            const { data: vaultNames } = await sb.from('platform_vaults').select('id, name, user_id').in('id', Array.from(allWalletIds));
+            const walletIdList = Array.from(allWalletIds);
+            const { data: walletNames } = walletIdList.length
+                ? await sb.from('wallets').select('id, name, user_id').in('id', walletIdList)
+                : { data: [] as any[] };
+            const { data: vaultNames } = walletIdList.length
+                ? await sb.from('platform_vaults').select('id, name, user_id').in('id', walletIdList)
+                : { data: [] as any[] };
             
             const walletMap: Record<string, any> = {};
             [...(walletNames || []), ...(vaultNames || [])].forEach(w => {
@@ -708,7 +717,10 @@ export class TransactionService {
                 if (w.user_id) allUserIds.add(w.user_id);
             });
 
-            const { data: userDetails } = await sb.from('users').select('id, full_name, customer_id').in('id', Array.from(allUserIds));
+            const userIdList = Array.from(allUserIds);
+            const { data: userDetails } = userIdList.length
+                ? await sb.from('users').select('id, full_name, customer_id').in('id', userIdList)
+                : { data: [] as any[] };
             const userMap: Record<string, any> = {};
             (userDetails || []).forEach(u => userMap[u.id] = u);
 
@@ -754,10 +766,11 @@ export class TransactionService {
                     }
                 };
             });
-        } catch (e: any) {
-            console.error(`[Ledger] Forensic fetch failed: ${e.message}`);
-            return [];
-        }
+            } catch (e: any) {
+                console.error(`[Ledger] Forensic fetch failed: ${e.message}`);
+                return [];
+            }
+        });
     }
 
     /**
@@ -771,17 +784,18 @@ export class TransactionService {
             return [];
         }
 
-        try {
-            const { data, error } = await sb
-                .from('transactions')
-                .select('*')
-                .order('created_at', { ascending: false })
-                .range(offset, offset + limit - 1);
+        return await PerfMonitor.track(`Ledger.getAllTransactions:${limit}:${offset}`, async () => {
+            try {
+                const { data, error } = await sb
+                    .from('transactions')
+                    .select('id, reference_id, user_id, amount, currency, description, type, status, created_at, wallet_id, to_wallet_id, metadata, category_id')
+                    .order('created_at', { ascending: false })
+                    .range(offset, offset + limit - 1);
 
-            if (error) throw error;
-            if (!data) return [];
+                if (error) throw error;
+                if (!data) return [];
 
-            const translated = await DataVault.translate(data);
+                const translated = await DataVault.translate(data);
 
             // Enrichment for Global View
             const allWalletIds = new Set<string>();
@@ -793,8 +807,13 @@ export class TransactionService {
                 if (tx.user_id) allUserIds.add(tx.user_id);
             });
 
-            const { data: walletNames } = await sb.from('wallets').select('id, name, user_id').in('id', Array.from(allWalletIds));
-            const { data: vaultNames } = await sb.from('platform_vaults').select('id, name, user_id').in('id', Array.from(allWalletIds));
+                const walletIdList = Array.from(allWalletIds);
+                const { data: walletNames } = walletIdList.length
+                    ? await sb.from('wallets').select('id, name, user_id').in('id', walletIdList)
+                    : { data: [] as any[] };
+                const { data: vaultNames } = walletIdList.length
+                    ? await sb.from('platform_vaults').select('id, name, user_id').in('id', walletIdList)
+                    : { data: [] as any[] };
             
             const walletMap: Record<string, any> = {};
             [...(walletNames || []), ...(vaultNames || [])].forEach(w => {
@@ -802,11 +821,14 @@ export class TransactionService {
                 if (w.user_id) allUserIds.add(w.user_id);
             });
 
-            const { data: userDetails } = await sb.from('users').select('id, full_name, customer_id').in('id', Array.from(allUserIds));
+                const userIdList = Array.from(allUserIds);
+                const { data: userDetails } = userIdList.length
+                    ? await sb.from('users').select('id, full_name, customer_id').in('id', userIdList)
+                    : { data: [] as any[] };
             const userMap: Record<string, any> = {};
             (userDetails || []).forEach(u => userMap[u.id] = u);
 
-            return translated.map((tx: any) => {
+                return translated.map((tx: any) => {
                 const sourceWallet = walletMap[tx.walletId];
                 const targetWallet = walletMap[tx.toWalletId];
                 const senderUser = userMap[tx.user_id];
@@ -831,11 +853,12 @@ export class TransactionService {
                         customerId: receiverUser?.customer_id || 'N/A'
                     }
                 };
-            });
-        } catch (e: any) {
-            console.error(`[Ledger] Global Forensic fetch failed: ${e.message}`);
-            return [];
-        }
+                });
+            } catch (e: any) {
+                console.error(`[Ledger] Global Forensic fetch failed: ${e.message}`);
+                return [];
+            }
+        });
     }
 
     /**

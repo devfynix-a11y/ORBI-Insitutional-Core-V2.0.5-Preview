@@ -183,6 +183,9 @@ CREATE TABLE public.wallets (
     type TEXT DEFAULT 'operating', 
     is_primary BOOLEAN DEFAULT FALSE,
     status TEXT DEFAULT 'active',
+    is_locked BOOLEAN DEFAULT FALSE,
+    locked_at TIMESTAMP WITH TIME ZONE,
+    lock_reason TEXT,
     metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -198,6 +201,10 @@ CREATE TABLE public.platform_vaults (
     currency TEXT DEFAULT 'TZS', 
     color TEXT, 
     icon TEXT,
+    status TEXT DEFAULT 'active',
+    is_locked BOOLEAN DEFAULT FALSE,
+    locked_at TIMESTAMP WITH TIME ZONE,
+    lock_reason TEXT,
     metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -994,6 +1001,40 @@ RETURNS void AS $$
 DECLARE
     leg JSONB;
 BEGIN
+    IF p_wallet_id IS NOT NULL AND (
+        EXISTS (
+            SELECT 1 FROM public.wallets w
+            WHERE w.id = p_wallet_id
+              AND (COALESCE(w.is_locked, FALSE)
+                   OR lower(COALESCE(w.status, '')) IN ('locked', 'frozen', 'blocked', 'suspended'))
+        )
+        OR EXISTS (
+            SELECT 1 FROM public.platform_vaults v
+            WHERE v.id = p_wallet_id
+              AND (COALESCE(v.is_locked, FALSE)
+                   OR lower(COALESCE(v.status, '')) IN ('locked', 'frozen', 'blocked', 'suspended'))
+        )
+    ) THEN
+        RAISE EXCEPTION 'WALLET_LOCKED: Source wallet is locked';
+    END IF;
+
+    IF p_to_wallet_id IS NOT NULL AND (
+        EXISTS (
+            SELECT 1 FROM public.wallets w
+            WHERE w.id = p_to_wallet_id
+              AND (COALESCE(w.is_locked, FALSE)
+                   OR lower(COALESCE(w.status, '')) IN ('locked', 'frozen', 'blocked', 'suspended'))
+        )
+        OR EXISTS (
+            SELECT 1 FROM public.platform_vaults v
+            WHERE v.id = p_to_wallet_id
+              AND (COALESCE(v.is_locked, FALSE)
+                   OR lower(COALESCE(v.status, '')) IN ('locked', 'frozen', 'blocked', 'suspended'))
+        )
+    ) THEN
+        RAISE EXCEPTION 'WALLET_LOCKED: Target wallet is locked';
+    END IF;
+
     INSERT INTO public.transactions (
         id, user_id, wallet_id, to_wallet_id, amount, description, type, status, date, metadata, category_id, reference_id
     ) VALUES (
@@ -1003,6 +1044,21 @@ BEGIN
 
     FOR leg IN SELECT * FROM jsonb_array_elements(p_legs)
     LOOP
+        IF EXISTS (
+            SELECT 1 FROM public.wallets w
+            WHERE w.id = (leg->>'wallet_id')::UUID
+              AND (COALESCE(w.is_locked, FALSE)
+                   OR lower(COALESCE(w.status, '')) IN ('locked', 'frozen', 'blocked', 'suspended'))
+        )
+        OR EXISTS (
+            SELECT 1 FROM public.platform_vaults v
+            WHERE v.id = (leg->>'wallet_id')::UUID
+              AND (COALESCE(v.is_locked, FALSE)
+                   OR lower(COALESCE(v.status, '')) IN ('locked', 'frozen', 'blocked', 'suspended'))
+        ) THEN
+            RAISE EXCEPTION 'WALLET_LOCKED: Wallet % is locked', (leg->>'wallet_id');
+        END IF;
+
         INSERT INTO public.financial_ledger (
             id, transaction_id, user_id, wallet_id, entry_type, amount, balance_after, balance_after_encrypted, description
         ) VALUES (
@@ -1038,6 +1094,21 @@ DECLARE
 BEGIN
     FOR leg IN SELECT * FROM jsonb_array_elements(p_legs)
     LOOP
+        IF EXISTS (
+            SELECT 1 FROM public.wallets w
+            WHERE w.id = (leg->>'wallet_id')::UUID
+              AND (COALESCE(w.is_locked, FALSE)
+                   OR lower(COALESCE(w.status, '')) IN ('locked', 'frozen', 'blocked', 'suspended'))
+        )
+        OR EXISTS (
+            SELECT 1 FROM public.platform_vaults v
+            WHERE v.id = (leg->>'wallet_id')::UUID
+              AND (COALESCE(v.is_locked, FALSE)
+                   OR lower(COALESCE(v.status, '')) IN ('locked', 'frozen', 'blocked', 'suspended'))
+        ) THEN
+            RAISE EXCEPTION 'WALLET_LOCKED: Wallet % is locked', (leg->>'wallet_id');
+        END IF;
+
         INSERT INTO public.financial_ledger (
             id, transaction_id, user_id, wallet_id, entry_type, amount, balance_after, balance_after_encrypted, description
         ) VALUES (
@@ -1380,7 +1451,11 @@ CREATE POLICY "Admin manage apps" ON public.app_registry FOR ALL USING ((SELECT 
 CREATE POLICY "Admin view anomalies" ON public.provider_anomalies FOR SELECT USING ((SELECT public.get_auth_role()) IN ('SUPER_ADMIN', 'ADMIN', 'AUDIT', 'FRAUD'));
 
 -- Strategy
-CREATE POLICY "Users manage own goals" ON public.goals FOR ALL USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users manage own goals" ON public.goals;
+CREATE POLICY "Users manage own goals" ON public.goals
+    FOR ALL
+    USING (auth.uid() = user_id)
+    WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Users manage own categories" ON public.categories FOR ALL USING (auth.uid() = user_id);
 CREATE POLICY "Users manage own tasks" ON public.tasks FOR ALL USING (auth.uid() = user_id);
 
@@ -1430,6 +1505,17 @@ CREATE INDEX IF NOT EXISTS idx_offline_transaction_sessions_status ON public.off
 CREATE INDEX IF NOT EXISTS idx_outbound_sms_request_id ON public.outbound_sms_messages(request_id);
 CREATE INDEX IF NOT EXISTS idx_wallets_user ON public.wallets(user_id);
 CREATE INDEX IF NOT EXISTS idx_goals_user ON public.goals(user_id);
+CREATE INDEX IF NOT EXISTS idx_external_fund_movements_user ON public.external_fund_movements(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_external_fund_movements_provider ON public.external_fund_movements(provider_id, status);
+CREATE INDEX IF NOT EXISTS idx_external_fund_movements_reference ON public.external_fund_movements(external_reference);
+CREATE INDEX IF NOT EXISTS idx_settlement_lifecycle_phase ON public.settlement_lifecycle(current_phase, auto_settle_at);
+CREATE INDEX IF NOT EXISTS idx_settlement_lifecycle_user ON public.settlement_lifecycle(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_provider_routing_rules_lookup ON public.provider_routing_rules(rail, operation_code, currency, country_code, status, priority);
+CREATE INDEX IF NOT EXISTS idx_platform_fee_configs_lookup ON public.platform_fee_configs(flow_code, status, currency, provider_id, rail, channel, direction, operation_type, transaction_type, priority);
+CREATE INDEX IF NOT EXISTS idx_service_commissions_actor ON public.service_commissions(actor_user_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_service_commissions_source ON public.service_commissions(source_transaction_id);
+CREATE INDEX IF NOT EXISTS idx_agent_transactions_owner ON public.agent_transactions(owner_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_merchant_transactions_owner ON public.merchant_transactions(owner_user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_categories_user ON public.categories(user_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_user ON public.tasks(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_messages_user_read ON public.user_messages(user_id, is_read);

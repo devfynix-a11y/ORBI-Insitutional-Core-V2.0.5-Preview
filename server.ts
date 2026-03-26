@@ -19,7 +19,7 @@ import { PolicyEngine } from './backend/ledger/PolicyEngine.js';
 import { ConfigClient } from './backend/infrastructure/RulesConfigClient.js';
 import { 
     LoginSchema, SignUpSchema, PaymentIntentSchema, 
-    WalletCreateSchema, GoalCreateSchema, GoalUpdateSchema, KYCSubmitSchema, KYCReviewSchema,
+    WalletCreateSchema, WalletLockSchema, WalletUnlockSchema, GoalCreateSchema, GoalUpdateSchema, KYCSubmitSchema, KYCReviewSchema,
     AccountStatusUpdateSchema, UserProfileUpdateSchema, StaffCreateSchema, ManagedIdentityCreateSchema, BootstrapAdminSchema,
     DeviceRegisterSchema, DeviceTrustSchema, DocumentUploadSchema, DocumentVerifySchema, ServiceCustomerRegistrationSchema,
     ServiceAccessRequestCreateSchema, ServiceAccessRequestReviewSchema
@@ -549,6 +549,7 @@ const authenticate = async (req: Request, res: Response, next: NextFunction) => 
         await WAF.throttle(session.user.id, operation);
 
         (req as any).session = session;
+        (req as any).authToken = token || session.access_token || null;
         (req as any).resolvedRole = sessionRole;
         next();
     } catch (err: any) {
@@ -2961,6 +2962,40 @@ v1.post('/wallets', authenticate as any, validate(WalletCreateSchema), async (re
     }
 });
 
+v1.post('/wallets/:id/lock', authenticate as any, validate(WalletLockSchema), async (req, res) => {
+    const session = (req as any).session;
+    const isAdmin = requireRole(session, ['ADMIN', 'SUPER_ADMIN', 'IT', 'STAFF']);
+    try {
+        const result = await LogicCore.lockWallet(session.sub, req.params.id, {
+            reason: req.body.reason,
+            pin: req.body.pin,
+            force: req.body.force,
+            isAdmin
+        });
+        res.json({ success: true, data: result });
+    } catch (e: any) {
+        res.status(400).json({ success: false, error: e.message });
+    }
+});
+
+v1.post('/wallets/:id/unlock', authenticate as any, validate(WalletUnlockSchema), async (req, res) => {
+    const session = (req as any).session;
+    const isAdmin = requireRole(session, ['ADMIN', 'SUPER_ADMIN', 'IT', 'STAFF']);
+    if (!isAdmin && !req.body.pin) {
+        return res.status(400).json({ success: false, error: 'PIN_REQUIRED' });
+    }
+    try {
+        const result = await LogicCore.unlockWallet(session.sub, req.params.id, {
+            pin: req.body.pin,
+            force: req.body.force,
+            isAdmin
+        });
+        res.json({ success: true, data: result });
+    } catch (e: any) {
+        res.status(400).json({ success: false, error: e.message });
+    }
+});
+
 v1.post('/transactions/settle', authenticate as any, validate(PaymentIntentSchema), async (req, res) => {
     const session = (req as any).session;
     const rawIdempotencyKey = req.headers['x-idempotency-key'];
@@ -3358,8 +3393,9 @@ v1.delete('/notifications/:id', authenticate as any, async (req, res) => {
 // --- Strategy Domain ---
 v1.post('/goals', authenticate as any, validate(GoalCreateSchema), async (req, res) => {
     const session = (req as any).session;
+    const authToken = (req as any).authToken as string | null;
     try {
-        const result = await LogicCore.postGoal({ ...req.body, user_id: session.sub });
+        const result = await LogicCore.postGoal({ ...req.body, user_id: session.sub }, authToken || undefined);
         res.json({ success: true, data: result });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -3368,8 +3404,9 @@ v1.post('/goals', authenticate as any, validate(GoalCreateSchema), async (req, r
 
 v1.get('/goals', authenticate as any, async (req, res) => {
     const session = (req as any).session;
+    const authToken = (req as any).authToken as string | null;
     try {
-        const result = await LogicCore.getGoals(session.sub);
+        const result = await LogicCore.getGoals(session.sub, authToken || undefined);
         res.json({ success: true, data: result });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -3377,8 +3414,9 @@ v1.get('/goals', authenticate as any, async (req, res) => {
 });
 
 v1.patch('/goals/:id', authenticate as any, validate(GoalUpdateSchema), async (req, res) => {
+    const authToken = (req as any).authToken as string | null;
     try {
-        const result = await LogicCore.updateGoal({ ...req.body, id: req.params.id });
+        const result = await LogicCore.updateGoal({ ...req.body, id: req.params.id }, authToken || undefined);
         res.json({ success: true, data: result });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -3386,8 +3424,9 @@ v1.patch('/goals/:id', authenticate as any, validate(GoalUpdateSchema), async (r
 });
 
 v1.delete('/goals/:id', authenticate as any, async (req, res) => {
+    const authToken = (req as any).authToken as string | null;
     try {
-        const result = await LogicCore.deleteGoal(req.params.id);
+        const result = await LogicCore.deleteGoal(req.params.id, authToken || undefined);
         res.json({ success: true, data: result });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -3472,11 +3511,12 @@ v1.delete('/tasks/:id', authenticate as any, async (req, res) => {
 
 v1.post('/goals/:id/allocate', authenticate as any, async (req, res) => {
     const session = (req as any).session;
+    const authToken = (req as any).authToken as string | null;
     const { amount, sourceWalletId } = req.body;
     if (!amount || !sourceWalletId) return res.status(400).json({ success: false, error: 'MISSING_PARAMS' });
 
     try {
-        const result = await LogicCore.allocateToGoal(req.params.id, amount, sourceWalletId);
+        const result = await LogicCore.allocateToGoal(req.params.id, amount, sourceWalletId, authToken || undefined);
         res.json({ success: true, data: result });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -3485,6 +3525,7 @@ v1.post('/goals/:id/allocate', authenticate as any, async (req, res) => {
 
 v1.post('/goals/:id/withdraw', authenticate as any, async (req, res) => {
     const session = (req as any).session;
+    const authToken = (req as any).authToken as string | null;
     const { amount, destinationWalletId, verification } = req.body;
     if (!amount || !destinationWalletId) {
         return res.status(400).json({ success: false, error: 'MISSING_PARAMS' });
@@ -3509,7 +3550,7 @@ v1.post('/goals/:id/withdraw', authenticate as any, async (req, res) => {
             otpRequestId: String(otpRequestId),
             otpVerifiedAt: new Date().toISOString(),
             verifiedByUserId: session.sub
-        });
+        }, authToken || undefined);
         res.json({ success: true, data: result });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -3946,7 +3987,7 @@ if (legacyApiGatewayEnabled) app.post('/api', globalIpLimiter as any, async (req
                 else if (operation === 'treasury_approve') result = await LogicCore.approveTreasuryWithdrawal(payload.withdrawalId, session!.sub);
                 break;
             case 'strategy':
-                if (operation === 'strategy_goal_list') result = await LogicCore.getGoals(session!.sub);
+                if (operation === 'strategy_goal_list') result = await LogicCore.getGoals(session!.sub, token || undefined);
                 else if (operation === 'strategy_task_list') result = await LogicCore.getTasks(session!.sub);
                 break;
             case 'enterprise':
@@ -4076,14 +4117,23 @@ httpServer.listen(PORT, '0.0.0.0', () => {
 
 // 8. BACKGROUND REAPER & SETTLEMENT ENGINE (V1.0)
 const backgroundInterval = gatewayBackgroundJobsEnabled
-    ? setInterval(async () => {
-        try {
-            await LegacyRecon.reapStuckTransactions();
-            await EntProcessor.settleProcessingTransactions();
-        } catch (e) {
-            console.error('[System] Background Cycle Error:', e);
-        }
-    }, 60000)
+    ? (() => {
+        let backgroundJobRunning = false;
+        return setInterval(async () => {
+            if (backgroundJobRunning) {
+                return;
+            }
+            backgroundJobRunning = true;
+            try {
+                await LegacyRecon.reapStuckTransactions();
+                await EntProcessor.settleProcessingTransactions();
+            } catch (e) {
+                console.error('[System] Background Cycle Error:', e);
+            } finally {
+                backgroundJobRunning = false;
+            }
+        }, 60000);
+    })()
     : null; // Run every minute when explicitly enabled for this runtime
 
 // 7. GRACEFUL SHUTDOWN (Scale Ready)

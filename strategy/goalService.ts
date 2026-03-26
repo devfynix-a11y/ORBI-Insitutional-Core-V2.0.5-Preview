@@ -1,7 +1,7 @@
 
 import { Goal } from '../types.js';
 import { Storage, STORAGE_KEYS } from '../backend/storage.js';
-import { getSupabase } from '../services/supabaseClient.js';
+import { getSupabase, createAuthenticatedClient } from '../services/supabaseClient.js';
 import { DataVault } from '../backend/security/encryption.js';
 import { TransactionService } from '../ledger/transactionService.js';
 
@@ -9,14 +9,21 @@ import { UUID } from '../services/utils.js';
 
 export class GoalService {
     private ledger = new TransactionService();
+    private getDb(token?: string) {
+        if (token) {
+            const client = createAuthenticatedClient(token);
+            if (client) return client;
+        }
+        return getSupabase();
+    }
 
     async getFromDBLocal(): Promise<Goal[]> {
         const raw = Storage.getFromDB(STORAGE_KEYS.GOALS) as any[];
         return this.hydrateGoals(raw);
     }
 
-    async fetchForUser(userId: string): Promise<Goal[]> {
-        const sb = getSupabase();
+    async fetchForUser(userId: string, token?: string): Promise<Goal[]> {
+        const sb = this.getDb(token);
         if (!sb) return this.getFromDBLocal();
 
         const { data, error } = await sb.from('goals').select('*').eq('user_id', userId);
@@ -35,11 +42,11 @@ export class GoalService {
         })));
     }
 
-    async postGoal(g: Goal) { 
+    async postGoal(g: Goal, token?: string) { 
         const encryptedTarget = await DataVault.encrypt(g.target);
         const encryptedCurrent = await DataVault.encrypt(g.current);
 
-        const sb = getSupabase();
+        const sb = this.getDb(token);
         let localGoal = { ...g };
         if (sb) {
             const isUUID = (str: any) => typeof str === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
@@ -91,8 +98,8 @@ export class GoalService {
         return { data: localGoal, error: null }; 
     }
 
-    async updateGoal(g: Partial<Goal> & { id: string | number }) {
-        const sb = getSupabase();
+    async updateGoal(g: Partial<Goal> & { id: string | number }, token?: string) {
+        const sb = this.getDb(token);
         const payload: any = {};
 
         if (g.name !== undefined) payload.name = g.name;
@@ -163,7 +170,7 @@ export class GoalService {
         return { data: updatedGoal, error: null };
     }
 
-    async allocateFunds(goalId: string, amount: number, sourceWalletId: string) {
+    async allocateFunds(goalId: string, amount: number, sourceWalletId: string, token?: string) {
         if (amount <= 0) {
             throw new Error('VALIDATION_ERROR: Allocation amount must be greater than zero.');
         }
@@ -171,7 +178,7 @@ export class GoalService {
             throw new Error('VALIDATION_ERROR: Source wallet is required.');
         }
 
-        const sb = getSupabase();
+        const sb = this.getDb(token);
         let goalName = 'Goal';
         let goalUserId = '';
         let currentAmount = 0;
@@ -275,11 +282,11 @@ export class GoalService {
         return { success: true, newAmount };
     }
 
-    async withdrawFunds(goalId: string, amount: number, destinationWalletId: string, verification?: any) {
+    async withdrawFunds(goalId: string, amount: number, destinationWalletId: string, verification?: any, token?: string) {
         if (!destinationWalletId) {
             throw new Error('VALIDATION_ERROR: Destination wallet is required.');
         }
-        const sb = getSupabase();
+        const sb = this.getDb(token);
 
         let currentAmount = 0;
         let goalName = 'Goal';
@@ -395,8 +402,8 @@ export class GoalService {
         return { success: true, newAmount, destinationWalletId };
     }
 
-    async deleteGoal(id: string) { 
-        const sb = getSupabase();
+    async deleteGoal(id: string, token?: string) { 
+        const sb = this.getDb(token);
         if (sb) await sb.from('goals').delete().eq('id', id);
         let items = Storage.getFromDB<Goal>(STORAGE_KEYS.GOALS); 
         items = items.filter(i => String(i.id) !== String(id)); 
