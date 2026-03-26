@@ -2966,7 +2966,8 @@ v1.post('/wallets/:id/lock', authenticate as any, validate(WalletLockSchema), as
     const session = (req as any).session;
     const isAdmin = requireRole(session, ['ADMIN', 'SUPER_ADMIN', 'IT', 'STAFF']);
     try {
-        const result = await LogicCore.lockWallet(session.sub, req.params.id, {
+        const walletId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+        const result = await LogicCore.lockWallet(session.sub, walletId, {
             reason: req.body.reason,
             pin: req.body.pin,
             force: req.body.force,
@@ -2985,7 +2986,8 @@ v1.post('/wallets/:id/unlock', authenticate as any, validate(WalletUnlockSchema)
         return res.status(400).json({ success: false, error: 'PIN_REQUIRED' });
     }
     try {
-        const result = await LogicCore.unlockWallet(session.sub, req.params.id, {
+        const walletId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+        const result = await LogicCore.unlockWallet(session.sub, walletId, {
             pin: req.body.pin,
             force: req.body.force,
             isAdmin
