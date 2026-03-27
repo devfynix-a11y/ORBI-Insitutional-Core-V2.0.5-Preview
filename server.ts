@@ -52,6 +52,7 @@ import { ServiceActorOps } from './backend/features/ServiceActorOps.js';
 import gatewayRoutes from './backend/payments/gatewayRoutes.js';
 import { settlementScheduler } from './backend/payments/settlementScheduler.js';
 import { KMS } from './backend/security/kms.js';
+import { DataVault } from './backend/security/encryption.js';
 
 // Helper for Gemini calls with retry logic
 async function callGeminiWithRetry(ai: GoogleGenAI, params: any, retries = 3, delay = 1000): Promise<any> {
@@ -3918,6 +3919,30 @@ v1.post('/admin/kms/rewrap', authenticate as any, adminOnly as any, async (req, 
         res.json({ success: true, message: 'KMS keys re-wrapped successfully.' });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+v1.get('/admin/kms/health', authenticate as any, adminOnly as any, async (_req, res) => {
+    try {
+        const probe = { ping: 'pong', ts: Date.now() };
+        const cipher = await DataVault.encrypt(probe);
+        const decoded = await DataVault.decrypt(cipher);
+        const ok =
+            decoded &&
+            typeof decoded === 'object' &&
+            (decoded as any).ping === 'pong';
+        res.json({
+            success: ok,
+            data: {
+                ok,
+                ts: Date.now()
+            }
+        });
+    } catch (e: any) {
+        res.status(500).json({
+            success: false,
+            error: e.message
+        });
     }
 });
 
