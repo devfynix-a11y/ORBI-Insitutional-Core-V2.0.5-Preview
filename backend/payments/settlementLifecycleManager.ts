@@ -8,6 +8,7 @@ import { getSupabase } from '../supabaseClient.js';
 import { Audit } from '../security/audit.js';
 import { UUID } from '../../services/utils.js';
 import { platformFeeService } from './PlatformFeeService.js';
+import { TransactionService } from '../../ledger/transactionService.js';
 
 export enum SettlementPhase {
   EXTERNAL_PENDING = 'EXTERNAL_PENDING',
@@ -47,6 +48,7 @@ export interface SettlementLifecycle {
 
 export class SettlementLifecycleManager {
   private sb = getSupabase();
+  private ledger = new TransactionService();
 
   private get client() {
     this.sb = this.sb || getSupabase();
@@ -263,6 +265,7 @@ export class SettlementLifecycleManager {
       const financialTxId = `ftx_${UUID.generate()}`;
       const settlementCurrency = String(settlement.currency || '').trim().toUpperCase();
       if (!settlementCurrency) throw new Error('SETTLEMENT_CURRENCY_REQUIRED');
+      const timestamp = new Date().toISOString();
       const gatewayFee = await platformFeeService.resolveFee({
         flowCode: 'GATEWAY_SETTLEMENT',
         amount: Number(settlement.amount || 0),
@@ -276,87 +279,58 @@ export class SettlementLifecycleManager {
       });
       const platformFee = gatewayFee.serviceFee;
 
-      const { error: ftxError } = await this.client.from('transactions').insert({
-        id: financialTxId,
-        user_id: settlement.user_id,
-        type: 'deposit',
-        status: 'processing',
-        amount: settlement.amount,
-        currency: settlement.currency,
-        target_wallet_id: settlement.wallet_id,
-        description: `External ${settlement.provider_id} payment settlement`,
-        settlement_path: `GATEWAY_${settlement.provider_id}`,
-        idempotency_key: `gateway_${settlement.external_settlement_id}`,
-        metadata: {
-          settlement_lifecycle_id: settlementId,
-          external_settlement_id: settlement.external_settlement_id,
-          reconciliation_id: settlement.reconciliation_id,
-        },
-        created_at: new Date().toISOString(),
-      });
-
-      if (ftxError) throw ftxError;
-
       const ledgerLegs = [
         {
-          transaction_id: financialTxId,
-          wallet_id: sourceWalletId || `${settlement.provider_id}_settlement_account`,
-          entry_type: 'DEBIT',
-          amount: settlement.amount.toString(),
+          walletId: sourceWalletId || `${settlement.provider_id}_settlement_account`,
+          type: 'DEBIT' as const,
+          amount: Number(settlement.amount || 0) + Number(platformFee || 0),
+          currency: settlementCurrency,
           description: `${settlement.provider_id} settlement debit for ${settlement.external_settlement_id}`,
+          transactionId: financialTxId,
+          timestamp,
         },
         {
-          transaction_id: financialTxId,
-          wallet_id: settlement.wallet_id,
-          entry_type: 'CREDIT',
-          amount: settlement.amount.toString(),
+          walletId: settlement.wallet_id,
+          type: 'CREDIT' as const,
+          amount: Number(settlement.amount || 0),
+          currency: settlementCurrency,
           description: `Received via ${settlement.provider_id} payment gateway`,
+          transactionId: financialTxId,
+          timestamp,
         },
         {
-          transaction_id: financialTxId,
-          wallet_id: process.env.SYSTEM_FEE_WALLET_ID || 'system_fees',
-          entry_type: 'CREDIT',
-          amount: platformFee.toString(),
+          walletId: process.env.SYSTEM_FEE_WALLET_ID || 'system_fees',
+          type: 'CREDIT' as const,
+          amount: Number(platformFee || 0),
+          currency: settlementCurrency,
           description: `Gateway settlement fee from ${settlement.provider_id}`,
+          transactionId: financialTxId,
+          timestamp,
         },
       ];
 
-      for (const leg of ledgerLegs) {
-        const { error: legError } = await this.client.from('financial_ledger').insert({
-          id: UUID.generate(),
-          transaction_id: leg.transaction_id,
+      await this.ledger.postTransactionWithLedger(
+        {
+          id: financialTxId,
+          referenceId: `GATEWAY-${settlement.external_settlement_id}`,
           user_id: settlement.user_id,
-          wallet_id: leg.wallet_id,
-          entry_type: leg.entry_type,
-          amount: leg.amount,
-          balance_after: await this.calculateWalletBalance(leg.wallet_id),
-          description: leg.description,
-          created_at: new Date().toISOString(),
-        });
-
-        if (legError) throw new Error(`Ledger entry failed: ${legError.message}`);
-      }
-
-      const newBalance = Number(wallet.balance || 0) + Number(settlement.amount || 0);
-      const { error: walletError } = await this.client
-        .from('wallets')
-        .update({
-          balance: newBalance.toString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', settlement.wallet_id);
-
-      if (walletError) throw walletError;
-
-      const { error: txUpdateError } = await this.client
-        .from('transactions')
-        .update({
+          walletId: sourceWalletId || `${settlement.provider_id}_settlement_account`,
+          toWalletId: settlement.wallet_id,
+          amount: Number(settlement.amount || 0),
+          currency: settlement.currency,
+          description: `External ${settlement.provider_id} payment settlement`,
+          type: 'deposit',
           status: 'completed',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', financialTxId);
-
-      if (txUpdateError) throw txUpdateError;
+          date: new Date().toISOString().split('T')[0],
+          metadata: {
+            settlement_lifecycle_id: settlementId,
+            external_settlement_id: settlement.external_settlement_id,
+            reconciliation_id: settlement.reconciliation_id,
+            settlement_path: `GATEWAY_${settlement.provider_id}`,
+          },
+        },
+        ledgerLegs,
+      );
 
       const { error: lifecycleError } = await this.client
         .from('settlement_lifecycle')
@@ -379,7 +353,6 @@ export class SettlementLifecycleManager {
           financialTxId,
           amount: settlement.amount,
           walletId: settlement.wallet_id,
-          newBalance,
           platformFee,
         },
       );
@@ -387,7 +360,7 @@ export class SettlementLifecycleManager {
       return {
         success: true,
         financialTxId,
-        newWalletBalance: newBalance,
+        newWalletBalance: await this.ledger.calculateBalanceFromLedger(settlement.wallet_id),
       };
     } catch (error: any) {
       await this.client

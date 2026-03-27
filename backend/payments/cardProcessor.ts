@@ -328,7 +328,7 @@ export class CardProcessor {
           direction,
           amount: transactionAmount,
           currency: transactionCurrency,
-          providerId: cardTx.merchant_id || undefined,
+          providerId: typeof cardTx.merchant_id === 'string' ? cardTx.merchant_id : undefined,
           description: `Card payment settlement for transaction ${cardTransactionId}`,
           sourceWalletId: direction !== 'EXTERNAL_TO_INTERNAL' ? sourceWalletId : undefined,
           targetWalletId: direction !== 'INTERNAL_TO_EXTERNAL' ? targetWalletId : undefined,
@@ -340,8 +340,11 @@ export class CardProcessor {
           externalReference: cardTx.rrn || cardTransactionId,
         });
 
-        financialTxId = 'transactionId' in movementResult ? movementResult.transactionId || null : null;
-        movementId = movementResult.movement?.id || null;
+        financialTxId =
+          'transactionId' in movementResult && movementResult.transactionId
+            ? String(movementResult.transactionId)
+            : null;
+        movementId = movementResult.movement?.id ? String(movementResult.movement.id) : null;
         ledgerEntriesCreated = movementResult.ledgerPosted ? direction === 'EXTERNAL_TO_EXTERNAL' ? 0 : transactionFee > 0 ? 3 : 2 : 0;
       } else {
         const enterpriseResult = await EntProcessor.process(

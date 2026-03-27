@@ -170,6 +170,11 @@ CREATE TABLE IF NOT EXISTS public.users (
     metadata JSONB DEFAULT '{}'::jsonb
 );
 
+-- Enforce unique phone numbers among users (NULL allowed multiple times)
+CREATE UNIQUE INDEX IF NOT EXISTS users_phone_unique
+ON public.users (phone)
+WHERE phone IS NOT NULL;
+
 -- Compatibility View for user_profiles
 CREATE OR REPLACE VIEW public.user_profiles AS SELECT * FROM public.users;
 
@@ -182,11 +187,17 @@ CREATE TABLE IF NOT EXISTS public.staff (
     customer_id TEXT UNIQUE NOT NULL,
     phone TEXT,
     avatar_url TEXT,
+    address TEXT,
     nationality TEXT DEFAULT 'Tanzania',
     language TEXT DEFAULT 'en',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     last_active TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Enforce unique phone numbers among staff (NULL allowed multiple times)
+CREATE UNIQUE INDEX IF NOT EXISTS staff_phone_unique
+ON public.staff (phone)
+WHERE phone IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS public.wallets (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(), 
@@ -424,6 +435,7 @@ CREATE TABLE IF NOT EXISTS public.goals (
     name TEXT NOT NULL, 
     target NUMERIC NOT NULL, 
     current NUMERIC DEFAULT 0, 
+    source_wallet_id UUID REFERENCES public.wallets(id),
     deadline TIMESTAMP WITH TIME ZONE, 
     color TEXT, 
     icon TEXT, 
@@ -641,6 +653,7 @@ CREATE TABLE IF NOT EXISTS public.financial_partners (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(), 
     name VARCHAR(50) NOT NULL,
     type VARCHAR(20) NOT NULL CHECK (LOWER(type) IN ('mobile_money', 'bank', 'card', 'crypto')),
+    supported_currencies TEXT[] DEFAULT ARRAY['TZS']::TEXT[],
     icon TEXT,
     color TEXT,
     connection_secret VARCHAR(255),
@@ -795,6 +808,9 @@ DO $$
 DECLARE
     partner_constraint RECORD;
 BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='financial_partners' AND column_name='supported_currencies') THEN
+        ALTER TABLE public.financial_partners ADD COLUMN supported_currencies TEXT[] DEFAULT ARRAY['TZS']::TEXT[];
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='financial_partners' AND column_name='client_id') THEN
         ALTER TABLE public.financial_partners ADD COLUMN client_id TEXT;
     END IF;
@@ -2287,11 +2303,16 @@ CREATE POLICY "Approvers view assignments" ON public.treasury_approvers
 CREATE INDEX IF NOT EXISTS idx_tx_user_date ON public.transactions(user_id, date);
 CREATE INDEX IF NOT EXISTS idx_ledger_tx ON public.financial_ledger(transaction_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_user_wallet ON public.transactions(user_id, wallet_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_status_updated ON public.transactions(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_transactions_review_timeout ON public.transactions(updated_at DESC) WHERE status = 'held_for_review';
+CREATE INDEX IF NOT EXISTS idx_transactions_processing_timeout ON public.transactions(updated_at DESC) WHERE status = 'processing';
+CREATE INDEX IF NOT EXISTS idx_transaction_events_transaction_created ON public.transaction_events(transaction_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_institutional_payment_accounts_role ON public.institutional_payment_accounts(role, currency, status);
 CREATE INDEX IF NOT EXISTS idx_institutional_payment_accounts_provider ON public.institutional_payment_accounts(provider_id);
 CREATE INDEX IF NOT EXISTS idx_external_fund_movements_user_date ON public.external_fund_movements(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_external_fund_movements_transaction ON public.external_fund_movements(transaction_id);
 CREATE INDEX IF NOT EXISTS idx_external_fund_movements_provider_status ON public.external_fund_movements(provider_id, status);
+CREATE INDEX IF NOT EXISTS idx_external_fund_movements_status_updated ON public.external_fund_movements(status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_provider_routing_rules_lookup ON public.provider_routing_rules(rail, operation_code, status, priority);
 CREATE INDEX IF NOT EXISTS idx_inbound_sms_request_id ON public.inbound_sms_messages(request_id);
 CREATE INDEX IF NOT EXISTS idx_offline_transaction_sessions_request_id ON public.offline_transaction_sessions(request_id);
@@ -2364,6 +2385,410 @@ BEGIN
     INSERT INTO public.system_nodes (node_type, vault_id) VALUES ('TAX_RESERVE', '00000000-0000-0000-0000-000000000004') ON CONFLICT (node_type) DO UPDATE SET vault_id = EXCLUDED.vault_id;
     INSERT INTO public.system_nodes (node_type, vault_id) VALUES ('PLATFORM_FEE', '00000000-0000-0000-0000-000000000003') ON CONFLICT (node_type) DO UPDATE SET vault_id = EXCLUDED.vault_id;
     INSERT INTO public.system_nodes (node_type, vault_id) VALUES ('GOV_TAX', '00000000-0000-0000-0000-000000000004') ON CONFLICT (node_type) DO UPDATE SET vault_id = EXCLUDED.vault_id;
+END $$;
+
+-- 7B. PAYMENT PROVIDER BOOTSTRAP (IDEMPOTENT)
+DO $$
+BEGIN
+    -- Provider registry seeds keep fresh environments deposit-ready.
+    INSERT INTO public.financial_partners (
+        id, name, type, supported_currencies, icon, color, api_base_url,
+        provider_metadata, mapping_config, logic_type, status
+    ) VALUES
+    (
+        '10000000-0000-0000-0000-000000000101',
+        'ORBI M-Pesa Tanzania',
+        'mobile_money',
+        ARRAY['TZS']::TEXT[],
+        'smartphone',
+        '#16A34A',
+        'https://api.example.com/mobile-money/mpesa',
+        jsonb_build_object(
+            'group', 'Mobile Money',
+            'brand_name', 'M-Pesa',
+            'provider_code', 'MPESA_TZ',
+            'display_icon', 'smartphone',
+            'checkout_mode', 'server_to_server',
+            'channels', jsonb_build_array('stk_push', 'ussd'),
+            'rail', 'MOBILE_MONEY',
+            'operations', jsonb_build_array('COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST'),
+            'countries', jsonb_build_array('TZ'),
+            'routing_priority', 10
+        ),
+        jsonb_build_object(
+            'service_root', 'https://api.example.com/mobile-money/mpesa',
+            'operations', jsonb_build_object(
+                'COLLECTION_REQUEST', jsonb_build_object('timeout_ms', 30000),
+                'DISBURSEMENT_REQUEST', jsonb_build_object('timeout_ms', 30000)
+            )
+        ),
+        'REGISTRY',
+        'ACTIVE'
+    ),
+    (
+        '10000000-0000-0000-0000-000000000102',
+        'ORBI Bank Transfer Tanzania',
+        'bank',
+        ARRAY['TZS', 'USD']::TEXT[],
+        'account_balance',
+        '#2563EB',
+        'https://api.example.com/bank/core',
+        jsonb_build_object(
+            'group', 'Bank',
+            'brand_name', 'Bank Transfer',
+            'provider_code', 'BANK_TZ',
+            'display_icon', 'account_balance',
+            'checkout_mode', 'server_to_server',
+            'channels', jsonb_build_array('account', 'bank_transfer'),
+            'rail', 'BANK',
+            'operations', jsonb_build_array('COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST'),
+            'countries', jsonb_build_array('TZ'),
+            'routing_priority', 20
+        ),
+        jsonb_build_object(
+            'service_root', 'https://api.example.com/bank/core',
+            'operations', jsonb_build_object(
+                'COLLECTION_REQUEST', jsonb_build_object('timeout_ms', 30000),
+                'DISBURSEMENT_REQUEST', jsonb_build_object('timeout_ms', 30000)
+            )
+        ),
+        'REGISTRY',
+        'ACTIVE'
+    ),
+    (
+        '10000000-0000-0000-0000-000000000103',
+        'ORBI Card Gateway',
+        'card',
+        ARRAY['TZS', 'USD']::TEXT[],
+        'credit_card',
+        '#7C3AED',
+        'https://api.example.com/card/gateway',
+        jsonb_build_object(
+            'group', 'Cards',
+            'brand_name', 'Card Gateway',
+            'provider_code', 'CARD_GATEWAY',
+            'display_icon', 'credit_card',
+            'checkout_mode', 'server_to_server',
+            'channels', jsonb_build_array('visa', 'mastercard'),
+            'rail', 'CARD_GATEWAY',
+            'operations', jsonb_build_array('COLLECTION_REQUEST'),
+            'countries', jsonb_build_array('TZ'),
+            'routing_priority', 30
+        ),
+        jsonb_build_object(
+            'service_root', 'https://api.example.com/card/gateway',
+            'operations', jsonb_build_object(
+                'COLLECTION_REQUEST', jsonb_build_object('timeout_ms', 30000)
+            )
+        ),
+        'REGISTRY',
+        'ACTIVE'
+    ),
+    (
+        '10000000-0000-0000-0000-000000000104',
+        'ORBI Crypto Gateway',
+        'crypto',
+        ARRAY['USDT', 'BTC', 'ETH']::TEXT[],
+        'currency_bitcoin',
+        '#F59E0B',
+        'https://api.example.com/crypto/gateway',
+        jsonb_build_object(
+            'group', 'Crypto',
+            'brand_name', 'Crypto Gateway',
+            'provider_code', 'CRYPTO_GATEWAY',
+            'display_icon', 'currency_bitcoin',
+            'checkout_mode', 'server_to_server',
+            'channels', jsonb_build_array('onchain', 'wallet'),
+            'rail', 'CRYPTO',
+            'operations', jsonb_build_array('COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST'),
+            'countries', jsonb_build_array('TZ'),
+            'routing_priority', 40
+        ),
+        jsonb_build_object(
+            'service_root', 'https://api.example.com/crypto/gateway',
+            'operations', jsonb_build_object(
+                'COLLECTION_REQUEST', jsonb_build_object('timeout_ms', 45000),
+                'DISBURSEMENT_REQUEST', jsonb_build_object('timeout_ms', 45000)
+            )
+        ),
+        'REGISTRY',
+        'ACTIVE'
+    )
+    ON CONFLICT (id) DO UPDATE SET
+        name = EXCLUDED.name,
+        type = EXCLUDED.type,
+        supported_currencies = EXCLUDED.supported_currencies,
+        icon = EXCLUDED.icon,
+        color = EXCLUDED.color,
+        api_base_url = EXCLUDED.api_base_url,
+        provider_metadata = EXCLUDED.provider_metadata,
+        mapping_config = EXCLUDED.mapping_config,
+        logic_type = EXCLUDED.logic_type,
+        status = EXCLUDED.status;
+
+    INSERT INTO public.institutional_payment_accounts (
+        id, role, provider_id, bank_name, account_name, account_number, currency,
+        country_code, status, is_primary, metadata
+    ) VALUES
+    (
+        '10000000-0000-0000-0000-000000000201',
+        'MAIN_COLLECTION',
+        '10000000-0000-0000-0000-000000000101',
+        'Vodacom M-Pesa Trust',
+        'ORBI Main Collection',
+        '255700000001',
+        'TZS',
+        'TZ',
+        'ACTIVE',
+        TRUE,
+        jsonb_build_object('purpose', 'deposit_collection', 'rail', 'MOBILE_MONEY')
+    ),
+    (
+        '10000000-0000-0000-0000-000000000202',
+        'TRANSFER_SAVINGS',
+        '10000000-0000-0000-0000-000000000101',
+        'Vodacom M-Pesa Trust',
+        'ORBI Transfer Settlement',
+        '255700000002',
+        'TZS',
+        'TZ',
+        'ACTIVE',
+        TRUE,
+        jsonb_build_object('purpose', 'outbound_settlement', 'rail', 'MOBILE_MONEY')
+    ),
+    (
+        '10000000-0000-0000-0000-000000000203',
+        'FEE_COLLECTION',
+        '10000000-0000-0000-0000-000000000101',
+        'Vodacom M-Pesa Trust',
+        'ORBI Fee Reserve',
+        '255700000003',
+        'TZS',
+        'TZ',
+        'ACTIVE',
+        TRUE,
+        jsonb_build_object('purpose', 'fee_collection', 'rail', 'MOBILE_MONEY')
+    ),
+    (
+        '10000000-0000-0000-0000-000000000204',
+        'TAX_COLLECTION',
+        '10000000-0000-0000-0000-000000000101',
+        'Vodacom M-Pesa Trust',
+        'ORBI Tax Reserve',
+        '255700000004',
+        'TZS',
+        'TZ',
+        'ACTIVE',
+        TRUE,
+        jsonb_build_object('purpose', 'tax_collection', 'rail', 'MOBILE_MONEY')
+    ),
+    (
+        '10000000-0000-0000-0000-000000000205',
+        'MAIN_COLLECTION',
+        '10000000-0000-0000-0000-000000000102',
+        'CRDB Bank',
+        'ORBI Main Collection Bank',
+        '1100000001',
+        'TZS',
+        'TZ',
+        'ACTIVE',
+        TRUE,
+        jsonb_build_object('purpose', 'deposit_collection', 'rail', 'BANK')
+    ),
+    (
+        '10000000-0000-0000-0000-000000000206',
+        'TRANSFER_SAVINGS',
+        '10000000-0000-0000-0000-000000000102',
+        'CRDB Bank',
+        'ORBI Transfer Clearing',
+        '1100000002',
+        'TZS',
+        'TZ',
+        'ACTIVE',
+        TRUE,
+        jsonb_build_object('purpose', 'outbound_settlement', 'rail', 'BANK')
+    ),
+    (
+        '10000000-0000-0000-0000-000000000207',
+        'FEE_COLLECTION',
+        '10000000-0000-0000-0000-000000000102',
+        'CRDB Bank',
+        'ORBI Fee Collection Bank',
+        '1100000003',
+        'TZS',
+        'TZ',
+        'ACTIVE',
+        TRUE,
+        jsonb_build_object('purpose', 'fee_collection', 'rail', 'BANK')
+    ),
+    (
+        '10000000-0000-0000-0000-000000000208',
+        'TAX_COLLECTION',
+        '10000000-0000-0000-0000-000000000102',
+        'CRDB Bank',
+        'ORBI Tax Collection Bank',
+        '1100000004',
+        'TZS',
+        'TZ',
+        'ACTIVE',
+        TRUE,
+        jsonb_build_object('purpose', 'tax_collection', 'rail', 'BANK')
+    ),
+    (
+        '10000000-0000-0000-0000-000000000209',
+        'MAIN_COLLECTION',
+        '10000000-0000-0000-0000-000000000103',
+        'Card Settlement Bank',
+        'ORBI Card Collection',
+        '2200000001',
+        'TZS',
+        'TZ',
+        'ACTIVE',
+        TRUE,
+        jsonb_build_object('purpose', 'deposit_collection', 'rail', 'CARD_GATEWAY')
+    ),
+    (
+        '10000000-0000-0000-0000-000000000210',
+        'TRANSFER_SAVINGS',
+        '10000000-0000-0000-0000-000000000103',
+        'Card Settlement Bank',
+        'ORBI Card Settlement',
+        '2200000002',
+        'TZS',
+        'TZ',
+        'ACTIVE',
+        TRUE,
+        jsonb_build_object('purpose', 'outbound_settlement', 'rail', 'CARD_GATEWAY')
+    ),
+    (
+        '10000000-0000-0000-0000-000000000211',
+        'MAIN_COLLECTION',
+        '10000000-0000-0000-0000-000000000104',
+        'ORBI Digital Assets',
+        'ORBI Crypto Collection',
+        'CRYPTO-COLLECT-001',
+        'USDT',
+        'TZ',
+        'ACTIVE',
+        TRUE,
+        jsonb_build_object('purpose', 'deposit_collection', 'rail', 'CRYPTO')
+    ),
+    (
+        '10000000-0000-0000-0000-000000000212',
+        'TRANSFER_SAVINGS',
+        '10000000-0000-0000-0000-000000000104',
+        'ORBI Digital Assets',
+        'ORBI Crypto Settlement',
+        'CRYPTO-SETTLE-001',
+        'USDT',
+        'TZ',
+        'ACTIVE',
+        TRUE,
+        jsonb_build_object('purpose', 'outbound_settlement', 'rail', 'CRYPTO')
+    )
+    ON CONFLICT (id) DO UPDATE SET
+        role = EXCLUDED.role,
+        provider_id = EXCLUDED.provider_id,
+        bank_name = EXCLUDED.bank_name,
+        account_name = EXCLUDED.account_name,
+        account_number = EXCLUDED.account_number,
+        currency = EXCLUDED.currency,
+        country_code = EXCLUDED.country_code,
+        status = EXCLUDED.status,
+        is_primary = EXCLUDED.is_primary,
+        metadata = EXCLUDED.metadata,
+        updated_at = NOW();
+
+    INSERT INTO public.provider_routing_rules (
+        id, rail, country_code, currency, operation_code, provider_id, priority, conditions, status
+    ) VALUES
+    (
+        '10000000-0000-0000-0000-000000000301',
+        'MOBILE_MONEY',
+        'TZ',
+        'TZS',
+        'COLLECTION_REQUEST',
+        '10000000-0000-0000-0000-000000000101',
+        10,
+        '{}'::jsonb,
+        'ACTIVE'
+    ),
+    (
+        '10000000-0000-0000-0000-000000000302',
+        'MOBILE_MONEY',
+        'TZ',
+        'TZS',
+        'DISBURSEMENT_REQUEST',
+        '10000000-0000-0000-0000-000000000101',
+        10,
+        '{}'::jsonb,
+        'ACTIVE'
+    ),
+    (
+        '10000000-0000-0000-0000-000000000303',
+        'BANK',
+        'TZ',
+        'TZS',
+        'COLLECTION_REQUEST',
+        '10000000-0000-0000-0000-000000000102',
+        20,
+        '{}'::jsonb,
+        'ACTIVE'
+    ),
+    (
+        '10000000-0000-0000-0000-000000000304',
+        'BANK',
+        'TZ',
+        'TZS',
+        'DISBURSEMENT_REQUEST',
+        '10000000-0000-0000-0000-000000000102',
+        20,
+        '{}'::jsonb,
+        'ACTIVE'
+    ),
+    (
+        '10000000-0000-0000-0000-000000000305',
+        'CARD_GATEWAY',
+        'TZ',
+        'TZS',
+        'COLLECTION_REQUEST',
+        '10000000-0000-0000-0000-000000000103',
+        30,
+        '{}'::jsonb,
+        'ACTIVE'
+    ),
+    (
+        '10000000-0000-0000-0000-000000000306',
+        'CRYPTO',
+        'TZ',
+        'USDT',
+        'COLLECTION_REQUEST',
+        '10000000-0000-0000-0000-000000000104',
+        40,
+        '{}'::jsonb,
+        'ACTIVE'
+    ),
+    (
+        '10000000-0000-0000-0000-000000000307',
+        'CRYPTO',
+        'TZ',
+        'USDT',
+        'DISBURSEMENT_REQUEST',
+        '10000000-0000-0000-0000-000000000104',
+        40,
+        '{}'::jsonb,
+        'ACTIVE'
+    )
+    ON CONFLICT (id) DO UPDATE SET
+        rail = EXCLUDED.rail,
+        country_code = EXCLUDED.country_code,
+        currency = EXCLUDED.currency,
+        operation_code = EXCLUDED.operation_code,
+        provider_id = EXCLUDED.provider_id,
+        priority = EXCLUDED.priority,
+        conditions = EXCLUDED.conditions,
+        status = EXCLUDED.status,
+        updated_at = NOW();
 END $$;
 
 -- 8. EVENT SOURCING LAYER

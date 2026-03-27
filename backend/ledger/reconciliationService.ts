@@ -34,6 +34,7 @@ export class ReconciliationService {
 
         try {
             const txService = new TransactionService();
+            await txService.autoReverseHeldTransactions();
             const { data: stuckTxs, error } = await sb.from('transactions')
                 .select('*')
                 .eq('status', 'processing');

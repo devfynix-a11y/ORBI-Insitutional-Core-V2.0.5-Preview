@@ -60,42 +60,54 @@ export class TransactionService {
         if (!sb) return 0;
 
         try {
-            // Try to get from wallets table first
-            const { data: wallet } = await sb.from('wallets').select('balance').eq('id', walletId).maybeSingle();
-            if (wallet) {
-                console.log(`[Ledger] Found balance ${wallet.balance} in wallets for ${walletId}`);
-                return Number(wallet.balance) || 0;
+            const ledgerBalance = await this.calculateBalanceFromLedger(walletId);
+
+            // Compare cached balances vs ledger (source of truth)
+            const { data: wallet } = await sb
+                .from('wallets')
+                .select('balance')
+                .eq('id', walletId)
+                .maybeSingle();
+            if (wallet && wallet.balance !== null && wallet.balance !== undefined) {
+                const cached = Number(wallet.balance) || 0;
+                if (Math.abs(cached - ledgerBalance) > 0.01) {
+                    throw new Error('INTERNAL_BALANCE_MISMATCH');
+                }
             }
 
-            // Try platform_vaults
-            const { data: vault } = await sb.from('platform_vaults').select('balance').eq('id', walletId).maybeSingle();
-            if (vault) {
-                console.log(`[Ledger] Found balance ${vault.balance} in platform_vaults for ${walletId}`);
-                return Number(vault.balance) || 0;
+            const { data: vault } = await sb
+                .from('platform_vaults')
+                .select('balance')
+                .eq('id', walletId)
+                .maybeSingle();
+            if (vault && vault.balance !== null && vault.balance !== undefined) {
+                const cached = Number(vault.balance) || 0;
+                if (Math.abs(cached - ledgerBalance) > 0.01) {
+                    throw new Error('INTERNAL_BALANCE_MISMATCH');
+                }
             }
 
-            // Goal-backed balances are stored on the goals table.
-            const { data: goal } = await sb.from('goals').select('current').eq('id', walletId).maybeSingle();
-            if (goal) {
-                const decrypted = await DataVault.decrypt(goal.current);
-                const resolved = Number(decrypted) || 0;
-                console.log(`[Ledger] Found balance ${resolved} in goals for ${walletId}`);
-                return resolved;
+            const { data: goal } = await sb
+                .from('goals')
+                .select('current')
+                .eq('id', walletId)
+                .maybeSingle();
+            if (goal && goal.current !== null && goal.current !== undefined) {
+                const cached = Number(await DataVault.decrypt(goal.current)) || 0;
+                if (Math.abs(cached - ledgerBalance) > 0.01) {
+                    throw new Error('INTERNAL_BALANCE_MISMATCH');
+                }
             }
-            
-            console.log(`[Ledger] Balance not found in wallets or platform_vaults for ${walletId}, falling back to ledger`);
+
+            return ledgerBalance;
         } catch (e) {
             console.error(`[Ledger] Failed to fetch latest balance for ${walletId}:`, e);
         }
         
-        // Fallback to ledger-derived balance if not found
         const ledgerBalance = await this.calculateBalanceFromLedger(walletId);
-        console.log(`[Ledger] Calculated balance from ledger for ${walletId}: ${ledgerBalance}`);
-        
         if (ledgerBalance === null || ledgerBalance === undefined || isNaN(ledgerBalance)) {
             console.error(`[Ledger] Debug: getLatestBalance returned invalid balance: ${ledgerBalance} for wallet: ${walletId}`);
         }
-        
         return ledgerBalance;
     }
 
@@ -379,6 +391,20 @@ export class TransactionService {
         initialBalances.forEach(b => balanceCache[b.id] = b.balance);
 
         const preparedLegs = [];
+        const internalWalletIds = new Set<string>();
+        if (walletIds.length > 0) {
+            const [wallets, vaults, goals] = await Promise.all([
+                sb.from('wallets').select('id').in('id', walletIds),
+                sb.from('platform_vaults').select('id').in('id', walletIds),
+                sb.from('goals').select('id').in('id', walletIds),
+            ]);
+            (wallets.data || []).forEach((w: any) => internalWalletIds.add(String(w.id)));
+            (vaults.data || []).forEach((w: any) => internalWalletIds.add(String(w.id)));
+            (goals.data || []).forEach((w: any) => internalWalletIds.add(String(w.id)));
+        }
+        if (walletIds.length > 0 && internalWalletIds.size === 0) {
+            throw new Error('INTERNAL_WALLET_REQUIRED: Ledger commits must involve ORBI internal wallets.');
+        }
         for (const leg of ledgerEntries) {
             const walletId = leg.walletId;
             if (!walletId) continue;
@@ -386,6 +412,10 @@ export class TransactionService {
             const current = balanceCache[walletId];
             const after = leg.type === 'CREDIT' ? (current + leg.amount) : (current - leg.amount);
             const finalAfter = Math.round(after * 10000) / 10000;
+
+            if (finalAfter < 0 && internalWalletIds.has(String(walletId))) {
+                throw new Error(`INSUFFICIENT_FUNDS: Wallet ${walletId} would go negative.`);
+            }
             
             balanceCache[walletId] = finalAfter;
 
@@ -481,6 +511,21 @@ export class TransactionService {
 
         // 1. Prepare Legs with balances
         const preparedLegs = [];
+        const internalWalletIds = new Set<string>();
+        const walletIds = Array.from(new Set((ledgerEntries || []).map(l => l.walletId).filter((id): id is string => !!id)));
+        if (walletIds.length > 0) {
+            const [wallets, vaults, goals] = await Promise.all([
+                sb.from('wallets').select('id').in('id', walletIds),
+                sb.from('platform_vaults').select('id').in('id', walletIds),
+                sb.from('goals').select('id').in('id', walletIds),
+            ]);
+            (wallets.data || []).forEach((w: any) => internalWalletIds.add(String(w.id)));
+            (vaults.data || []).forEach((w: any) => internalWalletIds.add(String(w.id)));
+            (goals.data || []).forEach((w: any) => internalWalletIds.add(String(w.id)));
+        }
+        if (walletIds.length > 0 && internalWalletIds.size === 0) {
+            throw new Error('INTERNAL_WALLET_REQUIRED: Ledger updates must involve ORBI internal wallets.');
+        }
         const balanceCache: Record<string, number> = {};
         const finalBalances: Record<string, number> = {};
 
@@ -498,6 +543,10 @@ export class TransactionService {
             
             if (finalAfter === null || finalAfter === undefined || isNaN(finalAfter)) {
                 console.error(`[Ledger] Debug: Settlement Fault - Invalid balance_after calculation. Wallet: ${walletId}, Current: ${current}, Amount: ${leg.amount}, Type: ${leg.type}, After: ${after}, FinalAfter: ${finalAfter}`);
+            }
+
+            if (finalAfter < 0 && internalWalletIds.has(String(walletId))) {
+                throw new Error(`INSUFFICIENT_FUNDS: Wallet ${walletId} would go negative.`);
             }
             
             balanceCache[walletId] = finalAfter;
@@ -692,6 +741,13 @@ export class TransactionService {
             if (!data) return [];
 
             const translated = await DataVault.translate(data);
+
+            const { data: movementRows } = await sb
+                .from('external_fund_movements')
+                .select('id, direction, status, gross_amount, currency, description, created_at, source_wallet_id, target_wallet_id, provider_id, external_reference, metadata')
+                .eq('user_id', userId)
+                .order('created_at', { ascending: false })
+                .range(offset, offset + limit - 1);
             
             // 3. ENRICHMENT: Fetch Wallet Names and User Details for both sides
             const allWalletIds = new Set<string>();
@@ -702,6 +758,10 @@ export class TransactionService {
                 if (tx.toWalletId) allWalletIds.add(tx.toWalletId);
                 if (tx.user_id) allUserIds.add(tx.user_id);
             });
+            (movementRows || []).forEach((mv: any) => {
+                if (mv.source_wallet_id) allWalletIds.add(String(mv.source_wallet_id));
+                if (mv.target_wallet_id) allWalletIds.add(String(mv.target_wallet_id));
+            });
 
             const walletIdList = Array.from(allWalletIds);
             const { data: walletNames } = walletIdList.length
@@ -710,9 +770,12 @@ export class TransactionService {
             const { data: vaultNames } = walletIdList.length
                 ? await sb.from('platform_vaults').select('id, name, user_id').in('id', walletIdList)
                 : { data: [] as any[] };
+            const { data: goalNames } = walletIdList.length
+                ? await sb.from('goals').select('id, name, user_id').in('id', walletIdList)
+                : { data: [] as any[] };
             
             const walletMap: Record<string, any> = {};
-            [...(walletNames || []), ...(vaultNames || [])].forEach(w => {
+            [...(walletNames || []), ...(vaultNames || []), ...(goalNames || [])].forEach(w => {
                 walletMap[w.id] = w;
                 if (w.user_id) allUserIds.add(w.user_id);
             });
@@ -724,8 +787,60 @@ export class TransactionService {
             const userMap: Record<string, any> = {};
             (userDetails || []).forEach(u => userMap[u.id] = u);
 
+            const movementItems = (movementRows || []).map((mv: any) => {
+                const direction = String(mv.direction || '').toUpperCase();
+                const movementStatusRaw = String(mv.status || '').toLowerCase();
+                const movementStatus =
+                    ['initiated', 'processing', 'completed', 'failed'].includes(movementStatusRaw)
+                        ? movementStatusRaw
+                        : movementStatusRaw === 'pending'
+                          ? 'initiated'
+                          : movementStatusRaw;
+                const txDirection =
+                    direction === 'EXTERNAL_TO_INTERNAL'
+                        ? 'CREDIT'
+                        : direction === 'INTERNAL_TO_EXTERNAL'
+                          ? 'DEBIT'
+                          : 'DEBIT';
+                const sourceWallet = walletMap[String(mv.source_wallet_id || '')];
+                const targetWallet = walletMap[String(mv.target_wallet_id || '')];
+                return {
+                    id: mv.external_reference || mv.id,
+                    internalId: mv.id,
+                    referenceId: mv.external_reference || mv.id,
+                    user_id: userId,
+                    amount: Number(mv.gross_amount || 0),
+                    currency: mv.currency,
+                    description: mv.description || 'External transfer',
+                    type:
+                        direction === 'INTERNAL_TO_EXTERNAL'
+                            ? 'withdrawal'
+                            : direction === 'EXTERNAL_TO_INTERNAL'
+                              ? 'deposit'
+                              : 'external_transfer',
+                    status: movementStatus,
+                    created_at: mv.created_at,
+                    walletId: mv.source_wallet_id,
+                    toWalletId: mv.target_wallet_id,
+                    metadata: {
+                        ...(mv.metadata || {}),
+                        external_movement_id: mv.id,
+                        external_reference: mv.external_reference,
+                        provider_id: mv.provider_id,
+                        settlement_path: 'EXTERNAL_ROUTING',
+                    },
+                    direction: txDirection,
+                    sourceWalletName: sourceWallet?.name || 'External Source',
+                    targetWalletName: targetWallet?.name || 'External Destination',
+                    counterparty: {
+                        label: txDirection === 'DEBIT' ? 'To' : 'From',
+                        name: mv.provider_id || 'External',
+                    },
+                };
+            });
+
             // 4. MAP TO TWO-SIDED VIEW
-            return translated.map((tx: any) => {
+            const ledgerItems = translated.map((tx: any) => {
                 const isSender = tx.user_id === userId;
                 const sourceWallet = walletMap[tx.walletId];
                 const targetWallet = walletMap[tx.toWalletId];
@@ -735,6 +850,15 @@ export class TransactionService {
                 const receiverUser = userMap[receiverUserId];
 
                 const direction = isSender ? 'DEBIT' : 'CREDIT';
+                const statusRaw = String(tx.status || '').toLowerCase();
+                const normalizedStatus =
+                    statusRaw === 'processing'
+                        ? 'processing'
+                        : statusRaw === 'failed' || statusRaw === 'reversed' || statusRaw === 'refunded' || statusRaw === 'cancelled'
+                          ? 'failed'
+                          : statusRaw === 'created' || statusRaw === 'pending' || statusRaw === 'authorized'
+                            ? 'initiated'
+                            : 'completed';
                 
                 return {
                     ...tx,
@@ -742,6 +866,7 @@ export class TransactionService {
                     internalId: tx.id, // Keep original UUID as internalId
                     referenceId: tx.reference_id || tx.id,
                     direction,
+                    status: normalizedStatus,
                     sourceWalletName: sourceWallet?.name || 'Orbi Vault',
                     targetWalletName: targetWallet?.name || 'External Destination',
                     sender: {
@@ -766,6 +891,13 @@ export class TransactionService {
                     }
                 };
             });
+            const combined = [...ledgerItems, ...movementItems];
+            combined.sort((a: any, b: any) => {
+                const aTime = new Date(a.created_at || a.createdAt || 0).getTime();
+                const bTime = new Date(b.created_at || b.createdAt || 0).getTime();
+                return bTime - aTime;
+            });
+            return combined;
             } catch (e: any) {
                 console.error(`[Ledger] Forensic fetch failed: ${e.message}`);
                 return [];
@@ -1150,7 +1282,7 @@ export class TransactionService {
                 walletId: leg.wallet_id,
                 type: leg.entry_type === 'CREDIT' ? 'DEBIT' : 'CREDIT',
                 amount,
-                currency: 'USD',
+                currency: leg.currency || tx.currency || 'TZS',
                 description: `FORENSIC_REVERSAL: Ref ${txId.substring(0,8)}`,
                 timestamp: new Date().toISOString()
             };
@@ -1166,6 +1298,402 @@ export class TransactionService {
         }, reversalLegs);
 
         await this.updateTransactionStatus(txId, 'reversed', `Authorized by forensic agent: ${actorId}`);
+    }
+
+    public async lockTransactionForReview(
+        txId: string,
+        actorId: string,
+        options: {
+            actorRole: 'USER' | 'STAFF' | 'SYSTEM';
+            reason: string;
+            requestReverse?: boolean;
+            userLock?: boolean;
+            reviewWindowHours?: number;
+        }
+    ): Promise<any> {
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) throw new Error('VAULT_OFFLINE');
+
+        const { data: tx } = await sb.from('transactions').select('*').eq('id', txId).single();
+        if (!tx) throw new Error('TRANSACTION_NOT_FOUND');
+        if (['reversed', 'failed', 'refunded', 'cancelled'].includes(String(tx.status || '').toLowerCase())) {
+            throw new Error('TRANSACTION_NOT_REVERSIBLE');
+        }
+
+        if (options.actorRole === 'USER') {
+            if (tx.user_id !== actorId) throw new Error('ACCESS_DENIED');
+            if (String(tx.type || '').toLowerCase() !== 'transfer') {
+                throw new Error('USER_LOCK_TRANSFER_ONLY');
+            }
+            const ageMs = Date.now() - new Date(tx.created_at || tx.date || Date.now()).getTime();
+            if (ageMs > 60 * 60 * 1000) {
+                throw new Error('USER_LOCK_WINDOW_EXPIRED');
+            }
+        }
+
+        const lockAt = new Date().toISOString();
+        const reviewWindowHours = Math.max(1, Number(options.reviewWindowHours || 24));
+        const autoReverseAt = new Date(Date.now() + reviewWindowHours * 60 * 60 * 1000).toISOString();
+        const metadata = {
+            ...(tx.metadata || {}),
+            transaction_lock: {
+                locked: true,
+                lock_type: options.userLock ? 'USER_TRANSFER_RECALL' : 'ADMIN_REVIEW_LOCK',
+                locked_by: actorId,
+                locked_role: options.actorRole,
+                previous_status: tx.status,
+                locked_at: lockAt,
+                reason: options.reason,
+                request_reverse: options.requestReverse === true,
+                auto_reverse_after_hours: reviewWindowHours,
+                auto_reverse_at: autoReverseAt,
+                audit_status: 'PENDING',
+            },
+            manual_review: true,
+            issue_reported_at: lockAt,
+            issue_reason: options.reason,
+        };
+
+        const currentStatus = String(tx.status || '').toLowerCase();
+        const nextStatus = currentStatus === 'held_for_review' ? 'held_for_review' : 'held_for_review';
+        if (currentStatus !== 'held_for_review') {
+            await this.updateTransactionStatus(txId, 'held_for_review', options.reason);
+        }
+
+        const { data: updated, error } = await sb
+            .from('transactions')
+            .update({
+                status: nextStatus,
+                status_notes: options.reason,
+                metadata,
+                updated_at: new Date().toISOString(),
+            })
+            .eq('id', txId)
+            .select('*')
+            .single();
+        if (error) throw error;
+
+        await this.logTransactionEvent(txId, tx.status, 'held_for_review', actorId, {
+            reason: options.reason,
+            actor_role: options.actorRole,
+            request_reverse: options.requestReverse === true,
+            user_lock: options.userLock === true,
+            auto_reverse_at: autoReverseAt,
+        });
+
+        await this.notifyTransactionIssueStakeholders(updated || tx, {
+            issueType: options.userLock ? 'USER_TRANSFER_RECALL_REQUESTED' : 'TRANSACTION_LOCKED_FOR_REVIEW',
+            reason: options.reason,
+            actorId,
+            actorRole: options.actorRole,
+            autoReverseAt,
+        });
+
+        return updated || { ...tx, status: 'held_for_review', metadata };
+    }
+
+    public async recordAuditDecision(
+        txId: string,
+        actorId: string,
+        passed: boolean,
+        notes: string,
+        actorRole: 'STAFF' | 'SYSTEM' = 'STAFF'
+    ): Promise<any> {
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) throw new Error('VAULT_OFFLINE');
+
+        const { data: tx } = await sb.from('transactions').select('*').eq('id', txId).single();
+        if (!tx) throw new Error('TRANSACTION_NOT_FOUND');
+        if (String(tx.status || '').toLowerCase() !== 'held_for_review') {
+            throw new Error('TRANSACTION_NOT_UNDER_REVIEW');
+        }
+
+        const metadata = {
+            ...(tx.metadata || {}),
+            transaction_lock: {
+                ...(tx.metadata?.transaction_lock || {}),
+                audit_status: passed ? 'PASSED' : 'FAILED',
+                audit_passed: passed,
+                audited_by: actorId,
+                audited_by_role: actorRole,
+                audited_at: new Date().toISOString(),
+                audit_notes: notes,
+            },
+        };
+
+        const { data: updated, error } = await sb
+            .from('transactions')
+            .update({
+                metadata,
+                status_notes: notes,
+                updated_at: new Date().toISOString(),
+            })
+            .eq('id', txId)
+            .select('*')
+            .single();
+        if (error) throw error;
+
+        await this.logTransactionEvent(txId, tx.status, tx.status, actorId, {
+            audit_status: passed ? 'PASSED' : 'FAILED',
+            audit_notes: notes,
+            actor_role: actorRole,
+        });
+
+        await this.notifyTransactionIssueStakeholders(updated || tx, {
+            issueType: passed ? 'TRANSACTION_AUDIT_PASSED' : 'TRANSACTION_AUDIT_FAILED',
+            reason: notes,
+            actorId,
+            actorRole,
+            autoReverseAt: metadata.transaction_lock?.auto_reverse_at,
+        });
+
+        return updated || { ...tx, metadata };
+    }
+
+    public async approveReviewedTransaction(txId: string, actorId: string, notes: string): Promise<any> {
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) throw new Error('VAULT_OFFLINE');
+
+        const { data: tx } = await sb.from('transactions').select('*').eq('id', txId).single();
+        if (!tx) throw new Error('TRANSACTION_NOT_FOUND');
+        if (String(tx.status || '').toLowerCase() !== 'held_for_review') {
+            throw new Error('TRANSACTION_NOT_UNDER_REVIEW');
+        }
+
+        const auditStatus = String(tx.metadata?.transaction_lock?.audit_status || '').toUpperCase();
+        if (auditStatus !== 'PASSED') {
+            throw new Error('AUDIT_PASS_REQUIRED');
+        }
+
+        const previousStatus = String(tx.metadata?.transaction_lock?.previous_status || '').toLowerCase();
+        const nextStatus: TransactionStatus =
+            previousStatus === 'pending' ? 'pending'
+            : previousStatus === 'authorized' ? 'authorized'
+            : 'completed';
+
+        const metadata = {
+            ...(tx.metadata || {}),
+            transaction_lock: {
+                ...(tx.metadata?.transaction_lock || {}),
+                locked: false,
+                resolved_by: actorId,
+                resolved_at: new Date().toISOString(),
+                resolution: 'APPROVED',
+                resolution_notes: notes,
+            },
+            manual_review: false,
+        };
+
+        if (previousStatus === 'processing' && String(tx.type || '').toLowerCase() === 'transfer') {
+            try {
+                const { BankingEngine } = await import('../backend/ledger/transactionEngine.js');
+                await BankingEngine.completeSettlement(txId, tx);
+            } catch (e: any) {
+                throw new Error(`APPROVAL_SETTLEMENT_FAILED: ${e.message}`);
+            }
+        } else {
+            await this.updateTransactionStatus(txId, nextStatus, notes);
+        }
+
+        const { data: updated, error } = await sb
+            .from('transactions')
+            .update({
+                metadata,
+                updated_at: new Date().toISOString(),
+                status_notes: notes,
+            })
+            .eq('id', txId)
+            .select('*')
+            .single();
+        if (error) throw error;
+
+        await this.logTransactionEvent(txId, 'held_for_review', updated?.status || nextStatus, actorId, {
+            approval_notes: notes,
+            approved_by: actorId,
+        });
+
+        await this.notifyTransactionIssueStakeholders(updated || tx, {
+            issueType: 'TRANSACTION_REVIEW_APPROVED',
+            reason: notes,
+            actorId,
+            actorRole: 'STAFF',
+        });
+
+        return updated || { ...tx, metadata, status: nextStatus };
+    }
+
+    public async approveAllAuditPassedTransactions(actorId: string, notes: string): Promise<{ approved: number; failed: number; approvedIds: string[]; failedItems: any[]; }> {
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) throw new Error('VAULT_OFFLINE');
+
+        const { data: held } = await sb
+            .from('transactions')
+            .select('*')
+            .eq('status', 'held_for_review');
+
+        const candidates = (held || []).filter((tx: any) =>
+            String(tx.metadata?.transaction_lock?.audit_status || '').toUpperCase() === 'PASSED'
+        );
+
+        const approvedIds: string[] = [];
+        const failedItems: any[] = [];
+
+        for (const tx of candidates) {
+            try {
+                await this.approveReviewedTransaction(tx.id, actorId, notes);
+                approvedIds.push(String(tx.id));
+            } catch (e: any) {
+                failedItems.push({ id: tx.id, error: e.message });
+            }
+        }
+
+        await Audit.log('ADMIN', actorId, 'BULK_APPROVE_AUDIT_PASSED_TRANSACTIONS', {
+            approved: approvedIds.length,
+            failed: failedItems.length,
+            approvedIds,
+        });
+
+        return {
+            approved: approvedIds.length,
+            failed: failedItems.length,
+            approvedIds,
+            failedItems,
+        };
+    }
+
+    public async reverseTransactionWithReason(
+        txId: string,
+        actorId: string,
+        reason: string,
+        actorRole: 'USER' | 'STAFF' | 'SYSTEM' = 'STAFF'
+    ): Promise<void> {
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) throw new Error('VAULT_OFFLINE');
+
+        const { data: tx } = await sb.from('transactions').select('*').eq('id', txId).single();
+        if (!tx) throw new Error('TRANSACTION_NOT_FOUND');
+        if (['reversed', 'failed', 'refunded', 'cancelled'].includes(String(tx.status || '').toLowerCase())) {
+            throw new Error('TRANSACTION_NOT_REVERSIBLE');
+        }
+
+        await this.reverseTransaction(txId, actorId);
+
+        const metadata = {
+            ...(tx.metadata || {}),
+            reversal_reason: reason,
+            reversed_at: new Date().toISOString(),
+            reversed_by: actorId,
+            reversed_by_role: actorRole,
+        };
+
+        await sb.from('transactions').update({
+            metadata,
+            status_notes: reason,
+            updated_at: new Date().toISOString(),
+        }).eq('id', txId);
+
+        await this.notifyTransactionIssueStakeholders({ ...tx, metadata, status: 'reversed' }, {
+            issueType: 'TRANSACTION_REVERSED',
+            reason,
+            actorId,
+            actorRole,
+        });
+    }
+
+    public async autoReverseHeldTransactions(): Promise<number> {
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) return 0;
+
+        const nowIso = new Date().toISOString();
+        const { data: held } = await sb
+            .from('transactions')
+            .select('*')
+            .eq('status', 'held_for_review');
+
+        let reversedCount = 0;
+        for (const tx of held || []) {
+            try {
+                const autoReverseAt = tx.metadata?.transaction_lock?.auto_reverse_at;
+                const lockedAt = tx.metadata?.transaction_lock?.locked_at || tx.updated_at || tx.created_at;
+                const dueAt = autoReverseAt || new Date(new Date(lockedAt).getTime() + 24 * 60 * 60 * 1000).toISOString();
+                if (new Date(dueAt).getTime() > Date.now()) continue;
+
+                await this.reverseTransactionWithReason(
+                    tx.id,
+                    'SYSTEM_TIMEOUT',
+                    'AUTO_REVERSAL_AFTER_24_HOURS: Transaction remained under review beyond permitted window.',
+                    'SYSTEM'
+                );
+                reversedCount++;
+            } catch (e: any) {
+                console.error(`[Ledger] Held transaction auto-reversal failed for ${tx.id}: ${e.message}`);
+            }
+        }
+
+        if (reversedCount > 0) {
+            await Audit.log('SECURITY', 'SYSTEM_TIMEOUT', 'HELD_TRANSACTIONS_AUTO_REVERSED', {
+                count: reversedCount,
+                processed_at: nowIso,
+            });
+        }
+
+        return reversedCount;
+    }
+
+    private async notifyTransactionIssueStakeholders(tx: any, details: {
+        issueType: string;
+        reason: string;
+        actorId: string;
+        actorRole: string;
+        autoReverseAt?: string;
+    }) {
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) return;
+
+        const amount = tx.amount ? Number(await DataVault.decrypt(tx.amount).catch(() => tx.amount)) : 0;
+        const reference = tx.reference_id || tx.referenceId || tx.id;
+        const subject = `Transaction Issue: ${details.issueType}`;
+        const body = [
+            `Transaction ${reference} requires attention.`,
+            `Reason: ${details.reason}`,
+            `Actor: ${details.actorRole}`,
+            details.autoReverseAt ? `Auto-reverse at: ${details.autoReverseAt}` : null,
+        ].filter(Boolean).join(' ');
+
+        const { data: staff } = await sb
+            .from('staff')
+            .select('id')
+            .in('role', ['ADMIN', 'SUPER_ADMIN', 'CUSTOMER_CARE', 'AUDIT'])
+            .eq('account_status', 'active');
+
+        await Promise.all((staff || []).map(async (member: any) => {
+            try {
+                await Messaging.dispatch(member.id, 'security', subject, body, { push: true, sms: false, email: true });
+            } catch (e: any) {
+                console.error(`[Ledger] Staff issue notification failed for ${member.id}: ${e.message}`);
+            }
+        }));
+
+        try {
+            await Messaging.dispatch(
+                tx.user_id,
+                'security',
+                subject,
+                `Reference ${reference}. ${details.reason}${details.autoReverseAt ? ` Funds remain under review until ${details.autoReverseAt}.` : ''}`,
+                { push: true, sms: true, email: true }
+            );
+        } catch (e: any) {
+            console.error(`[Ledger] User issue notification failed for ${tx.user_id}: ${e.message}`);
+        }
+
+        await Audit.log('SECURITY', details.actorId, details.issueType, {
+            txId: tx.id,
+            reference,
+            reason: details.reason,
+            actorRole: details.actorRole,
+            amount,
+            autoReverseAt: details.autoReverseAt || null,
+        });
     }
 
     public async reserveEscrow(userId: string, walletId: string, amount: number, description: string, referenceId: string): Promise<void> {

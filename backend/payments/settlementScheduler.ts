@@ -49,6 +49,7 @@ export class SettlementScheduler {
   private async processSettlements(): Promise<void> {
     await this.processAutoSettleTimeouts();
     await this.processStuckReconciliations();
+    await this.processStuckExternalMovements();
     await this.retryFailedSettlements();
   }
 
@@ -153,6 +154,49 @@ export class SettlementScheduler {
       await Audit.log('FINANCIAL', settlement.user_id, 'SETTLEMENT_RETRY_INITIATED', {
         settlementId: settlement.id,
         attempt: retryCount + 1,
+      });
+    }
+  }
+
+  private async processStuckExternalMovements(): Promise<void> {
+    const initiatedBefore = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const processingBefore = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+
+    const { data: movements } = await this.client
+      .from('external_fund_movements')
+      .select('id,user_id,direction,status,updated_at,created_at,metadata,external_reference,source_external_ref,target_external_ref')
+      .is('transaction_id', null)
+      .or(
+        `and(status.eq.initiated,updated_at.lt.${initiatedBefore}),and(status.eq.processing,updated_at.lt.${processingBefore})`,
+      );
+
+    for (const movement of movements || []) {
+      const now = new Date().toISOString();
+      const timeoutReason =
+        movement.status === 'processing'
+          ? 'EXTERNAL_SETTLEMENT_TIMEOUT: Provider processing exceeded recovery window.'
+          : 'EXTERNAL_SETTLEMENT_TIMEOUT: No provider confirmation received in time.';
+
+      await this.client
+        .from('external_fund_movements')
+        .update({
+          status: 'failed',
+          updated_at: now,
+          metadata: {
+            ...(movement.metadata || {}),
+            timeout_reaped_at: now,
+            timeout_reason: timeoutReason,
+          },
+        })
+        .eq('id', movement.id);
+
+      await Audit.log('SECURITY', movement.user_id, 'EXTERNAL_MOVEMENT_TIMEOUT_REAPED', {
+        movementId: movement.id,
+        direction: movement.direction,
+        previousStatus: movement.status,
+        timeoutReason,
+        externalReference:
+          movement.external_reference || movement.source_external_ref || movement.target_external_ref || null,
       });
     }
   }

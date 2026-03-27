@@ -142,6 +142,21 @@ export const StaffCreateSchema = z.object({
     address: z.string().optional()
 });
 
+export const StaffAdminUpdateSchema = z.object({
+    full_name: z.string().min(1).optional(),
+    role: z.enum(['SUPER_ADMIN', 'ADMIN', 'IT', 'AUDIT', 'ACCOUNTANT', 'CUSTOMER_CARE', 'HUMAN_RESOURCE']).optional(),
+    phone: z.string().optional(),
+    nationality: z.string().optional(),
+    address: z.string().optional(),
+    language: z.enum(['en', 'sw']).optional(),
+    avatar_url: z.string().optional(),
+    account_status: z.enum(['active', 'blocked', 'frozen', 'pending']).optional(),
+});
+
+export const StaffPasswordResetSchema = z.object({
+    password: z.string().min(8),
+});
+
 export const ManagedIdentityCreateSchema = z.object({
     email: z.string().email(),
     password: z.string().min(8),

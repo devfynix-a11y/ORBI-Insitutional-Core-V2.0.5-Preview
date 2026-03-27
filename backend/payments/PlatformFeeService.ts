@@ -118,6 +118,11 @@ export class PlatformFeeService {
 
     const current = existing.data || {};
     const now = new Date().toISOString();
+    const auditMetadata = {
+      updated_by: actorId,
+      updated_at: now,
+    };
+
     const normalized = {
       name: String(payload.name ?? current.name ?? '').trim(),
       flow_code: String(payload.flowCode ?? payload.flow_code ?? current.flow_code ?? '').trim().toUpperCase(),
@@ -138,7 +143,15 @@ export class PlatformFeeService {
       stamp_duty_fixed: this.parseAmount(payload.stampDutyFixed ?? payload.stamp_duty_fixed ?? current.stamp_duty_fixed),
       priority: this.parseInteger(payload.priority ?? current.priority ?? 100),
       status: String(payload.status ?? current.status ?? 'ACTIVE').trim().toUpperCase(),
-      metadata: payload.metadata ?? current.metadata ?? {},
+      metadata: {
+        ...(current.metadata || {}),
+        ...(payload.metadata || {}),
+        admin_audit: {
+          ...((current.metadata || {}).admin_audit || {}),
+          ...(((payload.metadata || {}).admin_audit) || {}),
+          ...auditMetadata,
+        },
+      },
       updated_at: now,
     };
 

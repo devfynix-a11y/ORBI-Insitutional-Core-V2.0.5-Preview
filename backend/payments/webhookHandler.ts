@@ -158,8 +158,29 @@ class WebhookHandler {
                 });
                 return depositResult;
             } catch (depositError: any) {
-                console.error(`[Webhook] TRACE_LOST: Unknown tx ${reference}`);
-                throw depositError;
+                try {
+                    const movementResult = await institutionalFundsService.handleWebhookMovement(
+                        partnerId,
+                        reference,
+                        status,
+                        message,
+                        providerEventId,
+                        payload,
+                    );
+                    await Audit.log('FINANCIAL', 'SYSTEM', 'WEBHOOK_PROCESSED', {
+                        provider: partner.name,
+                        reference,
+                        status,
+                        providerEventId,
+                        traceId: UUID.generate(),
+                        route: 'EXTERNAL_MOVEMENT',
+                        movementId: (movementResult as any)?.movement?.id || null,
+                    });
+                    return movementResult;
+                } catch (movementError: any) {
+                    console.error(`[Webhook] TRACE_LOST: Unknown tx ${reference}`);
+                    throw movementError;
+                }
             }
         }
 

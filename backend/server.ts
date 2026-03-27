@@ -246,6 +246,42 @@ class OrbiServer {
         return this.ledger.getLatestTransactions(userId, limit, offset);
     }
 
+    async requestTransactionRecall(userId: string, txId: string, reason: string) {
+        return this.ledger.lockTransactionForReview(txId, userId, {
+            actorRole: 'USER',
+            reason,
+            requestReverse: true,
+            userLock: true,
+            reviewWindowHours: 24,
+        });
+    }
+
+    async lockTransactionForAdmin(actorId: string, txId: string, reason: string) {
+        return this.ledger.lockTransactionForReview(txId, actorId, {
+            actorRole: 'STAFF',
+            reason,
+            requestReverse: false,
+            userLock: false,
+            reviewWindowHours: 24,
+        });
+    }
+
+    async reverseTransactionForAdmin(actorId: string, txId: string, reason: string) {
+        return this.ledger.reverseTransactionWithReason(txId, actorId, reason, 'STAFF');
+    }
+
+    async recordTransactionAuditDecision(actorId: string, txId: string, passed: boolean, notes: string) {
+        return this.ledger.recordAuditDecision(txId, actorId, passed, notes, 'STAFF');
+    }
+
+    async approveReviewedTransaction(actorId: string, txId: string, notes: string) {
+        return this.ledger.approveReviewedTransaction(txId, actorId, notes);
+    }
+
+    async approveAllAuditPassedTransactions(actorId: string, notes: string) {
+        return this.ledger.approveAllAuditPassedTransactions(actorId, notes);
+    }
+
     // --- TRANSACTION PREVIEW ---
     async getTransactionPreview(userId: string, payload: any) {
         const sb = getAdminSupabase();
@@ -518,10 +554,10 @@ class OrbiServer {
     }
     async deleteGoal(id: string, token?: string) { return this.goal.deleteGoal(id, token); }
     async getGoals(userId: string, token?: string) { return this.goal.fetchForUser(userId, token); }
-    async postCategory(p: any) { return this.category.postCategory(p); }
-    async getCategories(userId: string) { return this.category.fetchForUser(userId); }
-    async updateCategory(p: any) { return this.category.updateCategory(p); }
-    async deleteCategory(id: string) { return this.category.deleteCategory(id); }
+    async postCategory(p: any, token?: string) { return this.category.postCategory(p, token); }
+    async getCategories(userId: string, token?: string) { return this.category.fetchForUser(userId, token); }
+    async updateCategory(p: any, token?: string) { return this.category.updateCategory(p, token); }
+    async deleteCategory(id: string, token?: string) { return this.category.deleteCategory(id, token); }
     async postTask(p: any) { return this.task.postTask(p); }
     async getTasks(userId: string) { return this.task.fetchForUser(userId); }
     async updateTask(p: any) { return this.task.updateTask(p); }
@@ -541,8 +577,14 @@ class OrbiServer {
     async getAllStaff(): Promise<StaffMember[]> {
         const sb = getAdminSupabase() || getSupabase();
         if (!sb) return [];
-        const { data } = await sb.from('staff').select('*');
-        return data || [];
+        const { data } = await sb.from('staff').select('*').order('created_at', { ascending: false });
+        return (data || []).map((staff: any) => ({
+            ...staff,
+            effective_permissions: this.auth.describePermissionsForRole(
+                String(staff.role || 'USER').toUpperCase() as any,
+                String(staff.account_status || 'active').toLowerCase(),
+            ),
+        }));
     }
     async getAllConsumers(): Promise<any[]> {
         const sb = getAdminSupabase() || getSupabase();
@@ -563,6 +605,30 @@ class OrbiServer {
     async createStaff(payload: any, actorId: string) {
         const sb = getAdminSupabase() || getSupabase();
         if (!sb) return { error: 'DB_OFFLINE' };
+
+        const normalizedOrigin = String(payload?.app_origin || 'ORBI_INSTITUTIONAL_CORE_V2026').trim();
+        const normalizedRole = String(payload?.role || 'ADMIN').trim().toUpperCase();
+        const normalizedLanguage = String(payload?.language || 'en').trim().toLowerCase() || 'en';
+
+        if (payload?.phone) {
+            const { data: existingUser } = await sb
+                .from('users')
+                .select('id')
+                .eq('phone', payload.phone)
+                .maybeSingle();
+            if (existingUser) {
+                return { error: 'PHONE_ALREADY_IN_USE: This phone number is already linked to another account.' };
+            }
+
+            const { data: existingStaff } = await sb
+                .from('staff')
+                .select('id')
+                .eq('phone', payload.phone)
+                .maybeSingle();
+            if (existingStaff) {
+                return { error: 'PHONE_ALREADY_IN_USE: This phone number is already linked to another account.' };
+            }
+        }
         
         // 1. Create Auth User
         const { data: authData, error: authError } = await sb.auth.admin.createUser({
@@ -570,9 +636,11 @@ class OrbiServer {
             password: payload.password,
             user_metadata: {
                 full_name: payload.full_name,
-                role: payload.role,
+                role: normalizedRole,
                 registry_type: 'STAFF',
-                account_status: 'active'
+                account_status: 'active',
+                app_origin: normalizedOrigin,
+                language: normalizedLanguage
             },
             email_confirm: true
         });
@@ -585,10 +653,12 @@ class OrbiServer {
             id: authData.user.id,
             email: payload.email,
             full_name: payload.full_name,
-            role: payload.role,
+            role: normalizedRole,
             phone: payload.phone,
             nationality: payload.nationality,
+            avatar_url: payload.avatar_url,
             address: payload.address,
+            language: normalizedLanguage,
             account_status: 'active',
             customer_id: IdentityGenerator.generateCustomerID('STF')
         });
@@ -643,6 +713,77 @@ class OrbiServer {
             ...payload,
             role: 'SUPER_ADMIN'
         }, 'bootstrap-admin');
+    }
+
+    async adminUpdateStaffProfile(staffId: string, updates: any, actorId: string) {
+        const sb = getAdminSupabase();
+        if (!sb) return { error: 'DB_OFFLINE' };
+
+        const { data: authUserResult, error: authUserError } = await sb.auth.admin.getUserById(staffId);
+        if (authUserError || !authUserResult?.user) {
+            return { error: authUserError?.message || 'STAFF_NOT_FOUND' };
+        }
+
+        const currentMetadata = authUserResult.user.user_metadata || {};
+        const metadataUpdates: Record<string, unknown> = { ...currentMetadata };
+        const staffUpdates: Record<string, unknown> = {};
+
+        const assignField = (key: string) => {
+            if (updates[key] !== undefined) {
+                metadataUpdates[key] = updates[key];
+                staffUpdates[key] = updates[key];
+            }
+        };
+
+        assignField('full_name');
+        assignField('phone');
+        assignField('nationality');
+        assignField('address');
+        assignField('language');
+        assignField('avatar_url');
+
+        if (updates.role !== undefined) {
+            metadataUpdates.role = String(updates.role).trim().toUpperCase();
+            staffUpdates.role = String(updates.role).trim().toUpperCase();
+        }
+
+        if (updates.account_status !== undefined) {
+            metadataUpdates.account_status = String(updates.account_status).trim().toLowerCase();
+            staffUpdates.account_status = String(updates.account_status).trim().toLowerCase();
+        }
+
+        const { error: authUpdateError } = await sb.auth.admin.updateUserById(staffId, {
+            user_metadata: metadataUpdates,
+        });
+        if (authUpdateError) {
+            return { error: authUpdateError.message };
+        }
+
+        if (Object.keys(staffUpdates).length > 0) {
+            const { error: staffError } = await sb
+                .from('staff')
+                .update(staffUpdates)
+                .eq('id', staffId);
+            if (staffError) {
+                return { error: staffError.message };
+            }
+        }
+
+        await this.security.logActivity(actorId, 'STAFF_PROFILE_UPDATE', 'success', `Updated staff ${staffId}`);
+        return { success: true };
+    }
+
+    async adminResetStaffPassword(staffId: string, password: string, actorId: string) {
+        const sb = getAdminSupabase();
+        if (!sb) return { error: 'DB_OFFLINE' };
+
+        const { error } = await sb.auth.admin.updateUserById(staffId, { password });
+        if (error) {
+            return { error: error.message };
+        }
+
+        await this.security.logActivity(actorId, 'STAFF_PASSWORD_RESET', 'success', `Reset password for staff ${staffId}`);
+        return { success: true };
     }
 
     async adminUpdateUserProfile(targetUserId: string, updates: any, actorId: string) {
@@ -978,7 +1119,104 @@ class OrbiServer {
     // --- AUDIT & SECURITY LOGS ---
     async getAuditTrail() { return Audit.getLogs(); }
     async getGlobalAuditLogs() { return Audit.getLogs(); }
-    async getAllTransactions(limit: number = 100, offset: number = 0) { return this.ledger.getAllTransactions(limit, offset); }
+    async getAllTransactions(filters?: {
+        limit?: number;
+        offset?: number;
+        status?: string;
+        type?: string;
+        currency?: string;
+        query?: string;
+        dateFrom?: string;
+        dateTo?: string;
+    }) {
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) throw new Error('DB_OFFLINE');
+
+        const limit = Number(filters?.limit ?? 100);
+        const offset = Number(filters?.offset ?? 0);
+
+        let query = sb
+            .from('transactions')
+            .select('*', { count: 'exact' })
+            .order('date', { ascending: false })
+            .range(offset, offset + Math.max(limit, 1) - 1);
+
+        if (filters?.status) query = query.eq('status', String(filters.status));
+        if (filters?.type) query = query.eq('type', String(filters.type));
+        if (filters?.currency) query = query.eq('currency', String(filters.currency).toUpperCase());
+        if (filters?.dateFrom) query = query.gte('date', filters.dateFrom);
+        if (filters?.dateTo) query = query.lte('date', filters.dateTo);
+        if (filters?.query) {
+            const q = String(filters.query).trim();
+            query = query.or(`reference_id.ilike.%${q}%,description.ilike.%${q}%,status.ilike.%${q}%,type.ilike.%${q}%`);
+        }
+
+        const { data, error, count } = await query;
+        if (error) throw new Error(error.message);
+
+        return {
+            items: data || [],
+            total: count || 0,
+        };
+    }
+
+    async getTransactionVolumeSummary(filters?: {
+        status?: string;
+        type?: string;
+        currency?: string;
+        query?: string;
+        dateFrom?: string;
+        dateTo?: string;
+    }) {
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) throw new Error('DB_OFFLINE');
+
+        let query = sb
+            .from('transactions')
+            .select('id, amount, currency, status, type, date');
+
+        if (filters?.status) query = query.eq('status', String(filters.status));
+        if (filters?.type) query = query.eq('type', String(filters.type));
+        if (filters?.currency) query = query.eq('currency', String(filters.currency).toUpperCase());
+        if (filters?.dateFrom) query = query.gte('date', filters.dateFrom);
+        if (filters?.dateTo) query = query.lte('date', filters.dateTo);
+        if (filters?.query) {
+            const q = String(filters.query).trim();
+            query = query.or(`reference_id.ilike.%${q}%,description.ilike.%${q}%,status.ilike.%${q}%,type.ilike.%${q}%`);
+        }
+
+        const { data, error } = await query;
+        if (error) throw new Error(error.message);
+
+        const rows = data || [];
+        const totalByCurrency: Record<string, number> = {};
+        const completedByCurrency: Record<string, number> = {};
+        let count = 0;
+        let completedCount = 0;
+        let totalAmountBase = 0;
+
+        for (const tx of rows as any[]) {
+            const amount = Number(tx.amount || 0);
+            if (!Number.isFinite(amount)) continue;
+            const currency = String(tx.currency || 'TZS').toUpperCase();
+            totalByCurrency[currency] = (totalByCurrency[currency] || 0) + amount;
+            totalAmountBase += amount;
+            count += 1;
+
+            if (String(tx.status || '').toLowerCase() === 'completed') {
+                completedByCurrency[currency] = (completedByCurrency[currency] || 0) + amount;
+                completedCount += 1;
+            }
+        }
+
+        return {
+            count,
+            completedCount,
+            totalByCurrency,
+            completedByCurrency,
+            averageTicket: count ? totalAmountBase / count : 0,
+        };
+    }
     async getLedgerEntries(transactionId: string) { return this.ledger.getLedgerEntries(transactionId); }
     async getUserActivity(token?: string) {
         const session = await this.auth.getSession(token);

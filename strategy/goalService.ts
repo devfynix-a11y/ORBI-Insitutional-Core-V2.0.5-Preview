@@ -17,6 +17,28 @@ export class GoalService {
         return getSupabase();
     }
 
+    private async resolveOperatingWalletId(sb: any, userId: string): Promise<string> {
+        const { data } = await sb
+            .from('wallets')
+            .select('id, is_primary, type')
+            .eq('user_id', userId)
+            .order('is_primary', { ascending: false })
+            .limit(1);
+        if (data && data.length > 0) {
+            return String(data[0].id);
+        }
+        const { data: fallback } = await sb
+            .from('wallets')
+            .select('id')
+            .eq('user_id', userId)
+            .eq('type', 'operating')
+            .limit(1);
+        if (fallback && fallback.length > 0) {
+            return String(fallback[0].id);
+        }
+        throw new Error('OPERATING_WALLET_REQUIRED: No operating wallet found for this user.');
+    }
+
     async getFromDBLocal(): Promise<Goal[]> {
         const raw = Storage.getFromDB(STORAGE_KEYS.GOALS) as any[];
         return this.hydrateGoals(raw);
@@ -176,12 +198,9 @@ export class GoalService {
         return { data: updatedGoal, error: null };
     }
 
-    async allocateFunds(goalId: string, amount: number, sourceWalletId: string, token?: string) {
+    async allocateFunds(goalId: string, amount: number, sourceWalletId?: string, token?: string) {
         if (amount <= 0) {
             throw new Error('VALIDATION_ERROR: Allocation amount must be greater than zero.');
-        }
-        if (!sourceWalletId) {
-            throw new Error('VALIDATION_ERROR: Source wallet is required.');
         }
 
         const sb = this.getDb(token);
@@ -193,7 +212,7 @@ export class GoalService {
         if (sb) {
             const { data: goal, error } = await sb
                 .from('goals')
-                .select('id, name, user_id, current')
+                .select('id, name, user_id, current, source_wallet_id')
                 .eq('id', goalId)
                 .single();
             if (error || !goal) {
@@ -202,6 +221,13 @@ export class GoalService {
             goalName = goal.name || goalName;
             goalUserId = goal.user_id || '';
             currentAmount = Number(await DataVault.decrypt(goal.current));
+            const existingSource = goal.source_wallet_id as string | null;
+
+            const operatingWalletId = await this.resolveOperatingWalletId(sb, goalUserId);
+            if (sourceWalletId && String(sourceWalletId) !== String(operatingWalletId)) {
+                throw new Error('OPERATING_WALLET_REQUIRED: Allocations must use the operating wallet.');
+            }
+            sourceWalletId = operatingWalletId;
 
             const { data: wallet } = await sb
                 .from('wallets')
@@ -215,6 +241,10 @@ export class GoalService {
                 throw new Error('Unauthorized source wallet for goal allocation');
             }
             currency = wallet.currency || currency;
+
+            if (existingSource && String(existingSource) !== String(sourceWalletId)) {
+                throw new Error('SOURCE_WALLET_LOCKED: Goal allocations must use the original source wallet.');
+            }
         } else {
             const goals = await this.getFromDBLocal();
             const goal = goals.find(g => String(g.id) === String(goalId));
@@ -224,6 +254,9 @@ export class GoalService {
             currentAmount = goal.current;
             goalName = goal.name || goalName;
             goalUserId = goal.user_id || '';
+            if (!sourceWalletId) {
+                throw new Error('VALIDATION_ERROR: Source wallet is required.');
+            }
         }
 
         const newAmount = currentAmount + amount;
@@ -271,7 +304,10 @@ export class GoalService {
                 ]
             );
 
-            const { error } = await sb.from('goals').update({ current: newAmount }).eq('id', goalId);
+            const { error } = await sb
+                .from('goals')
+                .update({ current: newAmount, source_wallet_id: sourceWalletId })
+                .eq('id', goalId);
             if (error) {
                 throw new Error(error.message);
             }
@@ -288,20 +324,18 @@ export class GoalService {
         return { success: true, newAmount };
     }
 
-    async withdrawFunds(goalId: string, amount: number, destinationWalletId: string, verification?: any, token?: string) {
-        if (!destinationWalletId) {
-            throw new Error('VALIDATION_ERROR: Destination wallet is required.');
-        }
+    async withdrawFunds(goalId: string, amount: number, destinationWalletId?: string, verification?: any, token?: string) {
         const sb = this.getDb(token);
 
         let currentAmount = 0;
         let goalName = 'Goal';
         let goalUserId = '';
         let currency = 'TZS';
+        let sourceWalletId = '';
         if (sb) {
             const { data: goal, error } = await sb
                 .from('goals')
-                .select('id, name, user_id, current')
+                .select('id, name, user_id, current, source_wallet_id')
                 .eq('id', goalId)
                 .single();
             if (error || !goal) {
@@ -310,14 +344,24 @@ export class GoalService {
             currentAmount = Number(await DataVault.decrypt(goal.current));
             goalName = goal.name || goalName;
             goalUserId = goal.user_id || '';
+            sourceWalletId = String(goal.source_wallet_id || '');
+
+            if (!sourceWalletId) {
+                sourceWalletId = await this.resolveOperatingWalletId(sb, goalUserId);
+                await sb.from('goals').update({ source_wallet_id: sourceWalletId }).eq('id', goalId);
+            }
+
+            if (destinationWalletId && String(destinationWalletId) !== String(sourceWalletId)) {
+                throw new Error('SOURCE_WALLET_LOCKED: Withdrawals must return to the original source wallet.');
+            }
 
             const { data: wallet } = await sb
                 .from('wallets')
                 .select('id, user_id, currency')
-                .eq('id', destinationWalletId)
+                .eq('id', sourceWalletId)
                 .maybeSingle();
             if (!wallet) {
-                throw new Error('Destination wallet not found');
+                throw new Error('Source wallet not found');
             }
             if (goalUserId && wallet.user_id && String(wallet.user_id) !== String(goalUserId)) {
                 throw new Error('Unauthorized destination wallet for goal withdrawal');
@@ -332,6 +376,9 @@ export class GoalService {
             currentAmount = goal.current;
             goalName = goal.name || goalName;
             goalUserId = goal.user_id || '';
+            if (!destinationWalletId) {
+                throw new Error('VALIDATION_ERROR: Destination wallet is required.');
+            }
         }
 
         if (amount <= 0) {
@@ -350,7 +397,7 @@ export class GoalService {
                 {
                     user_id: goalUserId || 'system',
                     walletId: goalId,
-                    toWalletId: destinationWalletId,
+                    toWalletId: sourceWalletId,
                     amount,
                     currency,
                     description: `Goal withdrawal: ${goalName}`,
@@ -359,7 +406,7 @@ export class GoalService {
                     date: new Date().toISOString().split('T')[0],
                     metadata: {
                         goal_id: goalId,
-                        destination_wallet_id: destinationWalletId,
+                        destination_wallet_id: sourceWalletId,
                         movement: 'withdraw_from_goal',
                         security_verification: verification ? {
                             verified_via: verification.verifiedVia || 'otp',
@@ -384,7 +431,7 @@ export class GoalService {
                     },
                     {
                         transactionId: referenceId,
-                        walletId: destinationWalletId,
+                        walletId: sourceWalletId,
                         type: 'CREDIT',
                         amount,
                         currency,

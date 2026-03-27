@@ -109,6 +109,7 @@ export interface Goal {
     monthlyTarget?: number;
     autoAllocationEnabled: boolean;
     createdAt: string;
+    sourceWalletId?: string;
     user_id?: string;
     treatAsTask?: boolean;
     taskBounty?: number;
@@ -396,6 +397,16 @@ export type Permission =
     | 'transaction.create' | 'transaction.view' | 'transaction.verify' | 'transaction.reverse' | 'transaction.delete'
     | 'ledger.read' | 'ledger.write'
     | 'admin.approve' | 'admin.freeze' | 'admin.audit.read' | 'admin.user.manage'
+    | 'staff.read' | 'staff.write'
+    | 'provider.read' | 'provider.write'
+    | 'institutional_account.read' | 'institutional_account.write'
+    | 'provider_routing.read' | 'provider_routing.write'
+    | 'config.ledger.read' | 'config.ledger.write'
+    | 'config.fx.read' | 'config.fx.write'
+    | 'config.commissions.read' | 'config.commissions.write'
+    | 'reconciliation.read' | 'reconciliation.run'
+    | 'device.read' | 'device.trust.manage'
+    | 'kyc.review' | 'document.review' | 'service_access.review'
     | 'system.wallet.credit' | 'system.wallet.debit' | 'goal.read' | 'goal.create' | 'goal.update' | 'goal.delete'
     | 'category.read' | 'category.create' | 'category.update' | 'category.delete'
     | 'task.read' | 'task.create' | 'task.update' | 'task.delete'

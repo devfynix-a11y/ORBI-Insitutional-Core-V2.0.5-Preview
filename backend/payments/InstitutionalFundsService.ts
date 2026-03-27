@@ -113,6 +113,10 @@ export class InstitutionalFundsService {
         if (accountId && !existing.data) throw new Error('INSTITUTIONAL_ACCOUNT_NOT_FOUND');
 
         const current = existing.data || {};
+        const auditMetadata = {
+            updated_by: actorId,
+            updated_at: new Date().toISOString(),
+        };
         const normalized = {
             role: String(payload.role ?? current.role ?? '').trim().toUpperCase(),
             provider_id: payload.providerId ?? payload.provider_id ?? current.provider_id ?? null,
@@ -123,7 +127,15 @@ export class InstitutionalFundsService {
             country_code: payload.countryCode ?? payload.country_code ?? current.country_code ?? null,
             status: String(payload.status ?? current.status ?? 'ACTIVE').trim().toUpperCase(),
             is_primary: payload.isPrimary ?? payload.is_primary ?? current.is_primary ?? false,
-            metadata: payload.metadata ?? current.metadata ?? {},
+            metadata: {
+                ...(current.metadata || {}),
+                ...(payload.metadata || {}),
+                admin_audit: {
+                    ...((current.metadata || {}).admin_audit || {}),
+                    ...(((payload.metadata || {}).admin_audit) || {}),
+                    ...auditMetadata,
+                },
+            },
             updated_at: new Date().toISOString(),
         };
 
@@ -301,12 +313,182 @@ export class InstitutionalFundsService {
                 ledgerPosted: false,
             };
         }
-        return this.commitMovementRecord({
+
+        const { data, error } = await sb
+            .from('external_fund_movements')
+            .insert({
+                id: movementId,
+                user_id: userId,
+                direction: preview.direction,
+                status: 'initiated',
+                provider_id: preview.providerId || null,
+                institutional_source_account_id: preview.sourceInstitutionalAccount?.id || null,
+                institutional_target_account_id: preview.targetInstitutionalAccount?.id || null,
+                source_wallet_id: preview.sourceWalletId || null,
+                target_wallet_id: preview.targetWalletId || null,
+                gross_amount: preview.grossAmount,
+                net_amount: preview.netAmount,
+                fee_amount: preview.feeAmount,
+                tax_amount: preview.taxAmount,
+                currency: preview.currency,
+                description: preview.description,
+                external_reference: preview.externalReference || null,
+                source_external_ref: preview.sourceExternalRef || null,
+                target_external_ref: preview.targetExternalRef || null,
+                metadata: {
+                    ...preview.metadata,
+                    settlement_model: 'WEBHOOK_DRIVEN_EXTERNAL_SETTLEMENT',
+                    double_entry_posted: false,
+                },
+                created_at: now,
+                updated_at: now,
+            })
+            .select('*')
+            .single();
+
+        if (error) throw new Error(error.message);
+
+        await Audit.log('FINANCIAL', userId, 'EXTERNAL_FUND_MOVEMENT_INITIATED', {
             movementId,
-            userId,
+            direction: preview.direction,
+            amount: preview.amount,
+            currency: preview.currency,
+        });
+
+        return {
+            movement: data,
+            ledgerPosted: false,
+        };
+    }
+
+    async handleWebhookMovement(
+        providerId: string,
+        reference: string,
+        status: 'completed' | 'failed' | 'processing' | 'pending',
+        message?: string,
+        providerEventId?: string,
+        rawPayload?: any,
+    ) {
+        const sb = getAdminSupabase();
+        if (!sb) throw new Error('DB_OFFLINE');
+        if (!reference) throw new Error('WEBHOOK_REFERENCE_MISSING');
+
+        const { data: movement, error } = await sb
+            .from('external_fund_movements')
+            .select('*')
+            .eq('provider_id', providerId)
+            .or(`external_reference.eq.${reference},source_external_ref.eq.${reference},target_external_ref.eq.${reference}`)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+        if (error) throw new Error(error.message);
+        if (!movement) {
+            throw new Error(`MOVEMENT_NOT_FOUND:${reference}`);
+        }
+
+        if (movement.transaction_id || movement.status === 'completed') {
+            return {
+                movement,
+                transactionId: movement.transaction_id,
+                alreadyProcessed: true,
+            };
+        }
+
+        if (status === 'processing' || status === 'pending') {
+            const { data: updated, error: updateError } = await sb
+                .from('external_fund_movements')
+                .update({
+                    status: 'processing',
+                    updated_at: new Date().toISOString(),
+                    metadata: {
+                        ...(movement.metadata || {}),
+                        webhook_status: status,
+                        webhook_message: message || null,
+                        provider_event_id: providerEventId || null,
+                        last_webhook_payload: rawPayload || null,
+                    },
+                })
+                .eq('id', movement.id)
+                .select('*')
+                .single();
+            if (updateError) throw new Error(updateError.message);
+            return { movement: updated, processing: true };
+        }
+
+        if (status === 'failed') {
+            const { data: updated, error: updateError } = await sb
+                .from('external_fund_movements')
+                .update({
+                    status: 'failed',
+                    updated_at: new Date().toISOString(),
+                    metadata: {
+                        ...(movement.metadata || {}),
+                        webhook_status: status,
+                        webhook_message: message || null,
+                        provider_event_id: providerEventId || null,
+                        last_webhook_payload: rawPayload || null,
+                    },
+                })
+                .eq('id', movement.id)
+                .select('*')
+                .single();
+            if (updateError) throw new Error(updateError.message);
+            return { movement: updated, failed: true };
+        }
+
+        if (movement.direction === 'EXTERNAL_TO_EXTERNAL') {
+            const { data: updated, error: updateError } = await sb
+                .from('external_fund_movements')
+                .update({
+                    status: 'completed',
+                    updated_at: new Date().toISOString(),
+                    metadata: {
+                        ...(movement.metadata || {}),
+                        webhook_status: status,
+                        webhook_message: message || null,
+                        provider_event_id: providerEventId || null,
+                        last_webhook_payload: rawPayload || null,
+                        double_entry_posted: false,
+                    },
+                })
+                .eq('id', movement.id)
+                .select('*')
+                .single();
+            if (updateError) throw new Error(updateError.message);
+            return { movement: updated, ledgerPosted: false };
+        }
+
+        const preview = await this.buildMovementContext(movement.user_id, {
+            direction: movement.direction,
+            amount: Number(movement.gross_amount || 0),
+            currency: movement.currency,
+            providerId: movement.provider_id || undefined,
+            description: movement.description || 'External settlement',
+            sourceWalletId: movement.source_wallet_id || undefined,
+            targetWalletId: movement.target_wallet_id || undefined,
+            sourceInstitutionalAccountId: movement.institutional_source_account_id || undefined,
+            targetInstitutionalAccountId: movement.institutional_target_account_id || undefined,
+            externalReference: movement.external_reference || undefined,
+            sourceExternalRef: movement.source_external_ref || undefined,
+            targetExternalRef: movement.target_external_ref || undefined,
+            feeAmount: Number(movement.fee_amount || 0),
+            taxAmount: Number(movement.tax_amount || 0),
+            metadata: {
+                ...(movement.metadata || {}),
+                webhook_status: status,
+                webhook_message: message || null,
+                provider_event_id: providerEventId || null,
+                last_webhook_payload: rawPayload || null,
+            },
+        });
+
+        return this.commitMovementRecord({
+            movementId: movement.id,
+            userId: movement.user_id,
             preview,
-            existingMovement: null,
-            createdAt: now,
+            existingMovement: movement,
+            createdAt: movement.created_at || new Date().toISOString(),
         });
     }
 
@@ -462,6 +644,9 @@ export class InstitutionalFundsService {
         const referenceId = `EXT-${UUID.generateShortCode(12)}`;
         const now = new Date().toISOString();
         const { movementId, userId, preview, existingMovement, createdAt } = args;
+        if (preview.direction === 'EXTERNAL_TO_EXTERNAL') {
+            throw new Error('EXTERNAL_TO_EXTERNAL_NO_LEDGER');
+        }
         const ledgerEntries = this.buildLedgerEntries(preview, txId);
         const transactionType = preview.direction === 'INTERNAL_TO_EXTERNAL' ? 'withdrawal' : 'deposit';
 
@@ -563,14 +748,21 @@ export class InstitutionalFundsService {
     private async buildMovementContext(userId: string, payload: ExternalFundMovementPayload) {
         const normalized = await this.normalizePayload(payload);
         normalized.providerId = normalized.providerId || await this.resolveProviderId(normalized);
-        const sourceWalletId = normalized.sourceWalletId;
-        const targetWalletId = normalized.targetWalletId;
+        const internalFlow = normalized.direction !== 'EXTERNAL_TO_EXTERNAL';
+        const sourceInternalWallet = normalized.direction === 'INTERNAL_TO_EXTERNAL'
+            ? await this.resolveOperatingAndPaySafeWallets(userId, normalized.sourceWalletId)
+            : null;
+        const targetInternalWallet = normalized.direction === 'EXTERNAL_TO_INTERNAL'
+            ? await this.resolveOperatingAndPaySafeWallets(userId, normalized.targetWalletId)
+            : null;
+        const sourceWalletId = sourceInternalWallet?.operatingWalletId || normalized.sourceWalletId;
+        const targetWalletId = targetInternalWallet?.operatingWalletId || normalized.targetWalletId;
 
         if (normalized.direction === 'INTERNAL_TO_EXTERNAL' && !sourceWalletId) {
-            throw new Error('SOURCE_WALLET_REQUIRED');
+            throw new Error('OPERATING_WALLET_REQUIRED');
         }
         if (normalized.direction === 'EXTERNAL_TO_INTERNAL' && !targetWalletId) {
-            throw new Error('TARGET_WALLET_REQUIRED');
+            throw new Error('OPERATING_WALLET_REQUIRED');
         }
 
         const sourceInstitutionalAccount = normalized.direction === 'EXTERNAL_TO_INTERNAL' || normalized.direction === 'EXTERNAL_TO_EXTERNAL'
@@ -610,10 +802,15 @@ export class InstitutionalFundsService {
         return {
             userId,
             ...normalized,
+            sourceWalletId,
+            targetWalletId,
             sourceInstitutionalAccount,
             targetInstitutionalAccount,
             feeAccount,
             taxAccount,
+            sourceInternalWallet,
+            targetInternalWallet,
+            internalFlow,
         };
     }
 
@@ -762,13 +959,34 @@ export class InstitutionalFundsService {
         const timestamp = new Date().toISOString();
 
         if (preview.direction === 'INTERNAL_TO_EXTERNAL') {
+            if (!preview.sourceInternalWallet?.operatingWalletId || !preview.sourceInternalWallet?.paySafeWalletId) {
+                throw new Error('PAYSafe_OPERATING_FLOW_REQUIRED');
+            }
             entries.push({
                 transactionId: txId,
-                walletId: preview.sourceWalletId,
+                walletId: preview.sourceInternalWallet.operatingWalletId,
                 type: 'DEBIT',
                 amount: preview.grossAmount,
                 currency: preview.currency,
-                description: `${preview.description} - user debit`,
+                description: `${preview.description} - operating debit`,
+                timestamp,
+            });
+            entries.push({
+                transactionId: txId,
+                walletId: preview.sourceInternalWallet.paySafeWalletId,
+                type: 'CREDIT',
+                amount: preview.amount,
+                currency: preview.currency,
+                description: `${preview.description} - PaySafe secure hold`,
+                timestamp,
+            });
+            entries.push({
+                transactionId: txId,
+                walletId: preview.sourceInternalWallet.paySafeWalletId,
+                type: 'DEBIT',
+                amount: preview.amount,
+                currency: preview.currency,
+                description: `${preview.description} - PaySafe settlement release`,
                 timestamp,
             });
             entries.push({
@@ -781,6 +999,9 @@ export class InstitutionalFundsService {
                 timestamp,
             });
         } else if (preview.direction === 'EXTERNAL_TO_INTERNAL') {
+            if (!preview.targetInternalWallet?.operatingWalletId || !preview.targetInternalWallet?.paySafeWalletId) {
+                throw new Error('PAYSafe_OPERATING_FLOW_REQUIRED');
+            }
             entries.push({
                 transactionId: txId,
                 walletId: preview.sourceInstitutionalAccount.id,
@@ -792,16 +1013,48 @@ export class InstitutionalFundsService {
             });
             entries.push({
                 transactionId: txId,
-                walletId: preview.targetWalletId,
+                walletId: preview.targetInternalWallet.paySafeWalletId,
+                type: 'CREDIT',
+                amount: preview.grossAmount,
+                currency: preview.currency,
+                description: `${preview.description} - PaySafe receipt`,
+                timestamp,
+            });
+            entries.push({
+                transactionId: txId,
+                walletId: preview.targetInternalWallet.paySafeWalletId,
+                type: 'DEBIT',
+                amount: preview.netAmount,
+                currency: preview.currency,
+                description: `${preview.description} - PaySafe settlement release`,
+                timestamp,
+            });
+            entries.push({
+                transactionId: txId,
+                walletId: preview.targetInternalWallet.operatingWalletId,
                 type: 'CREDIT',
                 amount: preview.netAmount,
                 currency: preview.currency,
-                description: `${preview.description} - wallet credit`,
+                description: `${preview.description} - operating credit`,
                 timestamp,
             });
         }
 
         if (preview.feeAmount > 0 && preview.feeAccount?.id) {
+            const feeDebitWalletId = preview.direction === 'EXTERNAL_TO_INTERNAL'
+                ? preview.targetInternalWallet?.paySafeWalletId
+                : null;
+            if (feeDebitWalletId) {
+                entries.push({
+                    transactionId: txId,
+                    walletId: feeDebitWalletId,
+                    type: 'DEBIT',
+                    amount: preview.feeAmount,
+                    currency: preview.currency,
+                    description: `${preview.description} - PaySafe fee release`,
+                    timestamp,
+                });
+            }
             entries.push({
                 transactionId: txId,
                 walletId: preview.feeAccount.id,
@@ -814,6 +1067,20 @@ export class InstitutionalFundsService {
         }
 
         if (preview.taxAmount > 0 && preview.taxAccount?.id) {
+            const taxDebitWalletId = preview.direction === 'EXTERNAL_TO_INTERNAL'
+                ? preview.targetInternalWallet?.paySafeWalletId
+                : null;
+            if (taxDebitWalletId) {
+                entries.push({
+                    transactionId: txId,
+                    walletId: taxDebitWalletId,
+                    type: 'DEBIT',
+                    amount: preview.taxAmount,
+                    currency: preview.currency,
+                    description: `${preview.description} - PaySafe tax release`,
+                    timestamp,
+                });
+            }
             entries.push({
                 transactionId: txId,
                 walletId: preview.taxAccount.id,
@@ -844,6 +1111,46 @@ export class InstitutionalFundsService {
 
     private roundAmount(value: number) {
         return Math.round(value * 100) / 100;
+    }
+
+    private async resolveOperatingAndPaySafeWallets(userId: string, providedWalletId?: string) {
+        const sb = getAdminSupabase();
+        if (!sb) throw new Error('DB_OFFLINE');
+
+        const { data: vaults, error } = await sb
+            .from('platform_vaults')
+            .select('id, user_id, vault_role, name')
+            .eq('user_id', userId)
+            .in('vault_role', ['OPERATING', 'INTERNAL_TRANSFER']);
+
+        if (error) throw new Error(error.message);
+
+        const operating = (vaults || []).find((vault: any) => vault.vault_role === 'OPERATING');
+        const paySafe = (vaults || []).find((vault: any) => vault.vault_role === 'INTERNAL_TRANSFER');
+
+        if (!operating) throw new Error('OPERATING_WALLET_REQUIRED');
+        if (!paySafe) throw new Error('PAYSafe_WALLET_REQUIRED');
+
+        if (providedWalletId && String(providedWalletId) !== String(operating.id)) {
+            const { data: wallet } = await sb
+                .from('wallets')
+                .select('id, user_id, type, is_primary')
+                .eq('id', providedWalletId)
+                .maybeSingle();
+
+            const isOperatingWallet = !!wallet &&
+                String(wallet.user_id) === String(userId) &&
+                (String(wallet.type || '').toLowerCase() === 'operating' || wallet.is_primary === true);
+
+            if (!isOperatingWallet) {
+                throw new Error('OPERATING_WALLET_REQUIRED: External settlement must use the ORBI operating wallet.');
+            }
+        }
+
+        return {
+            operatingWalletId: String(operating.id),
+            paySafeWalletId: String(paySafe.id),
+        };
     }
 }
 

@@ -1,17 +1,25 @@
 
 import { Category } from '../types.js';
 import { Storage, STORAGE_KEYS } from '../backend/storage.js';
-import { getSupabase } from '../services/supabaseClient.js';
+import { getSupabase, createAuthenticatedClient } from '../services/supabaseClient.js';
 import { DataVault } from '../backend/security/encryption.js';
 
 export class CategoryService {
+    private getDb(token?: string) {
+        if (token) {
+            const client = createAuthenticatedClient(token);
+            if (client) return client;
+        }
+        return getSupabase();
+    }
+
     async getFromDBLocal(): Promise<Category[]> {
         const raw = Storage.getFromDB(STORAGE_KEYS.CATEGORIES) as any[];
         return this.hydrateCategories(raw);
     }
 
-    async fetchForUser(userId: string): Promise<Category[]> {
-        const sb = getSupabase();
+    async fetchForUser(userId: string, token?: string): Promise<Category[]> {
+        const sb = this.getDb(token);
         if (!sb) return this.getFromDBLocal();
 
         const { data, error } = await sb.from('categories').select('*').eq('user_id', userId);
@@ -27,11 +35,23 @@ export class CategoryService {
         })));
     }
 
-    async postCategory(c: Category) { 
+    async postCategory(c: Category, token?: string) { 
         const encryptedBudget = await DataVault.encrypt(c.budget);
-        const sb = getSupabase();
+        const sb = this.getDb(token);
         if (sb) {
-            await sb.from('categories').upsert({ ...c, budget: encryptedBudget });
+            const { data, error } = await sb
+                .from('categories')
+                .upsert({ ...c, budget: encryptedBudget })
+                .select()
+                .single();
+            if (error) {
+                console.error('[CategoryService] Upsert error:', error);
+                throw new Error(error.message);
+            }
+            if (data) {
+                const hydrated = await this.hydrateCategories([data]);
+                return { data: hydrated[0], error: null };
+            }
         }
 
         let items = Storage.getFromDB<any>(STORAGE_KEYS.CATEGORIES); 
@@ -46,11 +66,18 @@ export class CategoryService {
     }
 
     // Fixed: Added missing updateCategory method
-    async updateCategory(c: Category) { 
+    async updateCategory(c: Category, token?: string) { 
         const encryptedBudget = await DataVault.encrypt(c.budget);
-        const sb = getSupabase();
+        const sb = this.getDb(token);
         if (sb) {
-            await sb.from('categories').update({ ...c, budget: encryptedBudget }).eq('id', c.id);
+            const { error } = await sb
+                .from('categories')
+                .update({ ...c, budget: encryptedBudget })
+                .eq('id', c.id);
+            if (error) {
+                console.error('[CategoryService] Update error:', error);
+                throw new Error(error.message);
+            }
         }
         let items = Storage.getFromDB<any>(STORAGE_KEYS.CATEGORIES);
         const index = items.findIndex((item: any) => String(item.id) === String(c.id));
@@ -61,9 +88,15 @@ export class CategoryService {
         return { error: null }; 
     }
 
-    async deleteCategory(id: string) { 
-        const sb = getSupabase();
-        if (sb) await sb.from('categories').delete().eq('id', id);
+    async deleteCategory(id: string, token?: string) { 
+        const sb = this.getDb(token);
+        if (sb) {
+            const { error } = await sb.from('categories').delete().eq('id', id);
+            if (error) {
+                console.error('[CategoryService] Delete error:', error);
+                throw new Error(error.message);
+            }
+        }
         let items = Storage.getFromDB<any>(STORAGE_KEYS.CATEGORIES);
         items = items.filter((item: any) => String(item.id) !== String(id));
         Storage.saveToDB(STORAGE_KEYS.CATEGORIES, items);

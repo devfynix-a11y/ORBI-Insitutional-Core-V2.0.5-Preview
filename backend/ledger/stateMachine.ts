@@ -62,15 +62,15 @@ export class TransactionStateMachine {
     private static readonly VALID_TRANSITIONS: Record<TransactionStatus, TransactionStatus[]> = {
         'created': ['created', 'pending', 'failed', 'cancelled', 'held_for_review'],
         'pending': ['authorized', 'failed', 'cancelled', 'held_for_review', 'processing', 'completed'],
-        'authorized': ['processing', 'failed', 'reversed', 'completed'],
-        'processing': ['settled', 'failed', 'reversed', 'completed'],
+        'authorized': ['processing', 'failed', 'reversed', 'completed', 'held_for_review'],
+        'processing': ['settled', 'failed', 'reversed', 'completed', 'held_for_review'],
         'settled': ['completed', 'reversed', 'refunded'],
-        'completed': ['reversed', 'refunded'],
+        'completed': ['reversed', 'refunded', 'held_for_review'],
         'failed': [],
         'reversed': ['refunded'],
         'refunded': [],
         'cancelled': [],
-        'held_for_review': ['pending', 'authorized', 'failed', 'cancelled', 'completed']
+        'held_for_review': ['pending', 'authorized', 'failed', 'cancelled', 'completed', 'reversed']
     };
 
     /**

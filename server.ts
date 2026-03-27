@@ -20,7 +20,7 @@ import { ConfigClient } from './backend/infrastructure/RulesConfigClient.js';
 import { 
     LoginSchema, SignUpSchema, PaymentIntentSchema, 
     WalletCreateSchema, WalletLockSchema, WalletUnlockSchema, GoalCreateSchema, GoalUpdateSchema, KYCSubmitSchema, KYCReviewSchema,
-    AccountStatusUpdateSchema, UserProfileUpdateSchema, StaffCreateSchema, ManagedIdentityCreateSchema, BootstrapAdminSchema,
+    AccountStatusUpdateSchema, UserProfileUpdateSchema, StaffCreateSchema, StaffAdminUpdateSchema, StaffPasswordResetSchema, ManagedIdentityCreateSchema, BootstrapAdminSchema,
     DeviceRegisterSchema, DeviceTrustSchema, DocumentUploadSchema, DocumentVerifySchema, ServiceCustomerRegistrationSchema,
     ServiceAccessRequestCreateSchema, ServiceAccessRequestReviewSchema
 } from './backend/security/schemas.js';
@@ -1051,6 +1051,15 @@ const IncomingDepositIntentSchema = ExternalFundMovementSchema.omit({ direction:
     targetWalletId: z.string().uuid(),
 });
 
+const TransactionIssueSchema = z.object({
+    reason: z.string().min(5).max(500),
+});
+
+const TransactionAuditDecisionSchema = z.object({
+    passed: z.boolean(),
+    notes: z.string().min(3).max(500),
+});
+
 const ProviderRoutingRuleSchema = z.object({
     rail: z.enum(['MOBILE_MONEY', 'BANK', 'CARD_GATEWAY', 'CRYPTO', 'WALLET']),
     countryCode: z.string().min(2).max(3).optional(),
@@ -1135,7 +1144,35 @@ const requireAdmin = (req: Request, res: Response, next: NextFunction) => {
 
 admin.use(requireAdmin);
 
-admin.get('/partners', async (req, res) => {
+const hasSessionPermission = (session: any, permission: string) => {
+    const permissions = Array.isArray(session?.permissions) ? session.permissions : [];
+    return permissions.includes(permission);
+};
+
+const requireSessionPermission = (permissions: string[], allowedRoles: string[] = []) =>
+    (req: Request, res: Response, next: NextFunction) => {
+        const session = (req as any).session;
+        if (!session) {
+            return res.status(401).json({ success: false, error: 'AUTH_REQUIRED' });
+        }
+        const role = String(session.role || session.user?.role || '').toUpperCase();
+        if (allowedRoles.includes(role) || permissions.some((permission) => hasSessionPermission(session, permission))) {
+            return next();
+        }
+        return res.status(403).json({ success: false, error: 'ACCESS_DENIED', message: 'Missing required permission.' });
+    };
+
+const queryStringValue = (value: unknown) => {
+    if (Array.isArray(value)) {
+        return value.length ? String(value[0]) : undefined;
+    }
+    if (typeof value === 'string') {
+        return value;
+    }
+    return undefined;
+};
+
+admin.get('/partners', requireSessionPermission(['provider.read', 'provider.write'], ['ADMIN', 'SUPER_ADMIN', 'IT']), async (req, res) => {
     try {
         const { data, error } = await PartnerRegistry.listPartners();
         if (error) return res.status(500).json({ success: false, error: error.message });
@@ -1146,9 +1183,24 @@ admin.get('/partners', async (req, res) => {
     }
 });
 
-admin.post('/partners', async (req, res) => {
+admin.post('/partners', requireSessionPermission(['provider.write'], ['ADMIN', 'SUPER_ADMIN', 'IT']), async (req, res) => {
     try {
-        const { data, error } = await PartnerRegistry.addPartner(req.body);
+        const session = (req as any).session;
+        const auditMetadata = {
+            updated_by: session.sub,
+            updated_at: new Date().toISOString(),
+        };
+        const payload = {
+            ...req.body,
+            provider_metadata: {
+                ...(req.body?.provider_metadata || {}),
+                admin_audit: {
+                    ...((req.body?.provider_metadata || {}).admin_audit || {}),
+                    ...auditMetadata,
+                },
+            },
+        };
+        const { data, error } = await PartnerRegistry.addPartner(payload);
         if (error) return res.status(500).json({ success: false, error: error.message });
         res.json({ success: true, data });
     } catch (e: any) {
@@ -1157,9 +1209,25 @@ admin.post('/partners', async (req, res) => {
     }
 });
 
-admin.put('/partners/:id', async (req, res) => {
+admin.put('/partners/:id', requireSessionPermission(['provider.write'], ['ADMIN', 'SUPER_ADMIN', 'IT']), async (req, res) => {
     try {
-        const { data, error } = await PartnerRegistry.updatePartner(req.params.id, req.body);
+        const partnerId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+        const session = (req as any).session;
+        const auditMetadata = {
+            updated_by: session.sub,
+            updated_at: new Date().toISOString(),
+        };
+        const payload = {
+            ...req.body,
+            provider_metadata: {
+                ...(req.body?.provider_metadata || {}),
+                admin_audit: {
+                    ...((req.body?.provider_metadata || {}).admin_audit || {}),
+                    ...auditMetadata,
+                },
+            },
+        };
+        const { data, error } = await PartnerRegistry.updatePartner(partnerId, payload);
         if (error) return res.status(500).json({ success: false, error: error.message });
         res.json({ success: true, data });
     } catch (e: any) {
@@ -1168,9 +1236,10 @@ admin.put('/partners/:id', async (req, res) => {
     }
 });
 
-admin.delete('/partners/:id', async (req, res) => {
+admin.delete('/partners/:id', requireSessionPermission(['provider.write'], ['ADMIN', 'SUPER_ADMIN', 'IT']), async (req, res) => {
     try {
-        const { error } = await PartnerRegistry.deletePartner(req.params.id);
+        const partnerId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+        const { error } = await PartnerRegistry.deletePartner(partnerId);
         if (error) return res.status(500).json({ success: false, error: error.message });
         res.json({ success: true });
     } catch (e: any) {
@@ -1202,13 +1271,13 @@ admin.get('/balances', async (req, res) => {
     }
 });
 
-admin.get('/institutional-payment-accounts', async (req, res) => {
+admin.get('/institutional-payment-accounts', requireSessionPermission(['institutional_account.read', 'institutional_account.write'], ['ADMIN', 'SUPER_ADMIN', 'IT']), async (req, res) => {
     try {
         const data = await LogicCore.getInstitutionalPaymentAccounts({
-            role: req.query.role,
-            status: req.query.status,
-            providerId: req.query.providerId || req.query.provider_id,
-            currency: req.query.currency,
+            role: queryStringValue(req.query.role),
+            status: queryStringValue(req.query.status),
+            providerId: queryStringValue(req.query.providerId || req.query.provider_id),
+            currency: queryStringValue(req.query.currency),
         });
         res.json({ success: true, data });
     } catch (e: any) {
@@ -1217,7 +1286,7 @@ admin.get('/institutional-payment-accounts', async (req, res) => {
     }
 });
 
-admin.post('/institutional-payment-accounts', async (req, res) => {
+admin.post('/institutional-payment-accounts', requireSessionPermission(['institutional_account.write'], ['ADMIN', 'SUPER_ADMIN', 'IT']), async (req, res) => {
     try {
         const payload = InstitutionalAccountSchema.parse(req.body);
         const session = (req as any).session;
@@ -1229,11 +1298,12 @@ admin.post('/institutional-payment-accounts', async (req, res) => {
     }
 });
 
-admin.patch('/institutional-payment-accounts/:id', async (req, res) => {
+admin.patch('/institutional-payment-accounts/:id', requireSessionPermission(['institutional_account.write'], ['ADMIN', 'SUPER_ADMIN', 'IT']), async (req, res) => {
     try {
         const payload = InstitutionalAccountSchema.partial().parse(req.body);
         const session = (req as any).session;
-        const data = await LogicCore.upsertInstitutionalPaymentAccount(payload, session.sub, req.params.id);
+        const accountId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+        const data = await LogicCore.upsertInstitutionalPaymentAccount(payload, session.sub, accountId);
         res.json({ success: true, data });
     } catch (e: any) {
         console.error('[Admin] Update Institutional Account Error:', e);
@@ -1282,7 +1352,7 @@ admin.patch('/platform-fees/:id', async (req, res) => {
     }
 });
 
-admin.get('/provider-routing-rules', async (_req, res) => {
+admin.get('/provider-routing-rules', requireSessionPermission(['provider_routing.read', 'provider_routing.write'], ['ADMIN', 'SUPER_ADMIN', 'IT']), async (_req, res) => {
     try {
         const sb = getAdminSupabase() || getSupabase();
         if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
@@ -1298,9 +1368,10 @@ admin.get('/provider-routing-rules', async (_req, res) => {
     }
 });
 
-admin.post('/provider-routing-rules', async (req, res) => {
+admin.post('/provider-routing-rules', requireSessionPermission(['provider_routing.write'], ['ADMIN', 'SUPER_ADMIN', 'IT']), async (req, res) => {
     try {
         const payload = ProviderRoutingRuleSchema.parse(req.body);
+        const session = (req as any).session;
         const sb = getAdminSupabase() || getSupabase();
         if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
         const { data, error } = await sb
@@ -1312,7 +1383,14 @@ admin.post('/provider-routing-rules', async (req, res) => {
                 operation_code: payload.operationCode,
                 provider_id: payload.providerId,
                 priority: payload.priority ?? 100,
-                conditions: payload.conditions || {},
+                conditions: {
+                    ...(payload.conditions || {}),
+                    admin_audit: {
+                        ...(((payload.conditions || {}).admin_audit) || {}),
+                        updated_by: session.sub,
+                        updated_at: new Date().toISOString(),
+                    },
+                },
                 status: payload.status || 'ACTIVE',
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString(),
@@ -1326,9 +1404,10 @@ admin.post('/provider-routing-rules', async (req, res) => {
     }
 });
 
-admin.patch('/provider-routing-rules/:id', async (req, res) => {
+admin.patch('/provider-routing-rules/:id', requireSessionPermission(['provider_routing.write'], ['ADMIN', 'SUPER_ADMIN', 'IT']), async (req, res) => {
     try {
         const payload = ProviderRoutingRuleSchema.partial().parse(req.body);
+        const session = (req as any).session;
         const sb = getAdminSupabase() || getSupabase();
         if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
         const { data, error } = await sb
@@ -1340,7 +1419,16 @@ admin.patch('/provider-routing-rules/:id', async (req, res) => {
                 operation_code: payload.operationCode,
                 provider_id: payload.providerId,
                 priority: payload.priority,
-                conditions: payload.conditions,
+                conditions: payload.conditions === undefined
+                    ? undefined
+                    : {
+                        ...(payload.conditions || {}),
+                        admin_audit: {
+                            ...(((payload.conditions || {}).admin_audit) || {}),
+                            updated_by: session.sub,
+                            updated_at: new Date().toISOString(),
+                        },
+                    },
                 status: payload.status,
                 updated_at: new Date().toISOString(),
             })
@@ -1349,6 +1437,22 @@ admin.patch('/provider-routing-rules/:id', async (req, res) => {
             .single();
         if (error) return res.status(400).json({ success: false, error: error.message });
         res.json({ success: true, data });
+    } catch (e: any) {
+        res.status(400).json({ success: false, error: e.message });
+    }
+});
+
+admin.delete('/provider-routing-rules/:id', requireSessionPermission(['provider_routing.write'], ['ADMIN', 'SUPER_ADMIN', 'IT']), async (req, res) => {
+    try {
+        const ruleId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+        const { error } = await sb
+            .from('provider_routing_rules')
+            .delete()
+            .eq('id', ruleId);
+        if (error) return res.status(400).json({ success: false, error: error.message });
+        res.json({ success: true });
     } catch (e: any) {
         res.status(400).json({ success: false, error: e.message });
     }
@@ -2183,15 +2287,43 @@ v1.get('/admin/documents', authenticate as any, async (req, res) => {
 v1.get('/admin/transactions', authenticate as any, async (req, res) => {
     const session = (req as any).session;
     const role = session.role || session.user?.role;
-    if (role !== 'ADMIN' && role !== 'SUPER_ADMIN' && role !== 'AUDIT' && role !== 'CUSTOMER_CARE') {
+    if (role !== 'ADMIN' && role !== 'SUPER_ADMIN' && role !== 'AUDIT' && role !== 'CUSTOMER_CARE' && role !== 'ACCOUNTANT') {
         return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
     }
 
-    const limit = Number(req.query.limit || 100);
-    const offset = Number(req.query.offset || 0);
+    try {
+        const result = await LogicCore.getAllTransactions({
+            limit: Number(queryStringValue(req.query.limit) || 100),
+            offset: Number(queryStringValue(req.query.offset) || 0),
+            status: queryStringValue(req.query.status),
+            type: queryStringValue(req.query.type),
+            currency: queryStringValue(req.query.currency),
+            query: queryStringValue(req.query.query),
+            dateFrom: queryStringValue(req.query.dateFrom),
+            dateTo: queryStringValue(req.query.dateTo),
+        });
+        res.json({ success: true, data: result });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+v1.get('/admin/transactions/summary', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    const role = session.role || session.user?.role;
+    if (role !== 'ADMIN' && role !== 'SUPER_ADMIN' && role !== 'AUDIT' && role !== 'CUSTOMER_CARE' && role !== 'ACCOUNTANT') {
+        return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
 
     try {
-        const result = await LogicCore.getAllTransactions(limit, offset);
+        const result = await LogicCore.getTransactionVolumeSummary({
+            status: queryStringValue(req.query.status),
+            type: queryStringValue(req.query.type),
+            currency: queryStringValue(req.query.currency),
+            query: queryStringValue(req.query.query),
+            dateFrom: queryStringValue(req.query.dateFrom),
+            dateTo: queryStringValue(req.query.dateTo),
+        });
         res.json({ success: true, data: result });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -2213,6 +2345,90 @@ v1.get('/admin/transactions/:id/ledger', authenticate as any, async (req, res) =
     }
 });
 
+v1.post('/admin/transactions/:id/lock', authenticate as any, validate(TransactionIssueSchema), async (req, res) => {
+    const session = (req as any).session;
+    const role = session.role || session.user?.role;
+    if (role !== 'ADMIN' && role !== 'SUPER_ADMIN' && role !== 'AUDIT' && role !== 'CUSTOMER_CARE') {
+        return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+        const transactionId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+        const result = await LogicCore.lockTransactionForAdmin(session.sub, transactionId, req.body.reason);
+        res.json({ success: true, data: result });
+    } catch (e: any) {
+        res.status(400).json({ success: false, error: e.message });
+    }
+});
+
+v1.post('/admin/transactions/:id/audit', authenticate as any, validate(TransactionAuditDecisionSchema), async (req, res) => {
+    const session = (req as any).session;
+    const role = session.role || session.user?.role;
+    if (role !== 'ADMIN' && role !== 'SUPER_ADMIN' && role !== 'AUDIT') {
+        return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+        const transactionId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+        const result = await LogicCore.recordTransactionAuditDecision(
+            session.sub,
+            transactionId,
+            req.body.passed,
+            req.body.notes
+        );
+        res.json({ success: true, data: result });
+    } catch (e: any) {
+        res.status(400).json({ success: false, error: e.message });
+    }
+});
+
+v1.post('/admin/transactions/:id/approve', authenticate as any, validate(TransactionIssueSchema), async (req, res) => {
+    const session = (req as any).session;
+    const role = session.role || session.user?.role;
+    if (role !== 'ADMIN' && role !== 'SUPER_ADMIN') {
+        return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+        const transactionId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+        const result = await LogicCore.approveReviewedTransaction(session.sub, transactionId, req.body.reason);
+        res.json({ success: true, data: result });
+    } catch (e: any) {
+        res.status(400).json({ success: false, error: e.message });
+    }
+});
+
+v1.post('/admin/transactions/approve-audited', authenticate as any, validate(TransactionIssueSchema), async (req, res) => {
+    const session = (req as any).session;
+    const role = session.role || session.user?.role;
+    if (role !== 'ADMIN' && role !== 'SUPER_ADMIN') {
+        return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+        const result = await LogicCore.approveAllAuditPassedTransactions(session.sub, req.body.reason);
+        res.json({ success: true, data: result });
+    } catch (e: any) {
+        res.status(400).json({ success: false, error: e.message });
+    }
+});
+
+v1.post('/admin/transactions/:id/reverse', authenticate as any, validate(TransactionIssueSchema), async (req, res) => {
+    const session = (req as any).session;
+    const role = session.role || session.user?.role;
+    if (role !== 'ADMIN' && role !== 'SUPER_ADMIN') {
+        return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+        const transactionId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+        await LogicCore.reverseTransactionForAdmin(session.sub, transactionId, req.body.reason);
+        res.json({ success: true });
+    } catch (e: any) {
+        res.status(400).json({ success: false, error: e.message });
+    }
+});
+
 v1.patch('/admin/documents/:id/verify', authenticate as any, validate(DocumentVerifySchema), async (req, res) => {
     const session = (req as any).session;
     const role = session.role || session.user?.role;
@@ -2228,7 +2444,7 @@ v1.patch('/admin/documents/:id/verify', authenticate as any, validate(DocumentVe
     }
 });
 
-v1.post('/admin/staff', authenticate as any, validate(StaffCreateSchema), async (req, res) => {
+v1.post('/admin/staff', authenticate as any, requireSessionPermission(['staff.write'], ['ADMIN', 'SUPER_ADMIN', 'HUMAN_RESOURCE']), validate(StaffCreateSchema), async (req, res) => {
     const session = (req as any).session;
     const role = session.role || session.user?.role;
     if (role !== 'ADMIN' && role !== 'SUPER_ADMIN') {
@@ -2239,6 +2455,76 @@ v1.post('/admin/staff', authenticate as any, validate(StaffCreateSchema), async 
         const result = await LogicCore.createStaff(req.body, session.sub);
         if (result.error) return res.status(400).json({ success: false, error: result.error });
         res.json({ success: true, data: result.data });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+v1.get('/admin/staff', authenticate as any, requireSessionPermission(['staff.read', 'staff.write'], ['ADMIN', 'SUPER_ADMIN', 'HUMAN_RESOURCE', 'AUDIT']), async (req, res) => {
+    const session = (req as any).session;
+    const role = session.role || session.user?.role;
+    if (role !== 'ADMIN' && role !== 'SUPER_ADMIN' && role !== 'HUMAN_RESOURCE' && role !== 'AUDIT') {
+        return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+        const data = await LogicCore.getAllStaff();
+        res.json({ success: true, data });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+v1.patch('/admin/staff/:id', authenticate as any, requireSessionPermission(['staff.write'], ['ADMIN', 'SUPER_ADMIN', 'HUMAN_RESOURCE']), validate(StaffAdminUpdateSchema), async (req, res) => {
+    const session = (req as any).session;
+    const role = session.role || session.user?.role;
+    if (role !== 'ADMIN' && role !== 'SUPER_ADMIN' && role !== 'HUMAN_RESOURCE') {
+        return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+        const result = await LogicCore.adminUpdateStaffProfile(req.params.id as string, req.body, session.sub);
+        res.json({ success: true, data: result });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+v1.get('/admin/staff/:id/activity', authenticate as any, requireSessionPermission(['staff.read', 'admin.audit.read'], ['ADMIN', 'SUPER_ADMIN', 'HUMAN_RESOURCE', 'AUDIT']), async (req, res) => {
+    try {
+        const staffId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+        const data = await LogicCore.getDetailedUserActivity(staffId);
+        res.json({ success: true, data });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+v1.post('/admin/staff/:id/reset-password', authenticate as any, requireSessionPermission(['staff.write'], ['ADMIN', 'SUPER_ADMIN', 'HUMAN_RESOURCE']), validate(StaffPasswordResetSchema), async (req, res) => {
+    const session = (req as any).session;
+
+    try {
+        const result = await LogicCore.adminResetStaffPassword(req.params.id as string, req.body.password, session.sub);
+        if (result?.error) return res.status(400).json({ success: false, error: result.error });
+        res.json({ success: true, data: result });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+v1.get('/admin/permissions/preview', authenticate as any, requireSessionPermission(['staff.read', 'staff.write'], ['ADMIN', 'SUPER_ADMIN', 'HUMAN_RESOURCE', 'AUDIT']), async (req, res) => {
+    try {
+        const role = String(queryStringValue(req.query.role) || 'USER').trim().toUpperCase();
+        const status = String(queryStringValue(req.query.status) || 'active').trim().toLowerCase();
+        const permissions = new AuthService().describePermissionsForRole(role as any, status);
+        res.json({
+            success: true,
+            data: {
+                role,
+                status,
+                permissions,
+            },
+        });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
     }
@@ -3105,6 +3391,23 @@ v1.get('/transactions', authenticate as any, async (req, res) => {
     }
 });
 
+v1.post('/transactions/:id/lock', authenticate as any, validate(TransactionIssueSchema), async (req, res) => {
+    const session = (req as any).session;
+    try {
+        const transactionId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+        const result = await LogicCore.requestTransactionRecall(session.sub, transactionId, req.body.reason);
+        res.json({
+            success: true,
+            data: {
+                ...result,
+                advisory: 'Transaction recall requested. Funds remain under review and may take up to 24 hours to reflect back to your operating wallet.',
+            },
+        });
+    } catch (e: any) {
+        res.status(400).json({ success: false, error: e.message });
+    }
+});
+
 /**
  * GET ENRICHED RECEIPT DATA
  * Provides full, decrypted context for frontend-side receipt generation.
@@ -3442,8 +3745,9 @@ v1.delete('/goals/:id', authenticate as any, async (req, res) => {
 
 v1.get('/categories', authenticate as any, async (req, res) => {
     const session = (req as any).session;
+    const authToken = (req as any).authToken as string | null;
     try {
-        const result = await LogicCore.getCategories(session.sub);
+        const result = await LogicCore.getCategories(session.sub, authToken || undefined);
         res.json({ success: true, data: result });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -3452,8 +3756,12 @@ v1.get('/categories', authenticate as any, async (req, res) => {
 
 v1.post('/categories', authenticate as any, async (req, res) => {
     const session = (req as any).session;
+    const authToken = (req as any).authToken as string | null;
     try {
-        const result = await LogicCore.postCategory({ ...req.body, user_id: session.sub });
+        const result = await LogicCore.postCategory(
+            { ...req.body, user_id: session.sub },
+            authToken || undefined
+        );
         res.json({ success: true, data: result });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -3461,8 +3769,12 @@ v1.post('/categories', authenticate as any, async (req, res) => {
 });
 
 v1.patch('/categories/:id', authenticate as any, async (req, res) => {
+    const authToken = (req as any).authToken as string | null;
     try {
-        const result = await LogicCore.updateCategory({ ...req.body, id: req.params.id });
+        const result = await LogicCore.updateCategory(
+            { ...req.body, id: req.params.id },
+            authToken || undefined
+        );
         res.json({ success: true, data: result });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -3470,8 +3782,9 @@ v1.patch('/categories/:id', authenticate as any, async (req, res) => {
 });
 
 v1.delete('/categories/:id', authenticate as any, async (req, res) => {
+    const authToken = (req as any).authToken as string | null;
     try {
-        const result = await LogicCore.deleteCategory(req.params.id);
+        const result = await LogicCore.deleteCategory(req.params.id, authToken || undefined);
         res.json({ success: true, data: result });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -3790,7 +4103,7 @@ v1.get('/enterprise/budgets/alerts', authenticate as any, async (req, res) => {
 });
 
 // --- RECONCILIATION ENGINE ---
-v1.post('/admin/reconciliation/run', authenticate as any, adminOnly as any, async (req, res) => {
+v1.post('/admin/reconciliation/run', authenticate as any, requireSessionPermission(['reconciliation.run'], ['ADMIN', 'SUPER_ADMIN', 'AUDIT']), async (req, res) => {
     try {
         await LogicCore.runFullReconciliation();
         res.json({ success: true, message: 'Full reconciliation cycle triggered.' });
@@ -3799,7 +4112,7 @@ v1.post('/admin/reconciliation/run', authenticate as any, adminOnly as any, asyn
     }
 });
 
-v1.get('/admin/reconciliation/reports', authenticate as any, adminOnly as any, async (req, res) => {
+v1.get('/admin/reconciliation/reports', authenticate as any, requireSessionPermission(['reconciliation.read', 'reconciliation.run'], ['ADMIN', 'SUPER_ADMIN', 'AUDIT', 'ACCOUNTANT']), async (req, res) => {
     const limit = Number(req.query.limit || 50);
     try {
         const result = await LogicCore.getReconciliationReports(limit);
@@ -3810,7 +4123,7 @@ v1.get('/admin/reconciliation/reports', authenticate as any, adminOnly as any, a
 });
 
 // --- ADMIN CONFIGURATION APIs ---
-v1.get('/admin/config/ledger', authenticate as any, adminOnly as any, async (req, res) => {
+v1.get('/admin/config/ledger', authenticate as any, requireSessionPermission(['config.ledger.read', 'config.ledger.write'], ['ADMIN', 'SUPER_ADMIN']), async (req, res) => {
     try {
         const config = await ConfigClient.getRuleConfig(true);
         res.json({ success: true, data: config.transaction_limits });
@@ -3819,7 +4132,7 @@ v1.get('/admin/config/ledger', authenticate as any, adminOnly as any, async (req
     }
 });
 
-v1.post('/admin/config/ledger', authenticate as any, adminOnly as any, async (req, res) => {
+v1.post('/admin/config/ledger', authenticate as any, requireSessionPermission(['config.ledger.write'], ['ADMIN', 'SUPER_ADMIN']), async (req, res) => {
     try {
         const currentConfig = await ConfigClient.getRuleConfig();
         const newLimits = req.body;
@@ -3839,7 +4152,7 @@ v1.post('/admin/config/ledger', authenticate as any, adminOnly as any, async (re
     }
 });
 
-v1.get('/admin/config/commissions', authenticate as any, adminOnly as any, async (req, res) => {
+v1.get('/admin/config/commissions', authenticate as any, requireSessionPermission(['config.commissions.read', 'config.commissions.write'], ['ADMIN', 'SUPER_ADMIN', 'ACCOUNTANT']), async (req, res) => {
     try {
         const config = await ConfigClient.getRuleConfig(true);
         res.json({ success: true, data: config.commission_programs || {} });
@@ -3848,7 +4161,7 @@ v1.get('/admin/config/commissions', authenticate as any, adminOnly as any, async
     }
 });
 
-v1.post('/admin/config/commissions', authenticate as any, adminOnly as any, async (req, res) => {
+v1.post('/admin/config/commissions', authenticate as any, requireSessionPermission(['config.commissions.write'], ['ADMIN', 'SUPER_ADMIN']), async (req, res) => {
     try {
         const currentConfig = await ConfigClient.getRuleConfig();
         const updatedConfig = {
@@ -3865,7 +4178,7 @@ v1.post('/admin/config/commissions', authenticate as any, adminOnly as any, asyn
     }
 });
 
-v1.get('/admin/config/fx-rates', authenticate as any, adminOnly as any, async (req, res) => {
+v1.get('/admin/config/fx-rates', authenticate as any, requireSessionPermission(['config.fx.read', 'config.fx.write'], ['ADMIN', 'SUPER_ADMIN', 'ACCOUNTANT', 'IT']), async (req, res) => {
     try {
         const config = await ConfigClient.getRuleConfig(true);
         res.json({ success: true, data: config.exchange_rates });
@@ -3874,7 +4187,7 @@ v1.get('/admin/config/fx-rates', authenticate as any, adminOnly as any, async (r
     }
 });
 
-v1.post('/admin/config/fx-rates', authenticate as any, adminOnly as any, async (req, res) => {
+v1.post('/admin/config/fx-rates', authenticate as any, requireSessionPermission(['config.fx.write'], ['ADMIN', 'SUPER_ADMIN']), async (req, res) => {
     try {
         const currentConfig = await ConfigClient.getRuleConfig();
         const newRates = req.body;

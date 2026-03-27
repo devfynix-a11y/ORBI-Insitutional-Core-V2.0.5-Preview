@@ -81,16 +81,113 @@ export class AuthService {
         if (status !== 'active') return [];
 
         const common: Permission[] = ['auth.login', 'auth.logout', 'user.read', 'user.update'];
-        
-        if (role === 'SUPER_ADMIN') return [...common, 'user.freeze', 'wallet.read', 'wallet.create', 'wallet.update', 'wallet.delete', 'wallet.credit', 'wallet.debit', 'wallet.freeze', 'transaction.create', 'transaction.view', 'transaction.verify', 'transaction.reverse', 'transaction.delete', 'ledger.read', 'ledger.write', 'admin.approve', 'admin.freeze', 'admin.audit.read', 'system.wallet.credit', 'system.wallet.debit', 'auth.pwd_reset', 'admin.user.manage'];
-        
+
+        const adminOps: Permission[] = [
+            'staff.read',
+            'staff.write',
+            'provider.read',
+            'provider.write',
+            'institutional_account.read',
+            'institutional_account.write',
+            'provider_routing.read',
+            'provider_routing.write',
+            'config.ledger.read',
+            'config.ledger.write',
+            'config.fx.read',
+            'config.fx.write',
+            'config.commissions.read',
+            'config.commissions.write',
+            'reconciliation.read',
+            'reconciliation.run',
+            'device.read',
+            'device.trust.manage',
+            'kyc.review',
+            'document.review',
+            'service_access.review',
+        ];
+
+        if (role === 'SUPER_ADMIN') {
+            return [
+                ...common,
+                'user.freeze',
+                'wallet.read', 'wallet.create', 'wallet.update', 'wallet.delete', 'wallet.credit', 'wallet.debit', 'wallet.freeze',
+                'transaction.create', 'transaction.view', 'transaction.verify', 'transaction.reverse', 'transaction.delete',
+                'ledger.read', 'ledger.write',
+                'admin.approve', 'admin.freeze', 'admin.audit.read', 'admin.user.manage',
+                'system.wallet.credit', 'system.wallet.debit',
+                'auth.pwd_reset',
+                ...adminOps,
+            ];
+        }
+
         switch (role) {
-            case 'ADMIN': return [...common, 'wallet.read', 'wallet.update', 'transaction.view', 'transaction.verify', 'ledger.read', 'admin.approve', 'admin.audit.read', 'admin.user.manage'];
-            case 'HUMAN_RESOURCE': return [...common, 'user.read', 'user.update', 'user.freeze', 'admin.user.manage', 'admin.approve'];
-            case 'AUDIT': return [...common, 'wallet.read', 'transaction.view', 'ledger.read', 'admin.audit.read'];
-            case 'ACCOUNTANT': return [...common, 'wallet.read', 'transaction.view', 'ledger.read', 'ledger.write'];
-            case 'IT': return [...common, 'admin.audit.read', 'system.wallet.credit', 'system.wallet.debit'];
-            case 'CUSTOMER_CARE': return [...common, 'transaction.view', 'user.read'];
+            case 'ADMIN':
+                return [
+                    ...common,
+                    'wallet.read', 'wallet.update',
+                    'transaction.view', 'transaction.verify',
+                    'ledger.read',
+                    'admin.approve', 'admin.audit.read', 'admin.user.manage',
+                    'staff.read', 'staff.write',
+                    'provider.read', 'provider.write',
+                    'institutional_account.read', 'institutional_account.write',
+                    'provider_routing.read', 'provider_routing.write',
+                    'config.ledger.read', 'config.ledger.write',
+                    'config.fx.read', 'config.fx.write',
+                    'config.commissions.read', 'config.commissions.write',
+                    'reconciliation.read', 'reconciliation.run',
+                    'device.read', 'device.trust.manage',
+                    'kyc.review', 'document.review', 'service_access.review',
+                ];
+            case 'HUMAN_RESOURCE':
+                return [
+                    ...common,
+                    'user.freeze',
+                    'admin.user.manage',
+                    'admin.approve',
+                    'staff.read', 'staff.write',
+                ];
+            case 'AUDIT':
+                return [
+                    ...common,
+                    'wallet.read',
+                    'transaction.view',
+                    'ledger.read',
+                    'admin.audit.read',
+                    'reconciliation.read',
+                    'staff.read',
+                ];
+            case 'ACCOUNTANT':
+                return [
+                    ...common,
+                    'wallet.read',
+                    'transaction.view',
+                    'ledger.read',
+                    'ledger.write',
+                    'reconciliation.read',
+                    'config.commissions.read',
+                    'config.fx.read',
+                ];
+            case 'IT':
+                return [
+                    ...common,
+                    'admin.audit.read',
+                    'system.wallet.credit', 'system.wallet.debit',
+                    'provider.read', 'provider.write',
+                    'institutional_account.read', 'institutional_account.write',
+                    'provider_routing.read', 'provider_routing.write',
+                    'device.read', 'device.trust.manage',
+                    'config.ledger.read',
+                    'config.fx.read',
+                ];
+            case 'CUSTOMER_CARE':
+                return [
+                    ...common,
+                    'transaction.view',
+                    'kyc.review',
+                    'document.review',
+                    'service_access.review',
+                ];
             case 'MERCHANT':
                 return [
                     ...common,
@@ -117,6 +214,10 @@ export class AuthService {
                 return [...common, 'wallet.read', 'wallet.create', 'wallet.update', 'wallet.delete', 'transaction.create', 'transaction.view', 'goal.read', 'goal.create', 'goal.update', 'goal.delete', 'category.read', 'category.create', 'category.update', 'category.delete', 'task.read', 'task.create', 'task.update', 'task.delete'];
             default: return [...common];
         }
+    }
+
+    public describePermissionsForRole(role: UserRole = 'USER', status: string = 'pending'): Permission[] {
+        return this.getPermissionsForRole(role, status);
     }
 
     private async resolveNodeStatus(
@@ -730,6 +831,37 @@ export class AuthService {
                         }
                     } catch (err) {
                         return { data: null, error: { message: "Invalid phone number provided." } };
+                    }
+                }
+
+                // Enforce single phone number across all identities
+                if (formattedPhone) {
+                    const adminSb = getAdminSupabase();
+                    const checkClient = adminSb || sb;
+                    if (checkClient) {
+                        const { data: userMatch, error: userMatchError } = await checkClient
+                            .from('users')
+                            .select('id')
+                            .eq('phone', formattedPhone)
+                            .maybeSingle();
+                        if (userMatchError) {
+                            console.warn('[AuthService] Phone uniqueness check failed (users):', userMatchError.message);
+                        }
+                        if (userMatch) {
+                            return { data: null, error: { message: "PHONE_ALREADY_IN_USE: This phone number is already linked to another account." } };
+                        }
+
+                        const { data: staffMatch, error: staffMatchError } = await checkClient
+                            .from('staff')
+                            .select('id')
+                            .eq('phone', formattedPhone)
+                            .maybeSingle();
+                        if (staffMatchError) {
+                            console.warn('[AuthService] Phone uniqueness check failed (staff):', staffMatchError.message);
+                        }
+                        if (staffMatch) {
+                            return { data: null, error: { message: "PHONE_ALREADY_IN_USE: This phone number is already linked to another account." } };
+                        }
                     }
                 }
 
