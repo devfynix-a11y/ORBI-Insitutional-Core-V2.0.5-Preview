@@ -3946,6 +3946,35 @@ v1.get('/admin/kms/health', authenticate as any, adminOnly as any, async (_req, 
     }
 });
 
+v1.post('/admin/kms/diagnose', authenticate as any, adminOnly as any, async (req, res) => {
+    try {
+        const masterKey = String(req.body?.masterKey || process.env.KMS_MASTER_KEY || '').trim();
+        if (!masterKey) {
+            return res.status(400).json({
+                success: false,
+                error: 'KMS_MASTER_KEY_MISSING'
+            });
+        }
+
+        const configuredSalt = process.env.KMS_SALT || '';
+        const defaultSalt = 'orbi-kms-wrapping-salt-v1';
+
+        const matchConfigured = await KMS.testUnwrapWithSecret(masterKey, configuredSalt || undefined);
+        const matchDefault = await KMS.testUnwrapWithSecret(masterKey, defaultSalt);
+
+        res.json({
+            success: true,
+            data: {
+                matchConfiguredSalt: matchConfigured,
+                matchDefaultSalt: matchDefault,
+                configuredSalt: configuredSalt ? 'SET' : 'EMPTY'
+            }
+        });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 // --- System Domain ---
 v1.get('/sys/bootstrap', authenticate as any, async (req, res) => {
     const token = req.headers.authorization?.substring(7);

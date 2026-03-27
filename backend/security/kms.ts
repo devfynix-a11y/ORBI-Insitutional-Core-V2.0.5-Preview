@@ -61,6 +61,52 @@ class SecureKMSService {
         );
     }
 
+    public async testUnwrapWithSecret(secret: string, saltOverride?: string): Promise<boolean> {
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) throw new Error('DB_OFFLINE');
+
+        const { data: dbKey, error } = await sb
+            .from('kms_keys')
+            .select('*')
+            .order('version', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+        if (error || !dbKey) {
+            throw new Error(error?.message || 'NO_KEYS_FOUND');
+        }
+
+        const encoder = new TextEncoder();
+        const masterKeyMaterial = await crypto.subtle.importKey(
+            'raw',
+            encoder.encode(secret),
+            { name: 'PBKDF2' },
+            false,
+            ['deriveKey']
+        );
+        const saltValue = saltOverride || process.env.KMS_SALT || 'orbi-kms-wrapping-salt-v1';
+        const salt = encoder.encode(saltValue);
+        const wrappingKey = await crypto.subtle.deriveKey(
+            {
+                name: 'PBKDF2',
+                salt: salt,
+                iterations: 310000,
+                hash: 'SHA-256'
+            },
+            masterKeyMaterial,
+            { name: 'AES-GCM', length: 256 },
+            false,
+            ['wrapKey', 'unwrapKey']
+        );
+
+        try {
+            await this.unwrapDbKey(dbKey, wrappingKey);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
     private async init() {
         try {
             const sb = getAdminSupabase() || getSupabase();
