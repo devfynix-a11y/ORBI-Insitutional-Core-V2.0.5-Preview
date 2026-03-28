@@ -128,10 +128,18 @@ export class WalletService {
         await sb.from('wallets').update(data).eq('id', id);
     }
 
-    async deleteWallet(id: string, tier: 'sovereign' | 'linked'): Promise<void> {
+    async deleteWallet(id: string, tier: 'sovereign' | 'linked', userId?: string): Promise<void> {
         const sb = getAdminSupabase();
         if (!sb) return;
         const table = tier === 'sovereign' ? 'platform_vaults' : 'wallets';
-        await sb.from(table).delete().eq('id', id);
+        let query = sb.from(table).delete().eq('id', id).select('id');
+        if (userId && tier === 'linked') {
+            query = query.eq('user_id', userId);
+        }
+        const { data, error } = await query;
+        if (error) throw error;
+        if (userId && tier === 'linked' && (!(data && data.length))) {
+            throw new Error('WALLET_NOT_FOUND');
+        }
     }
 }

@@ -321,6 +321,10 @@ CREATE TABLE IF NOT EXISTS public.financial_ledger (
     transaction_id UUID REFERENCES public.transactions(id) ON DELETE CASCADE,
     user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
     wallet_id UUID,
+    shared_pot_id UUID,
+    bill_reserve_id UUID,
+    bucket_type TEXT,
+    entry_side TEXT,
     entry_type TEXT NOT NULL,
     amount TEXT NOT NULL,
     balance_after TEXT NOT NULL,
@@ -333,6 +337,18 @@ DO $$
 BEGIN 
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='financial_ledger' AND column_name='balance_after_encrypted') THEN
         ALTER TABLE public.financial_ledger ADD COLUMN balance_after_encrypted TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='financial_ledger' AND column_name='shared_pot_id') THEN
+        ALTER TABLE public.financial_ledger ADD COLUMN shared_pot_id UUID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='financial_ledger' AND column_name='bill_reserve_id') THEN
+        ALTER TABLE public.financial_ledger ADD COLUMN bill_reserve_id UUID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='financial_ledger' AND column_name='bucket_type') THEN
+        ALTER TABLE public.financial_ledger ADD COLUMN bucket_type TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='financial_ledger' AND column_name='entry_side') THEN
+        ALTER TABLE public.financial_ledger ADD COLUMN entry_side TEXT;
     END IF;
 END $$;
 
@@ -375,6 +391,162 @@ CREATE TABLE IF NOT EXISTS public.categories (
     budget_interval TEXT DEFAULT 'MONTHLY',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- ORBI WEALTH: structured money planning for everyday users, businesses,
+-- enterprises, and premium users.
+CREATE TABLE IF NOT EXISTS public.wealth_buckets (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    bucket_type TEXT NOT NULL CHECK (bucket_type IN ('OPERATING', 'PLANNED', 'PROTECTED', 'GROWING')),
+    wallet_id UUID,
+    currency TEXT DEFAULT 'TZS',
+    ledger_balance NUMERIC DEFAULT 0,
+    available_balance NUMERIC DEFAULT 0,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE (user_id, bucket_type, currency)
+);
+
+CREATE TABLE IF NOT EXISTS public.allocation_rules (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    trigger_type TEXT NOT NULL CHECK (trigger_type IN ('DEPOSIT', 'SALARY', 'ROUNDUP', 'REMITTANCE', 'MANUAL')),
+    source_wallet_id UUID,
+    target_type TEXT NOT NULL CHECK (target_type IN ('GOAL', 'BUDGET', 'BILL_RESERVE', 'SHARED_POT', 'WEALTH_BUCKET')),
+    target_id UUID,
+    mode TEXT NOT NULL DEFAULT 'PERCENT' CHECK (mode IN ('FIXED', 'PERCENT')),
+    fixed_amount NUMERIC,
+    percentage NUMERIC,
+    priority INTEGER DEFAULT 1,
+    is_active BOOLEAN DEFAULT TRUE,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.shared_pots (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner_user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    purpose TEXT,
+    currency TEXT DEFAULT 'TZS',
+    target_amount NUMERIC,
+    current_amount NUMERIC DEFAULT 0,
+    status TEXT DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'PAUSED', 'COMPLETED', 'ARCHIVED')),
+    access_model TEXT DEFAULT 'INVITE' CHECK (access_model IN ('INVITE', 'PRIVATE', 'ORG')),
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.shared_pot_members (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    pot_id UUID REFERENCES public.shared_pots(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    role TEXT DEFAULT 'CONTRIBUTOR' CHECK (role IN ('OWNER', 'MANAGER', 'CONTRIBUTOR', 'VIEWER')),
+    contribution_target NUMERIC,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE (pot_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.bill_reserves (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    provider_name TEXT NOT NULL,
+    bill_type TEXT NOT NULL,
+    source_wallet_id UUID,
+    currency TEXT DEFAULT 'TZS',
+    due_pattern TEXT DEFAULT 'MONTHLY',
+    due_day INTEGER,
+    reserve_mode TEXT DEFAULT 'FIXED' CHECK (reserve_mode IN ('FIXED', 'PERCENT')),
+    reserve_amount NUMERIC DEFAULT 0,
+    locked_balance NUMERIC DEFAULT 0,
+    is_active BOOLEAN DEFAULT TRUE,
+    status TEXT DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'PAUSED', 'ARCHIVED')),
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.wealth_snapshots (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    snapshot_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    currency TEXT DEFAULT 'TZS',
+    operating_balance NUMERIC DEFAULT 0,
+    planned_balance NUMERIC DEFAULT 0,
+    protected_balance NUMERIC DEFAULT 0,
+    growing_balance NUMERIC DEFAULT 0,
+    net_position NUMERIC DEFAULT 0,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE (user_id, snapshot_date, currency)
+);
+
+CREATE TABLE IF NOT EXISTS public.wealth_insights (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    insight_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    severity TEXT DEFAULT 'INFO' CHECK (severity IN ('INFO', 'SUCCESS', 'WARNING', 'CRITICAL')),
+    status TEXT DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'DISMISSED', 'RESOLVED')),
+    action_label TEXT,
+    action_route TEXT,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE
+);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='transactions' AND column_name='wealth_impact_type'
+    ) THEN
+        ALTER TABLE public.transactions ADD COLUMN wealth_impact_type TEXT DEFAULT 'OPERATING';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='transactions' AND column_name='protection_state'
+    ) THEN
+        ALTER TABLE public.transactions ADD COLUMN protection_state TEXT DEFAULT 'OPEN';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='transactions' AND column_name='allocation_source'
+    ) THEN
+        ALTER TABLE public.transactions ADD COLUMN allocation_source TEXT;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='goals' AND column_name='shared_pot_id'
+    ) THEN
+        ALTER TABLE public.goals ADD COLUMN shared_pot_id UUID;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='bill_reserves' AND column_name='status'
+    ) THEN
+        ALTER TABLE public.bill_reserves ADD COLUMN status TEXT DEFAULT 'ACTIVE';
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_wealth_buckets_user_type
+    ON public.wealth_buckets (user_id, bucket_type);
+CREATE INDEX IF NOT EXISTS idx_allocation_rules_user_active
+    ON public.allocation_rules (user_id, is_active, trigger_type);
+CREATE INDEX IF NOT EXISTS idx_bill_reserves_user_active
+    ON public.bill_reserves (user_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_shared_pots_owner
+    ON public.shared_pots (owner_user_id, status);
+CREATE INDEX IF NOT EXISTS idx_wealth_snapshots_user_date
+    ON public.wealth_snapshots (user_id, snapshot_date DESC);
+CREATE INDEX IF NOT EXISTS idx_wealth_insights_user_status
+    ON public.wealth_insights (user_id, status, severity);
 
 -- ENTERPRISE UPGRADE: Organizations & B2B Multi-Tenancy
 CREATE TABLE IF NOT EXISTS public.organizations (

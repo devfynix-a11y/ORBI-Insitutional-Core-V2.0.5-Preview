@@ -394,7 +394,9 @@ class OrbiServer {
     
     async updateWallet(p: any) { return this.wallet.updateWallet(p.id, p); }
     async getWallets(uid: string) { return this.wallet.fetchForUser(uid); }
-    async deleteWallet(id: string) { return this.wallet.deleteWallet(id, 'linked'); }
+    async deleteWallet(userId: string, id: string) {
+        return this.wallet.deleteWallet(id, 'linked', userId);
+    }
 
     private async verifyTransactionPin(userId: string, pin?: string): Promise<boolean> {
         if (!pin || !pin.trim()) return false;

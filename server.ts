@@ -1479,6 +1479,55 @@ app.use('/api/admin', admin);
 const v1 = express.Router();
 const gatewayV1 = express.Router();
 
+const BillReserveCreateSchema = z.object({
+    provider_name: z.string().min(2),
+    bill_type: z.string().min(2),
+    source_wallet_id: z.string().uuid().optional(),
+    currency: z.string().min(3).max(8).optional(),
+    due_pattern: z.enum(['WEEKLY', 'MONTHLY', 'CUSTOM']).optional(),
+    due_day: z.coerce.number().int().min(1).max(31).optional(),
+    reserve_mode: z.enum(['FIXED', 'PERCENT']).optional(),
+    reserve_amount: z.coerce.number().nonnegative(),
+});
+
+const SharedPotCreateSchema = z.object({
+    name: z.string().min(2),
+    purpose: z.string().optional(),
+    currency: z.string().min(3).max(8).optional(),
+    target_amount: z.coerce.number().nonnegative().optional(),
+    access_model: z.enum(['INVITE', 'PRIVATE', 'ORG']).optional(),
+});
+
+const BillReserveUpdateSchema = BillReserveCreateSchema.partial().extend({
+    is_active: z.boolean().optional(),
+    status: z.enum(['ACTIVE', 'PAUSED', 'ARCHIVED']).optional(),
+});
+
+const SharedPotUpdateSchema = SharedPotCreateSchema.partial().extend({
+    status: z.enum(['ACTIVE', 'PAUSED', 'COMPLETED', 'ARCHIVED']).optional(),
+});
+
+const SharedPotContributionSchema = z.object({
+    amount: z.coerce.number().positive(),
+    source_wallet_id: z.string().uuid().optional(),
+});
+
+const AllocationRuleCreateSchema = z.object({
+    name: z.string().min(2),
+    trigger_type: z.enum(['DEPOSIT', 'SALARY', 'ROUNDUP', 'REMITTANCE', 'MANUAL']),
+    source_wallet_id: z.string().uuid().optional(),
+    target_type: z.enum(['GOAL', 'BUDGET', 'BILL_RESERVE', 'SHARED_POT', 'WEALTH_BUCKET']),
+    target_id: z.string().uuid(),
+    mode: z.enum(['FIXED', 'PERCENT']),
+    fixed_amount: z.coerce.number().nonnegative().optional(),
+    percentage: z.coerce.number().min(0).max(100).optional(),
+    priority: z.coerce.number().int().min(1).optional(),
+});
+
+const AllocationRuleUpdateSchema = AllocationRuleCreateSchema.partial().extend({
+    is_active: z.boolean().optional(),
+});
+
 gatewayV1.use((req, res, next) => {
     if (req.path.startsWith('/webhooks/gateway/')) {
         return next();
@@ -3350,6 +3399,17 @@ v1.post('/wallets', authenticate as any, validate(WalletCreateSchema), async (re
     }
 });
 
+v1.delete('/wallets/:id', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    try {
+        const walletId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+        await LogicCore.deleteWallet(session.sub, walletId);
+        res.json({ success: true });
+    } catch (e: any) {
+        res.status(400).json({ success: false, error: e.message });
+    }
+});
+
 v1.post('/wallets/:id/lock', authenticate as any, validate(WalletLockSchema), async (req, res) => {
     const session = (req as any).session;
     const isAdmin = requireRole(session, ['ADMIN', 'SUPER_ADMIN', 'IT', 'STAFF']);
@@ -3888,6 +3948,570 @@ v1.delete('/categories/:id', authenticate as any, async (req, res) => {
     }
 });
 
+v1.get('/wealth/summary', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    try {
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+
+        const userId = session.sub;
+        const [
+            platformVaultsResult,
+            walletsResult,
+            goalsResult,
+            categoriesResult,
+            billReservesResult,
+            sharedPotsResult,
+            userResult,
+        ] = await Promise.all([
+            sb.from('platform_vaults').select('vault_role,name,balance,currency,metadata').eq('user_id', userId),
+            sb.from('wallets').select('name,balance,currency,type,management_tier,metadata').eq('user_id', userId),
+            sb.from('goals').select('current').eq('user_id', userId),
+            sb.from('categories').select('budget').eq('user_id', userId),
+            sb.from('bill_reserves').select('reserve_amount,locked_balance,currency,is_active').eq('user_id', userId),
+            sb.from('shared_pots').select('current_amount,target_amount,currency,status').eq('owner_user_id', userId),
+            sb.from('users').select('currency').eq('id', userId).single(),
+        ]);
+
+        const firstError = [
+            platformVaultsResult.error,
+            walletsResult.error,
+            goalsResult.error,
+            categoriesResult.error,
+            billReservesResult.error,
+            sharedPotsResult.error,
+            userResult.error,
+        ].find(Boolean);
+        if (firstError) {
+            return res.status(400).json({ success: false, error: (firstError as any).message });
+        }
+
+        const preferredCurrency = String(userResult.data?.currency || 'TZS').toUpperCase();
+        const asNumber = (value: any) => {
+            if (typeof value === 'number') return value;
+            if (typeof value === 'string') return Number(value.replace(/,/g, '')) || 0;
+            return 0;
+        };
+
+        const platformVaults = platformVaultsResult.data || [];
+        const wallets = walletsResult.data || [];
+        const operatingVault = platformVaults.find((vault: any) => String(vault.vault_role || '').toUpperCase() === 'OPERATING');
+        const fallbackOperatingWallet = wallets.find((wallet: any) => {
+            const lowType = String(wallet.type || '').toLowerCase();
+            const lowTier = String(wallet.management_tier || '').toLowerCase();
+            const lowName = String(wallet.name || '').toLowerCase();
+            return lowType.includes('internal') || lowTier.includes('sovereign') || lowName.includes('dilpesa');
+        });
+
+        const escrowBalance = [
+            ...platformVaults.filter((vault: any) => String(vault.vault_role || '').toUpperCase() === 'INTERNAL_TRANSFER'),
+            ...wallets.filter((wallet: any) => {
+                const lowName = String(wallet.name || '').toLowerCase();
+                const lowType = String(wallet.type || '').toLowerCase();
+                const escrowMeta = wallet.metadata?.is_secure_escrow === true;
+                return lowName.includes('paysafe') || lowName.includes('escrow') || lowType.includes('internal_transfer') || escrowMeta;
+            }),
+        ].reduce((sum: number, item: any) => sum + asNumber(item.balance), 0);
+
+        const plannedBudget = (categoriesResult.data || []).reduce(
+            (sum: number, category: any) => sum + asNumber(category.budget),
+            0,
+        );
+        const reserveLocked = (billReservesResult.data || [])
+            .filter((reserve: any) => reserve.is_active !== false)
+            .reduce((sum: number, reserve: any) => sum + asNumber(reserve.locked_balance || reserve.reserve_amount), 0);
+        const growingGoals = (goalsResult.data || []).reduce(
+            (sum: number, goal: any) => sum + asNumber(goal.current),
+            0,
+        );
+        const sharedPotBalance = (sharedPotsResult.data || [])
+            .filter((pot: any) => String(pot.status || 'ACTIVE').toUpperCase() !== 'ARCHIVED')
+            .reduce((sum: number, pot: any) => sum + asNumber(pot.current_amount), 0);
+
+        const operatingBalance = asNumber(
+            operatingVault?.balance ?? fallbackOperatingWallet?.balance ?? 0,
+        );
+        const plannedBalance = plannedBudget + reserveLocked;
+        const protectedBalance = escrowBalance;
+        const growingBalance = growingGoals + sharedPotBalance;
+
+        const insights: Array<{ type: string; title: string; message: string; severity: string }> = [];
+        if (plannedBalance > operatingBalance) {
+            insights.push({
+                type: 'SPEND_PRESSURE',
+                title: 'Planned spending is ahead of available money',
+                message: 'Reduce planned spending or top up the operating wallet to stay in control.',
+                severity: 'WARNING',
+            });
+        }
+        if ((goalsResult.data || []).length === 0) {
+            insights.push({
+                type: 'GOAL_START',
+                title: 'Start a first growth goal',
+                message: 'Create one goal so ORBI can separate daily money from long-term money.',
+                severity: 'INFO',
+            });
+        }
+        if ((billReservesResult.data || []).length === 0) {
+            insights.push({
+                type: 'BILL_RESERVE_START',
+                title: 'Protect your next bill',
+                message: 'Create a bill reserve so important payments are set aside before spending.',
+                severity: 'INFO',
+            });
+        }
+
+        res.json({
+            success: true,
+            data: {
+                currency: preferredCurrency,
+                operating_balance: operatingBalance,
+                planned_balance: plannedBalance,
+                protected_balance: protectedBalance,
+                growing_balance: growingBalance,
+                goal_count: (goalsResult.data || []).length,
+                budget_count: (categoriesResult.data || []).length,
+                linked_wallet_count: wallets.filter((wallet: any) => {
+                    const lowType = String(wallet.type || '').toLowerCase();
+                    const lowTier = String(wallet.management_tier || '').toLowerCase();
+                    return lowType.includes('linked') || lowType.includes('external') || lowTier.includes('linked');
+                }).length,
+                insights,
+            },
+        });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+v1.get('/wealth/bill-reserves', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    try {
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+        const { data, error } = await sb
+            .from('bill_reserves')
+            .select('*')
+            .eq('user_id', session.sub)
+            .order('created_at', { ascending: false });
+        if (error) return res.status(400).json({ success: false, error: error.message });
+        res.json({ success: true, data: { reserves: data || [] } });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+v1.post('/wealth/bill-reserves', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    try {
+        const payload = BillReserveCreateSchema.parse(req.body);
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+        const insertPayload = {
+            user_id: session.sub,
+            provider_name: payload.provider_name,
+            bill_type: payload.bill_type,
+            source_wallet_id: payload.source_wallet_id,
+            currency: payload.currency?.toUpperCase() || 'TZS',
+            due_pattern: payload.due_pattern || 'MONTHLY',
+            due_day: payload.due_day,
+            reserve_mode: payload.reserve_mode || 'FIXED',
+            reserve_amount: payload.reserve_amount,
+            locked_balance: payload.reserve_mode === 'FIXED' || !payload.reserve_mode
+                ? payload.reserve_amount
+                : 0,
+            is_active: true,
+            metadata: {
+                created_from: 'mobile_app',
+            },
+        };
+        const { data, error } = await sb
+            .from('bill_reserves')
+            .insert(insertPayload)
+            .select('*')
+            .single();
+        if (error) return res.status(400).json({ success: false, error: error.message });
+        res.json({ success: true, data });
+    } catch (e: any) {
+        res.status(400).json({ success: false, error: e.message });
+    }
+});
+
+v1.patch('/wealth/bill-reserves/:id', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    try {
+        const payload = BillReserveUpdateSchema.parse(req.body);
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+        const updatePayload: any = {
+            updated_at: new Date().toISOString(),
+        };
+        if (payload.provider_name !== undefined) updatePayload.provider_name = payload.provider_name;
+        if (payload.bill_type !== undefined) updatePayload.bill_type = payload.bill_type;
+        if (payload.source_wallet_id !== undefined) updatePayload.source_wallet_id = payload.source_wallet_id;
+        if (payload.currency !== undefined) updatePayload.currency = payload.currency.toUpperCase();
+        if (payload.due_pattern !== undefined) updatePayload.due_pattern = payload.due_pattern;
+        if (payload.due_day !== undefined) updatePayload.due_day = payload.due_day;
+        if (payload.reserve_mode !== undefined) updatePayload.reserve_mode = payload.reserve_mode;
+        if (payload.reserve_amount !== undefined) updatePayload.reserve_amount = payload.reserve_amount;
+        if (payload.is_active !== undefined) updatePayload.is_active = payload.is_active;
+        if (payload.status !== undefined) updatePayload.status = payload.status;
+        if (payload.reserve_amount !== undefined && (payload.reserve_mode === 'FIXED' || payload.reserve_mode === undefined)) {
+            updatePayload.locked_balance = payload.reserve_amount;
+        }
+        const { data, error } = await sb
+            .from('bill_reserves')
+            .update(updatePayload)
+            .eq('id', req.params.id)
+            .eq('user_id', session.sub)
+            .select('*')
+            .single();
+        if (error) return res.status(400).json({ success: false, error: error.message });
+        res.json({ success: true, data });
+    } catch (e: any) {
+        res.status(400).json({ success: false, error: e.message });
+    }
+});
+
+v1.get('/wealth/shared-pots', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    try {
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+        const { data, error } = await sb
+            .from('shared_pots')
+            .select('*')
+            .eq('owner_user_id', session.sub)
+            .order('created_at', { ascending: false });
+        if (error) return res.status(400).json({ success: false, error: error.message });
+        res.json({ success: true, data: { pots: data || [] } });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+v1.post('/wealth/shared-pots', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    try {
+        const payload = SharedPotCreateSchema.parse(req.body);
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+        const { data, error } = await sb
+            .from('shared_pots')
+            .insert({
+                owner_user_id: session.sub,
+                name: payload.name,
+                purpose: payload.purpose,
+                currency: payload.currency?.toUpperCase() || 'TZS',
+                target_amount: payload.target_amount || 0,
+                current_amount: 0,
+                access_model: payload.access_model || 'INVITE',
+                status: 'ACTIVE',
+                metadata: { created_from: 'mobile_app' },
+            })
+            .select('*')
+            .single();
+        if (error) return res.status(400).json({ success: false, error: error.message });
+        await sb.from('shared_pot_members').insert({
+            pot_id: data.id,
+            user_id: session.sub,
+            role: 'OWNER',
+        });
+        res.json({ success: true, data });
+    } catch (e: any) {
+        res.status(400).json({ success: false, error: e.message });
+    }
+});
+
+v1.patch('/wealth/shared-pots/:id', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    try {
+        const payload = SharedPotUpdateSchema.parse(req.body);
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+        const updatePayload: any = {
+            updated_at: new Date().toISOString(),
+        };
+        if (payload.name !== undefined) updatePayload.name = payload.name;
+        if (payload.purpose !== undefined) updatePayload.purpose = payload.purpose;
+        if (payload.currency !== undefined) updatePayload.currency = payload.currency.toUpperCase();
+        if (payload.target_amount !== undefined) updatePayload.target_amount = payload.target_amount;
+        if (payload.access_model !== undefined) updatePayload.access_model = payload.access_model;
+        if (payload.status !== undefined) updatePayload.status = payload.status;
+        const { data, error } = await sb
+            .from('shared_pots')
+            .update(updatePayload)
+            .eq('id', req.params.id)
+            .eq('owner_user_id', session.sub)
+            .select('*')
+            .single();
+        if (error) return res.status(400).json({ success: false, error: error.message });
+        res.json({ success: true, data });
+    } catch (e: any) {
+        res.status(400).json({ success: false, error: e.message });
+    }
+});
+
+v1.post('/wealth/shared-pots/:id/contribute', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    try {
+        const payload = SharedPotContributionSchema.parse(req.body);
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+        const asNumber = (value: any) => {
+            if (typeof value === 'number') return value;
+            if (typeof value === 'string') return Number(value.replace(/,/g, '')) || 0;
+            return 0;
+        };
+
+        const { data: pot, error: potError } = await sb
+            .from('shared_pots')
+            .select('*')
+            .eq('id', req.params.id)
+            .eq('owner_user_id', session.sub)
+            .single();
+        if (potError || !pot) {
+            return res.status(404).json({ success: false, error: 'SHARED_POT_NOT_FOUND' });
+        }
+
+        let sourceRecord: any = null;
+        let sourceTable: 'platform_vaults' | 'wallets' = 'platform_vaults';
+        if (payload.source_wallet_id) {
+            const { data: vaultMatch } = await sb
+                .from('platform_vaults')
+                .select('*')
+                .eq('id', payload.source_wallet_id)
+                .eq('user_id', session.sub)
+                .maybeSingle();
+            if (vaultMatch) {
+                sourceRecord = vaultMatch;
+                sourceTable = 'platform_vaults';
+            } else {
+                const { data: walletMatch } = await sb
+                    .from('wallets')
+                    .select('*')
+                    .eq('id', payload.source_wallet_id)
+                    .eq('user_id', session.sub)
+                    .maybeSingle();
+                if (walletMatch) {
+                    sourceRecord = walletMatch;
+                    sourceTable = 'wallets';
+                }
+            }
+        }
+
+        if (!sourceRecord) {
+            const { data: operatingVault } = await sb
+                .from('platform_vaults')
+                .select('*')
+                .eq('user_id', session.sub)
+                .eq('vault_role', 'OPERATING')
+                .maybeSingle();
+            if (operatingVault) {
+                sourceRecord = operatingVault;
+                sourceTable = 'platform_vaults';
+            } else {
+                const { data: fallbackWallet } = await sb
+                    .from('wallets')
+                    .select('*')
+                    .eq('user_id', session.sub)
+                    .order('created_at', { ascending: true })
+                    .limit(1)
+                    .maybeSingle();
+                sourceRecord = fallbackWallet;
+                sourceTable = 'wallets';
+            }
+        }
+
+        if (!sourceRecord) {
+            return res.status(400).json({ success: false, error: 'NO_OPERATING_WALLET' });
+        }
+
+        const currentBalance = asNumber(sourceRecord.balance);
+        if (currentBalance < payload.amount) {
+            return res.status(400).json({ success: false, error: 'INSUFFICIENT_FUNDS' });
+        }
+
+        const newSourceBalance = currentBalance - payload.amount;
+        const newPotBalance = asNumber(pot.current_amount) + payload.amount;
+        const reference = `pot_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+
+        const { data: tx, error: txError } = await sb
+            .from('transactions')
+            .insert({
+                reference_id: reference,
+                user_id: session.sub,
+                wallet_id: sourceRecord.id,
+                amount: String(payload.amount),
+                currency: String(pot.currency || sourceRecord.currency || 'TZS').toUpperCase(),
+                description: `Shared pot contribution: ${pot.name}`,
+                type: 'internal_transfer',
+                status: 'completed',
+                wealth_impact_type: 'GROWING',
+                protection_state: 'OPEN',
+                allocation_source: 'SHARED_POT_CONTRIBUTION',
+                metadata: {
+                    shared_pot_id: pot.id,
+                    source_table: sourceTable,
+                    source_wallet_role: sourceRecord.vault_role || sourceRecord.type || null,
+                },
+            })
+            .select('*')
+            .single();
+        if (txError || !tx) {
+            return res.status(400).json({ success: false, error: txError?.message || 'TX_CREATE_FAILED' });
+        }
+
+        const { error: walletUpdateError } = await sb
+            .from(sourceTable)
+            .update({
+                balance: newSourceBalance,
+                updated_at: new Date().toISOString(),
+            })
+            .eq('id', sourceRecord.id)
+            .eq('user_id', session.sub);
+        if (walletUpdateError) {
+            return res.status(400).json({ success: false, error: walletUpdateError.message });
+        }
+
+        const { error: potUpdateError } = await sb
+            .from('shared_pots')
+            .update({
+                current_amount: newPotBalance,
+                updated_at: new Date().toISOString(),
+            })
+            .eq('id', pot.id)
+            .eq('owner_user_id', session.sub);
+        if (potUpdateError) {
+            return res.status(400).json({ success: false, error: potUpdateError.message });
+        }
+
+        const ledgerRows = [
+            {
+                transaction_id: tx.id,
+                user_id: session.sub,
+                wallet_id: sourceRecord.id,
+                shared_pot_id: pot.id,
+                bucket_type: 'OPERATING',
+                entry_side: 'DEBIT',
+                entry_type: 'DEBIT',
+                amount: String(payload.amount),
+                balance_after: String(newSourceBalance),
+                description: `Shared pot contribution debit: ${pot.name}`,
+            },
+            {
+                transaction_id: tx.id,
+                user_id: session.sub,
+                wallet_id: sourceRecord.id,
+                shared_pot_id: pot.id,
+                bucket_type: 'GROWING',
+                entry_side: 'CREDIT',
+                entry_type: 'CREDIT',
+                amount: String(payload.amount),
+                balance_after: String(newPotBalance),
+                description: `Shared pot contribution credit: ${pot.name}`,
+            },
+        ];
+        const { error: ledgerError } = await sb.from('financial_ledger').insert(ledgerRows);
+        if (ledgerError) {
+            return res.status(400).json({ success: false, error: ledgerError.message });
+        }
+
+        res.json({
+            success: true,
+            data: {
+                transaction: tx,
+                shared_pot: { ...pot, current_amount: newPotBalance },
+                source_balance: newSourceBalance,
+            },
+        });
+    } catch (e: any) {
+        res.status(400).json({ success: false, error: e.message });
+    }
+});
+
+v1.get('/wealth/allocation-rules', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    try {
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+        const { data, error } = await sb
+            .from('allocation_rules')
+            .select('*')
+            .eq('user_id', session.sub)
+            .order('priority', { ascending: true })
+            .order('created_at', { ascending: false });
+        if (error) return res.status(400).json({ success: false, error: error.message });
+        res.json({ success: true, data: { rules: data || [] } });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+v1.post('/wealth/allocation-rules', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    try {
+        const payload = AllocationRuleCreateSchema.parse(req.body);
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+        const { data, error } = await sb
+            .from('allocation_rules')
+            .insert({
+                user_id: session.sub,
+                name: payload.name,
+                trigger_type: payload.trigger_type,
+                source_wallet_id: payload.source_wallet_id,
+                target_type: payload.target_type,
+                target_id: payload.target_id,
+                mode: payload.mode,
+                fixed_amount: payload.fixed_amount,
+                percentage: payload.percentage,
+                priority: payload.priority || 1,
+                is_active: true,
+                metadata: { created_from: 'mobile_app' },
+            })
+            .select('*')
+            .single();
+        if (error) return res.status(400).json({ success: false, error: error.message });
+        res.json({ success: true, data });
+    } catch (e: any) {
+        res.status(400).json({ success: false, error: e.message });
+    }
+});
+
+v1.patch('/wealth/allocation-rules/:id', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    try {
+        const payload = AllocationRuleUpdateSchema.parse(req.body);
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+        const updatePayload: any = {
+            updated_at: new Date().toISOString(),
+        };
+        if (payload.name !== undefined) updatePayload.name = payload.name;
+        if (payload.trigger_type !== undefined) updatePayload.trigger_type = payload.trigger_type;
+        if (payload.source_wallet_id !== undefined) updatePayload.source_wallet_id = payload.source_wallet_id;
+        if (payload.target_type !== undefined) updatePayload.target_type = payload.target_type;
+        if (payload.target_id !== undefined) updatePayload.target_id = payload.target_id;
+        if (payload.mode !== undefined) updatePayload.mode = payload.mode;
+        if (payload.fixed_amount !== undefined) updatePayload.fixed_amount = payload.fixed_amount;
+        if (payload.percentage !== undefined) updatePayload.percentage = payload.percentage;
+        if (payload.priority !== undefined) updatePayload.priority = payload.priority;
+        if (payload.is_active !== undefined) updatePayload.is_active = payload.is_active;
+        const { data, error } = await sb
+            .from('allocation_rules')
+            .update(updatePayload)
+            .eq('id', req.params.id)
+            .eq('user_id', session.sub)
+            .select('*')
+            .single();
+        if (error) return res.status(400).json({ success: false, error: error.message });
+        res.json({ success: true, data });
+    } catch (e: any) {
+        res.status(400).json({ success: false, error: e.message });
+    }
+});
+
 v1.get('/tasks', authenticate as any, async (req, res) => {
     const session = (req as any).session;
     try {
@@ -3930,7 +4554,7 @@ v1.post('/goals/:id/allocate', authenticate as any, async (req, res) => {
     const session = (req as any).session;
     const authToken = (req as any).authToken as string | null;
     const { amount, sourceWalletId } = req.body;
-    if (!amount || !sourceWalletId) return res.status(400).json({ success: false, error: 'MISSING_PARAMS' });
+    if (!amount) return res.status(400).json({ success: false, error: 'MISSING_PARAMS' });
 
     try {
         const result = await LogicCore.allocateToGoal(req.params.id, amount, sourceWalletId, authToken || undefined);
