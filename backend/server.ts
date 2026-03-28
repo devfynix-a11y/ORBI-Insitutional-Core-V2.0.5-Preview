@@ -22,6 +22,7 @@ import { InfraPersistence } from './persistence/infraPersistence.js';
 import { AssetLifecycle } from './features/AssetLifecycle.js';
 import { Sentinel } from './security/sentinel.js';
 import { ConfigClient } from './infrastructure/RulesConfigClient.js';
+import { DEFAULT_INSTITUTIONAL_APP_ORIGIN } from './config/appIdentity.js';
 import { CONFIG } from '../services/config.js';
 import { FinancialLogic } from '../services/financialLogic.js';
 import { VaultAuditor } from './security/vaultAuditor.js';
@@ -608,7 +609,7 @@ class OrbiServer {
         const sb = getAdminSupabase() || getSupabase();
         if (!sb) return { error: 'DB_OFFLINE' };
 
-        const normalizedOrigin = String(payload?.app_origin || 'ORBI_INSTITUTIONAL_CORE_V2026').trim();
+        const normalizedOrigin = String(payload?.app_origin || DEFAULT_INSTITUTIONAL_APP_ORIGIN).trim();
         const normalizedRole = String(payload?.role || 'ADMIN').trim().toUpperCase();
         const normalizedLanguage = String(payload?.language || 'en').trim().toLowerCase() || 'en';
 
@@ -692,7 +693,7 @@ class OrbiServer {
                 language: payload.language || 'en',
                 role: payload.role,
                 registry_type: targetRegistryType,
-                app_origin: 'ORBI_INSTITUTIONAL_CORE_V2026',
+                app_origin: DEFAULT_INSTITUTIONAL_APP_ORIGIN,
                 created_via_admin_portal: true
             });
             if (result?.error) return { error: result.error.message || result.error };

@@ -15,6 +15,7 @@ import { Messaging } from "../../../features/MessagingService.js";
 import { Audit } from "../../../security/audit.js";
 import { normalizeAndroidOrigin, sameTrustedOrigin } from "../../../security/passkeyUtils.js";
 import { ALLOWED_DOMAINS } from "../../../middleware/appTrust.js";
+import { DEFAULT_MOBILE_APP_ORIGIN, TRUSTED_APP_IDS, TRUSTED_APP_ORIGINS } from "../../../config/appIdentity.js";
 
 const cleanAndroidHash = process.env.ORBI_ANDROID_APP_HASH?.replace(/['"]/g, '');
 const EXPECTED_ANDROID_ORIGIN = cleanAndroidHash ? `android:apk-key-hash:${cleanAndroidHash}` : '';
@@ -23,27 +24,6 @@ const ALLOWED_IOS_BUNDLE_IDS = (process.env.ORBI_IOS_BUNDLE_IDS || '')
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean);
-const TRUSTED_APP_ORIGINS = [
-    process.env.ORBI_MOBILE_ORIGIN,
-    process.env.ORBI_WEB_ORIGIN,
-    process.env.ORBI_CORE_APP_ORIGIN,
-    'ORBI_MOBILE_V2026',
-    'ORBI_INSTITUTIONAL_CORE_V2026',
-    'OBI_INSTITUTIONAL_CORE_V25',
-    'DPS_INSTITUTIONAL_CORE_V25',
-].filter((value): value is string => Boolean(value && value.trim()));
-
-const TRUSTED_APP_IDS = [
-    process.env.ORBI_MOBILE_APP_ID,
-    process.env.ORBI_WEB_APP_ID,
-    process.env.ORBI_CORE_APP_ID,
-    'mobile-android',
-    'mobile-ios',
-    'ORBI_INSTITUTIONAL_CORE_V2026',
-    'OBI_INSTITUTIONAL_CORE_V25',
-    'DPS_INSTITUTIONAL_CORE_V25',
-].filter((value): value is string => Boolean(value && value.trim()));
-
 const resolveTrustedAppIdentity = (req: Request) => {
     const appIdentity = req.get('x-orbi-app-origin') || req.get('origin') || req.body.origin || '';
     const appIdHeader = req.get('x-orbi-app-id') || '';
@@ -440,7 +420,7 @@ export class AuthController {
                     userMetadata.app_origin ||
                     appIdentity ||
                     process.env.ORBI_MOBILE_ORIGIN ||
-                    'ORBI_MOBILE_V2026'
+                    DEFAULT_MOBILE_APP_ORIGIN
                 ).trim(),
                 registry_type: String(userMetadata.registry_type || 'CONSUMER')
                     .trim()

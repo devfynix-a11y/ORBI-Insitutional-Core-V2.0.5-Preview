@@ -12,6 +12,7 @@ import { ProvisioningService } from '../backend/features/ProvisioningService.js'
 import { WalletService } from '../wealth/walletService.js';
 import { parsePhoneNumber } from 'libphonenumber-js';
 import { JWTNode } from '../backend/security/jwt.js';
+import { DEFAULT_INSTITUTIONAL_APP_ORIGIN, TRUSTED_INSTITUTIONAL_APP_ORIGINS, TRUSTED_MOBILE_APP_ORIGINS } from '../backend/config/appIdentity.js';
 
 /**
  * ORBI AUTHENTICATION PROTOCOL (V24.5 Titanium Hardened)
@@ -271,12 +272,13 @@ export class AuthService {
         const meta = user.user_metadata || {};
         const AUTHORIZED_ORIGIN =
             process.env.ORBI_WEB_ORIGIN ||
+            process.env.ORBI_INSTITUTIONAL_APP_ORIGIN ||
             process.env.ORBI_CORE_APP_ORIGIN ||
-            'ORBI_INSTITUTIONAL_CORE_V2026';
+            DEFAULT_INSTITUTIONAL_APP_ORIGIN;
         
         // HARDENING: Cluster Origin Enforcement
         const origin = meta.app_origin;
-        const ALLOWED_ORIGINS = [AUTHORIZED_ORIGIN, 'ORBI_INSTITUTIONAL_CORE_V2026', 'DPS_INSTITUTIONAL_CORE_V25', 'OBI_INSTITUTIONAL_CORE_V25', 'OBI_MOBILE_V1', 'ORBI_MOBILE_V2026'];
+        const ALLOWED_ORIGINS = Array.from(new Set([AUTHORIZED_ORIGIN, ...TRUSTED_INSTITUTIONAL_APP_ORIGINS, ...TRUSTED_MOBILE_APP_ORIGINS]));
         
         if (origin && !ALLOWED_ORIGINS.includes(origin)) {
             throw new Error(`ACCESS_DENIED: Identity node originates from unauthorized cluster [${origin}].`);
@@ -797,12 +799,12 @@ export class AuthService {
                     'HUMAN_RESOURCE',
                 ];
 
-                if (origin === 'OBI_MOBILE_V1' || origin === 'ORBI_MOBILE_V2026') {
+                if (TRUSTED_MOBILE_APP_ORIGINS.includes(origin)) {
                     // Mobile app signups start as ordinary public users.
                     // Merchant/agent access is granted later through ORBI review.
                     role = 'USER';
                     registryType = 'CONSUMER';
-                } else if (origin === 'ORBI_INSTITUTIONAL_CORE_V2026' || origin === 'OBI_INSTITUTIONAL_CORE_V25' || origin === 'DPS_INSTITUTIONAL_CORE_V25') {
+                } else if (TRUSTED_INSTITUTIONAL_APP_ORIGINS.includes(origin)) {
                     role = requestedRole;
                     if (staffRoles.includes(requestedRole)) {
                         registryType = 'STAFF';
@@ -999,7 +1001,7 @@ export class AuthService {
                 email: user.email,
                 user_metadata: { 
                     ...user.user_metadata, 
-                    app_origin: user.user_metadata?.app_origin || 'ORBI_INSTITUTIONAL_CORE_V2026' 
+                    app_origin: user.user_metadata?.app_origin || DEFAULT_INSTITUTIONAL_APP_ORIGIN 
                 },
                 role: (user.user_metadata?.role || 'USER') as UserRole
             },
@@ -1090,7 +1092,7 @@ export class AuthService {
                 email: user.email,
                 user_metadata: { 
                     ...user, 
-                    app_origin: user.app_origin || 'ORBI_INSTITUTIONAL_CORE_V2026' 
+                    app_origin: user.app_origin || DEFAULT_INSTITUTIONAL_APP_ORIGIN 
                 },
                 role: user.role || 'USER'
             },

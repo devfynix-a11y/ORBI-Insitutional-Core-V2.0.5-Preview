@@ -38,6 +38,13 @@ import { authenticateApiKey } from './backend/middleware/apiKeyAuth.js';
 import { EntProcessor } from './backend/enterprise/wealth/EnterprisePaymentProcessor.js';
 import { PartnerRegistry } from './backend/admin/partnerRegistry.js';
 import { TransactionService } from './ledger/transactionService.js';
+import {
+    TRUSTED_INSTITUTIONAL_APP_IDS,
+    TRUSTED_INSTITUTIONAL_APP_ORIGINS,
+    TRUSTED_MOBILE_APP_IDS,
+    TRUSTED_MOBILE_APP_ORIGINS,
+    isInstitutionalAppIdentity,
+} from './backend/config/appIdentity.js';
 import { FXEngine } from './backend/ledger/FXEngine.js';
 import { NotificationSubscriber } from './backend/infrastructure/NotificationSubscriber.js';
 import { OrbiKnowledge } from './src/constants/orbiKnowledge.js';
@@ -480,12 +487,8 @@ const authenticate = async (req: Request, res: Response, next: NextFunction) => 
             'CONSUMER'
         ).trim().toUpperCase();
 
-        const institutionalIds = ['ORBI_INSTITUTIONAL_CORE_V2026', 'OBI_INSTITUTIONAL_CORE_V25', 'DPS_INSTITUTIONAL_CORE_V25'];
-        const mobileIds = ['mobile-android', 'mobile-ios'];
-        const institutionalOrigins = ['ORBI_INSTITUTIONAL_CORE_V2026', 'OBI_INSTITUTIONAL_CORE_V25', 'DPS_INSTITUTIONAL_CORE_V25'];
-        const mobileOrigins = ['ORBI_MOBILE_V2026', 'OBI_MOBILE_V1'];
-        const isInstitutionalNode = institutionalIds.includes(appIdHeader) || institutionalOrigins.includes(appOriginHeader);
-        const isMobileNode = mobileIds.includes(appIdHeader) || mobileOrigins.includes(appOriginHeader);
+        const isInstitutionalNode = isInstitutionalAppIdentity(appIdHeader, appOriginHeader);
+        const isMobileNode = TRUSTED_MOBILE_APP_IDS.includes(appIdHeader) || TRUSTED_MOBILE_APP_ORIGINS.includes(appOriginHeader);
 
         if (roleHeader && roleHeader !== sessionRole) {
             return res.status(403).json({
@@ -512,7 +515,7 @@ const authenticate = async (req: Request, res: Response, next: NextFunction) => 
                 });
             }
 
-            if (!institutionalOrigins.includes(sessionOrigin)) {
+            if (!TRUSTED_INSTITUTIONAL_APP_ORIGINS.includes(sessionOrigin)) {
                 return res.status(403).json({
                     success: false,
                     error: 'NODE_ORIGIN_MISMATCH',
@@ -1928,11 +1931,9 @@ v1.post('/auth/logout', authenticate as any, async (req, res) => {
 function isInstitutionalNodeRequest(req: Request) {
     const appId = String(req.headers['x-orbi-app-id'] || '');
     const appOrigin = String(req.headers['x-orbi-app-origin'] || '');
-    const allowedIds = ['ORBI_INSTITUTIONAL_CORE_V2026', 'OBI_INSTITUTIONAL_CORE_V25', 'DPS_INSTITUTIONAL_CORE_V25'];
-    const allowedOrigins = ['ORBI_INSTITUTIONAL_CORE_V2026', 'OBI_INSTITUTIONAL_CORE_V25', 'DPS_INSTITUTIONAL_CORE_V25'];
     return (
-        allowedIds.includes(appId) &&
-        allowedOrigins.includes(appOrigin)
+        TRUSTED_INSTITUTIONAL_APP_IDS.includes(appId) &&
+        TRUSTED_INSTITUTIONAL_APP_ORIGINS.includes(appOrigin)
     );
 }
 

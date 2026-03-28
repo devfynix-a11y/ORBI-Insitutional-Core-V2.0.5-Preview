@@ -7,7 +7,8 @@ export const CONFIG = {
     BACKEND_URL: process.env.BACKEND_URL || "https://orbi-financial-technologies-c0re-v2026.onrender.com",
     // Fix: Added WS_URL required by socketClient.ts, including the nexus-stream path
     WS_URL: (process.env.BACKEND_URL || "https://orbi-financial-technologies-c0re-v2026.onrender.com").replace('http', 'ws') + "/nexus-stream",
-    APP_ID: "OBI_INSTITUTIONAL_CORE_V25",
+    APP_ID: process.env.ORBI_INSTITUTIONAL_APP_ID || process.env.ORBI_CORE_APP_ID || process.env.APP_ID || 'ORBI_INSTITUTIONAL_CORE_V2026',
+    APP_ORIGIN: process.env.ORBI_INSTITUTIONAL_APP_ORIGIN || process.env.ORBI_CORE_APP_ORIGIN || 'ORBI_INSTITUTIONAL_CORE_V2026',
     // Fix: Added IS_REMOTE_BACKEND required by socketClient.ts
     IS_REMOTE_BACKEND: true,
     

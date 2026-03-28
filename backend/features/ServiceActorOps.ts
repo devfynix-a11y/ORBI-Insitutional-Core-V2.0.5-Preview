@@ -9,6 +9,7 @@ import type { AuthService } from '../../iam/authService.js';
 import type { User, UserRole } from '../../types.js';
 import { Messaging } from './MessagingService.js';
 import { createHash } from 'crypto';
+import { DEFAULT_INSTITUTIONAL_APP_ORIGIN, DEFAULT_MOBILE_APP_ORIGIN, TRUSTED_MOBILE_APP_ORIGINS } from '../config/appIdentity.js';
 
 type ServiceActorRole = 'MERCHANT' | 'AGENT';
 
@@ -625,9 +626,9 @@ class ServiceActorOperations {
         const actorId = actor?.id || actor?.sub;
         const actorMetadata = actor?.user_metadata || {};
         const appOrigin =
-            actorMetadata.app_origin === 'ORBI_MOBILE_V2026' || actorMetadata.app_origin === 'OBI_MOBILE_V1'
-                ? 'ORBI_MOBILE_V2026'
-                : 'ORBI_INSTITUTIONAL_CORE_V2026';
+            TRUSTED_MOBILE_APP_ORIGINS.includes(String(actorMetadata.app_origin || '').trim())
+                ? DEFAULT_MOBILE_APP_ORIGIN
+                : DEFAULT_INSTITUTIONAL_APP_ORIGIN;
 
         const result = await auth.signUp(payload.email || '', payload.password, {
             full_name: payload.full_name,

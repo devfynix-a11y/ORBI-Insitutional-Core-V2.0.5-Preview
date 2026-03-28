@@ -14,10 +14,28 @@ services:
         value: "https://orbi-financial-technologies-c0re-v2026.onrender.com"
       - key: RP_ID
         value: "orbi-financial-technologies-c0re-v2026.onrender.com"
+      - key: ORBI_WEB_ORIGIN
+        value: "https://orbi-financial-technologies-c0re-v2026.onrender.com"
       - key: ORIGIN
         value: "https://orbi-financial-technologies-c0re-v2026.onrender.com"
+      - key: ORBI_MOBILE_ORIGIN
+        value: "ORBI_MOBILE_V2026"
+      - key: ORBI_MOBILE_APP_ID
+        value: "mobile-android"
+      - key: ORBI_CORE_APP_ORIGIN
+        value: "ORBI_INSTITUTIONAL_CORE_V2026"
+      - key: ORBI_CORE_APP_ID
+        value: "ORBI_INSTITUTIONAL_CORE_V2026"
+      - key: ORBI_INSTITUTIONAL_APP_ID
+        value: "ORBI_INSTITUTIONAL_CORE_V2026"
+      - key: ORBI_INSTITUTIONAL_APP_ORIGIN
+        value: "ORBI_INSTITUTIONAL_CORE_V2026"
+      - key: ORBI_ANDROID_PACKAGE_NAME
+        value: "com.example.orbi_mobileapp"
+      - key: ORBI_ANDROID_APP_HASH
+        value: "ier+vRGLKMJTLzJPUJTUrWdHuCxU75VyOT0tMR7dgwo="
       - key: APP_ID
-        value: "OBI_INSTITUTIONAL_CORE_V25"
+        value: "ORBI_INSTITUTIONAL_CORE_V2026"
       - key: API_KEY
         sync: false
       - key: KMS_MASTER_SALT
