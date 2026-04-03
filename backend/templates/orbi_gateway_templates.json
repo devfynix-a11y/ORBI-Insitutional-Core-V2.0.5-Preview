@@ -4,14 +4,14 @@
     "channel": "sms",
     "language": "en",
     "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nHello {{name}}, your One-Time Password (OTP) for {{deviceName}} is {{otp}}. It will expire in 5 minutes.\n\nFor your security, do not share this code with anyone.\n\n{{androidHash}}"
+    "body": "Hello {{name}}, your OTP for {{deviceName}} is {{otp}}. It expires in 5 minutes."
   },
   {
     "name": "OTP_Message",
     "channel": "sms",
     "language": "sw",
     "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nHabari {{name}}, msimbo wako wa muda (OTP) kwa kifaa {{deviceName}} ni {{otp}}. Msimbo huu utaisha muda wake ndani ya dakika 5.\n\nKwa usalama wako, usimpe mtu yeyote msimbo huu.\n\n{{androidHash}}"
+    "body": "Ndugu {{name}}, Msimbo wako wa siri(OTP) wa kifaa chako {{deviceName}} ni {{otp}}. utaisha matumizi ndani ya dakika 5."
   },
   {
     "name": "OTP_Message",

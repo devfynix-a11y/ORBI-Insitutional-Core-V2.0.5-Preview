@@ -76,26 +76,26 @@ export class OTPService {
                 let profile: any = null;
                 
                 if (userId && userId !== 'system') {
-                    const { data: userProfile } = await sb.from('users').select('name, language, fcm_token, nationality, phone, email, id_type').eq('id', userId).maybeSingle();
+                    const { data: userProfile } = await sb.from('users').select('full_name, name, language, fcm_token, nationality, phone, email, id_type').eq('id', userId).maybeSingle();
                     profile = userProfile;
                     
                     if (!profile) {
-                        const { data: staffProfile } = await sb.from('staff').select('name, language, fcm_token, nationality, phone, email, id_type').eq('id', userId).maybeSingle();
+                        const { data: staffProfile } = await sb.from('staff').select('full_name, name, language, fcm_token, nationality, phone, email, id_type').eq('id', userId).maybeSingle();
                         profile = staffProfile;
                     }
                 } else if (contact) {
                     if (contact.includes('@')) {
-                        const { data: userProfile } = await sb.from('users').select('name, language, fcm_token, nationality, phone, email, id_type').eq('email', contact).maybeSingle();
+                        const { data: userProfile } = await sb.from('users').select('full_name, name, language, fcm_token, nationality, phone, email, id_type').eq('email', contact).maybeSingle();
                         profile = userProfile;
                         if (!profile) {
-                            const { data: staffProfile } = await sb.from('staff').select('name, language, fcm_token, nationality, phone, email, id_type').eq('email', contact).maybeSingle();
+                            const { data: staffProfile } = await sb.from('staff').select('full_name, name, language, fcm_token, nationality, phone, email, id_type').eq('email', contact).maybeSingle();
                             profile = staffProfile;
                         }
                     } else {
-                        const { data: userProfile } = await sb.from('users').select('name, language, fcm_token, nationality, phone, email, id_type').eq('phone', contact).maybeSingle();
+                        const { data: userProfile } = await sb.from('users').select('full_name, name, language, fcm_token, nationality, phone, email, id_type').eq('phone', contact).maybeSingle();
                         profile = userProfile;
                         if (!profile) {
-                            const { data: staffProfile } = await sb.from('staff').select('name, language, fcm_token, nationality, phone, email, id_type').eq('phone', contact).maybeSingle();
+                            const { data: staffProfile } = await sb.from('staff').select('full_name, name, language, fcm_token, nationality, phone, email, id_type').eq('phone', contact).maybeSingle();
                             profile = staffProfile;
                         }
                     }
@@ -107,13 +107,28 @@ export class OTPService {
                     country = profile.nationality || 'Tanzania';
                     phone = profile.phone || '';
                     email = profile.email || '';
-                    name = profile.name || 'User';
+                    name = profile.full_name || profile.name || name || '';
                 }
 
+                let authMetadata: any = null;
                 if (!phone && userId && userId !== 'system') {
                     const { data: authData } = await sb.auth.admin.getUserById(userId);
+                    authMetadata = authData.user?.user_metadata || {};
                     phone = authData.user?.phone || authData.user?.user_metadata?.phone || '';
+                    email = email || authData.user?.email || authMetadata?.email || '';
+                } else if (userId && userId !== 'system') {
+                    const { data: authData } = await sb.auth.admin.getUserById(userId);
+                    authMetadata = authData.user?.user_metadata || {};
                 }
+
+                name =
+                    name ||
+                    authMetadata?.full_name ||
+                    authMetadata?.name ||
+                    authMetadata?.display_name ||
+                    authMetadata?.first_name ||
+                    (email ? email.split('@')[0] : '') ||
+                    'User';
 
                 isTanzania = country.toLowerCase().includes('tanzania') || 
                                    country.toLowerCase().includes('tz') || 

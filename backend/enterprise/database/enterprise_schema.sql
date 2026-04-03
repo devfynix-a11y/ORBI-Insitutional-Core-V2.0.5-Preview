@@ -1,5 +1,9 @@
 -- ENTERPRISE FINTECH SCHEMA (V2)
 -- Run this in your Supabase SQL Editor to provision the Enterprise Ledger
+-- Note:
+-- Personal planning tables such as public.categories and public.tasks are
+-- provisioned in the master consumer schema (database/main.sql and
+-- database/reset_schema.sql). Keep their RLS policies aligned there.
 
 -- 0. Passkeys Table
 CREATE TABLE IF NOT EXISTS passkeys (

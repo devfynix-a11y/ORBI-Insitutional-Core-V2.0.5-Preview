@@ -4350,6 +4350,24 @@ CREATE POLICY "Users view corporate budgets" ON public.categories
         (is_corporate = true AND organization_id IN (SELECT organization_id FROM public.users WHERE id = auth.uid()))
     );
 
+DROP POLICY IF EXISTS "Users manage own categories" ON public.categories;
+CREATE POLICY "Users manage own categories" ON public.categories
+    FOR ALL USING (auth.uid() = user_id)
+    WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users manage own tasks" ON public.tasks;
+CREATE POLICY "Users manage own tasks" ON public.tasks
+    FOR ALL USING (auth.uid() = user_id)
+    WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Service role category bypass" ON public.categories;
+CREATE POLICY "Service role category bypass" ON public.categories
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Service role task bypass" ON public.tasks;
+CREATE POLICY "Service role task bypass" ON public.tasks
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
 DROP POLICY IF EXISTS "Forensic Ledger Read" ON public.audit_trail;
 CREATE POLICY "Forensic Ledger Read" ON public.audit_trail FOR SELECT USING ((SELECT public.get_auth_role()) IN ('SUPER_ADMIN', 'ADMIN', 'AUDIT'));
 

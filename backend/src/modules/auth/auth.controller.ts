@@ -236,6 +236,21 @@ const persistBiometricDevice = async (
         onConflict: 'user_id,device_fingerprint',
     });
 
+    const riskScore = isTrusted ? 0 : 40;
+    await sb.from('device_fingerprints').upsert({
+        user_id: userId,
+        device_hash: fingerprint,
+        platform: resolveDeviceType(device),
+        os_version: String(device?.osRelease || device?.systemVersion || device?.os || '').trim() || null,
+        browser: String(device?.appVersion || device?.userAgent || 'orbi-mobile').trim(),
+        ip_address: ipAddress || null,
+        is_trusted: isTrusted,
+        risk_score: riskScore,
+        last_seen_at: new Date().toISOString(),
+    }, {
+        onConflict: 'user_id,device_hash',
+    });
+
     if (ipAddress) {
         await sb
             .from('users')
