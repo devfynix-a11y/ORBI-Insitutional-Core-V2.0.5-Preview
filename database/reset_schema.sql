@@ -165,6 +165,7 @@ CREATE TABLE IF NOT EXISTS public.users (
     id_type TEXT,
     id_number TEXT,
     language TEXT DEFAULT 'en',
+    -- Channel-level notification preferences consumed by mobile settings/profile sync.
     notif_push BOOLEAN DEFAULT TRUE,
     notif_email BOOLEAN DEFAULT TRUE,
     notif_security BOOLEAN DEFAULT TRUE,
@@ -198,6 +199,7 @@ CREATE TABLE IF NOT EXISTS public.staff (
     address TEXT,
     nationality TEXT DEFAULT 'Tanzania',
     language TEXT DEFAULT 'en',
+    -- Channel-level notification preferences consumed by staff/admin messaging flows.
     notif_push BOOLEAN DEFAULT TRUE,
     notif_email BOOLEAN DEFAULT TRUE,
     notif_security BOOLEAN DEFAULT TRUE,
@@ -346,6 +348,7 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='language') THEN
         ALTER TABLE public.users ADD COLUMN language TEXT DEFAULT 'en';
     END IF;
+    -- Keep live databases aligned with the app/backend notification preference contract.
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='notif_push') THEN
         ALTER TABLE public.users ADD COLUMN notif_push BOOLEAN DEFAULT TRUE;
     END IF;
@@ -378,6 +381,7 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='staff' AND column_name='language') THEN
         ALTER TABLE public.staff ADD COLUMN language TEXT DEFAULT 'en';
     END IF;
+    -- Keep live databases aligned with the staff messaging preference contract.
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='staff' AND column_name='notif_push') THEN
         ALTER TABLE public.staff ADD COLUMN notif_push BOOLEAN DEFAULT TRUE;
     END IF;

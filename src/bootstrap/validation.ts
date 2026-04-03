@@ -256,6 +256,12 @@ const validateDbDependencies = async (isProd: boolean) => {
   const shouldValidateRpc = isProd || process.env.ORBI_VALIDATE_RPC_ON_STARTUP === 'true';
   if (!shouldValidateRpc) return;
 
+  const isParameterizedRpcProbeMiss = (message: string) =>
+    /without parameters in the schema cache/i.test(message) ||
+    /function .* requires/i.test(message) ||
+    /invalid input syntax/i.test(message) ||
+    /missing required/i.test(message);
+
   for (const rpcName of REQUIRED_RPC_DEPENDENCIES) {
     try {
       const result = await adminClient.rpc(rpcName as any, {} as any);
@@ -264,14 +270,24 @@ const validateDbDependencies = async (isProd: boolean) => {
         process.exit(1);
       }
       if (result.error) {
-        logger.warn('startup.rpc_probe_error', { rpc: rpcName, message: result.error.message });
+        const message = String(result.error.message || '');
+        if (isParameterizedRpcProbeMiss(message)) {
+          logger.info('startup.rpc_parameterized_probe_skipped', { rpc: rpcName, message });
+        } else {
+          logger.warn('startup.rpc_probe_error', { rpc: rpcName, message });
+        }
       }
     } catch (error: any) {
-      if (/does not exist|missing function/i.test(String(error?.message || ''))) {
-        logger.fatal('startup.rpc_missing', { rpc: rpcName, message: error?.message || String(error) });
+      const message = String(error?.message || error || '');
+      if (/does not exist|missing function/i.test(message)) {
+        logger.fatal('startup.rpc_missing', { rpc: rpcName, message });
         process.exit(1);
       }
-      logger.warn('startup.rpc_probe_error', { rpc: rpcName, message: error?.message || String(error) });
+      if (isParameterizedRpcProbeMiss(message)) {
+        logger.info('startup.rpc_parameterized_probe_skipped', { rpc: rpcName, message });
+      } else {
+        logger.warn('startup.rpc_probe_error', { rpc: rpcName, message });
+      }
     }
   }
 };
