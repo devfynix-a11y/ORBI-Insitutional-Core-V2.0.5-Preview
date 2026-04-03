@@ -30,6 +30,7 @@ export interface EntPaymentIntent {
     walletType?: 'internal_vault' | 'External' | 'GOAL' | 'BUDGET';
     category?: 'Pay' | 'Transfer' | 'Topup' | 'Send' | string;
     categoryId?: string;
+    device?: any;
     metadata?: any;
     dryRun?: boolean;
 }
