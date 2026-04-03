@@ -337,7 +337,15 @@ export class EnterprisePaymentProcessor {
                         }
 
                         const type = contact.includes('@') ? 'email' : 'sms';
-                        const deviceName = user.user_metadata?.device_name || 'Unknown Device';
+                        const deviceName =
+                            intent?.device?.deviceName ||
+                            intent?.device?.device_name ||
+                            intent?.device?.deviceModel ||
+                            intent?.device?.model ||
+                            intent?.metadata?.deviceName ||
+                            intent?.metadata?.device_name ||
+                            user.user_metadata?.device_name ||
+                            'ORBI Mobile';
                         const { requestId, code, deliveryType } = await OTPService.generateAndSend(user.id, contact, 'transaction_verification', type as any, deviceName);
                         
                         const challengeResponse = {

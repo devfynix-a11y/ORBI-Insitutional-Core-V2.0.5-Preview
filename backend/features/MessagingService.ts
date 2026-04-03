@@ -55,28 +55,59 @@ class MessagingService {
         const sb = getAdminSupabase();
         if (sb) {
             let { data: profile } = await sb.from('users')
-                .select('language, notif_push, notif_email, notif_security, notif_financial, notif_budget, notif_marketing, phone, nationality, email, fcm_token, id_type')
+                .select('full_name, name, language, notif_push, notif_email, notif_security, notif_financial, notif_budget, notif_marketing, phone, nationality, email, fcm_token, id_type')
                 .eq('id', userId)
                 .maybeSingle();
                 
             if (!profile) {
                 const { data: staffProfile } = await sb.from('staff')
-                    .select('language, notif_push, notif_email, notif_security, notif_financial, notif_budget, notif_marketing, phone, nationality, email, fcm_token, id_type')
+                    .select('full_name, name, language, notif_push, notif_email, notif_security, notif_financial, notif_budget, notif_marketing, phone, nationality, email, fcm_token, id_type')
                     .eq('id', userId)
                     .maybeSingle();
                 profile = staffProfile;
             }
 
             const profileData: any = profile || {};
+            const { data: recentDevice } = await sb
+                .from('user_devices')
+                .select('device_name')
+                .eq('user_id', userId)
+                .order('last_active_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
             
             // Fallback to Auth if phone is missing
             let phone = profileData.phone;
+            let fullName = String(profileData.full_name || profileData.name || '').trim();
+            let email = String(profileData.email || '').trim();
             if (!phone && userId && userId !== 'system') {
                 const { data: authData } = await sb.auth.admin.getUserById(userId);
                 phone = authData.user?.phone || authData.user?.user_metadata?.phone || '';
+                fullName =
+                    fullName ||
+                    String(
+                        authData.user?.user_metadata?.full_name ||
+                        authData.user?.user_metadata?.name ||
+                        authData.user?.user_metadata?.display_name ||
+                        '',
+                    ).trim();
+                email = email || String(authData.user?.email || authData.user?.user_metadata?.email || '').trim();
+            } else if (userId && userId !== 'system') {
+                const { data: authData } = await sb.auth.admin.getUserById(userId);
+                fullName =
+                    fullName ||
+                    String(
+                        authData.user?.user_metadata?.full_name ||
+                        authData.user?.user_metadata?.name ||
+                        authData.user?.user_metadata?.display_name ||
+                        '',
+                    ).trim();
+                email = email || String(authData.user?.email || authData.user?.user_metadata?.email || '').trim();
             }
 
             return {
+                full_name: fullName || (email ? email.split('@')[0] : '') || 'User',
+                name: fullName || (email ? email.split('@')[0] : '') || 'User',
                 language: profileData.language || 'en',
                 notif_push: profileData.notif_push ?? true,
                 notif_email: profileData.notif_email ?? true,
@@ -86,12 +117,15 @@ class MessagingService {
                 notif_marketing: profileData.notif_marketing ?? false,
                 phone: phone,
                 nationality: profileData.nationality || 'Tanzania',
-                email: profileData.email,
+                email,
                 fcm_token: profileData.fcm_token,
-                id_type: profileData.id_type
+                id_type: profileData.id_type,
+                device_name: recentDevice?.device_name || 'ORBI Mobile',
             };
         }
         return {
+            full_name: 'User',
+            name: 'User',
             language: 'en',
             notif_push: true,
             notif_email: true,
@@ -99,7 +133,52 @@ class MessagingService {
             notif_financial: true,
             notif_budget: true,
             notif_marketing: false,
-            nationality: 'Tanzania'
+            nationality: 'Tanzania',
+            device_name: 'ORBI Mobile',
+        };
+    }
+
+    private normalizeTemplateVariables(
+        profile: any,
+        variables: Record<string, any> = {},
+        fallback: { refId?: string; subject?: string; body?: string } = {},
+    ) {
+        const name =
+            String(
+                variables.name ||
+                variables.full_name ||
+                profile?.full_name ||
+                profile?.name ||
+                '',
+            ).trim() ||
+            String(profile?.email || '').split('@')[0] ||
+            'User';
+
+        const deviceName =
+            String(
+                variables.deviceName ||
+                variables.device_name ||
+                profile?.device_name ||
+                'ORBI Mobile',
+            ).trim() || 'ORBI Mobile';
+
+        return {
+            refId: fallback.refId,
+            subject: fallback.subject,
+            body: fallback.body,
+            name,
+            full_name: name,
+            customerName: variables.customerName || name,
+            recipientName: variables.recipientName || name,
+            senderName: variables.senderName || name,
+            actorLabel: variables.actorLabel || 'ORBI',
+            deviceName,
+            device_name: deviceName,
+            email: profile?.email || '',
+            phone: profile?.phone || '',
+            language: profile?.language || 'en',
+            nationality: profile?.nationality || 'Tanzania',
+            ...variables,
         };
     }
 
@@ -295,13 +374,18 @@ CEO, ORBI`
         const language = profile.language || 'en';
         
         // Add refId to variables for templates
-        const vars = { 
-            refId,
-            ...templatePlan.variables,
-            ...(options.variables || {}),
-            subject: displaySubject,
-            body: displayBody,
-        };
+        const vars = this.normalizeTemplateVariables(
+            profile,
+            {
+                ...templatePlan.variables,
+                ...(options.variables || {}),
+            },
+            {
+                refId,
+                subject: displaySubject,
+                body: displayBody,
+            },
+        );
 
         let formattedPhone = profile.phone;
         if (profile.phone) {

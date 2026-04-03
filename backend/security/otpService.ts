@@ -20,6 +20,120 @@ export class OTPService {
     private static PREFIX = 'otp:';
     private static THROTTLE_PREFIX = 'otp_throttle:';
 
+    private static isWeakTemplateValue(value?: string): boolean {
+        const normalized = String(value || '').trim().toLowerCase();
+        return (
+            !normalized ||
+            normalized === 'user' ||
+            normalized === 'customer' ||
+            normalized === 'unknown device' ||
+            normalized === 'web browser'
+        );
+    }
+
+    private static async resolveTemplateIdentity(
+        sb: any,
+        userId: string,
+        contact: string,
+        current: {
+            name?: string;
+            deviceName?: string;
+            email?: string;
+        } = {},
+    ): Promise<{ name: string; deviceName: string; email: string }> {
+        let resolvedName = String(current.name || '').trim();
+        let resolvedDeviceName = String(current.deviceName || '').trim();
+        let resolvedEmail = String(current.email || '').trim();
+
+        let profile: any = null;
+        if (userId && userId !== 'system') {
+            const { data: userProfile } = await sb
+                .from('users')
+                .select('full_name, name, email')
+                .eq('id', userId)
+                .maybeSingle();
+            profile = userProfile;
+            if (!profile) {
+                const { data: staffProfile } = await sb
+                    .from('staff')
+                    .select('full_name, name, email')
+                    .eq('id', userId)
+                    .maybeSingle();
+                profile = staffProfile;
+            }
+        }
+
+        if (profile) {
+            resolvedName =
+                resolvedName ||
+                String(profile.full_name || profile.name || '').trim();
+            resolvedEmail = resolvedEmail || String(profile.email || '').trim();
+        }
+
+        let authMetadata: any = null;
+        if (userId && userId !== 'system') {
+            const { data: authData } = await sb.auth.admin.getUserById(userId);
+            authMetadata = authData.user?.user_metadata || {};
+            resolvedEmail =
+                resolvedEmail ||
+                String(authData.user?.email || authMetadata?.email || '').trim();
+            resolvedName =
+                resolvedName ||
+                String(
+                    authMetadata?.full_name ||
+                        authMetadata?.name ||
+                        authMetadata?.display_name ||
+                        authMetadata?.first_name ||
+                        '',
+                ).trim();
+            resolvedDeviceName =
+                resolvedDeviceName ||
+                String(
+                    authMetadata?.device_name ||
+                        authMetadata?.deviceName ||
+                        '',
+                ).trim();
+        }
+
+        if (this.isWeakTemplateValue(resolvedDeviceName) && userId && userId !== 'system') {
+            const { data: recentDevice } = await sb
+                .from('user_devices')
+                .select('device_name')
+                .eq('user_id', userId)
+                .order('last_active_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+            resolvedDeviceName = String(recentDevice?.device_name || '').trim();
+        }
+
+        if (this.isWeakTemplateValue(resolvedName)) {
+            resolvedName =
+                String(
+                    authMetadata?.full_name ||
+                        authMetadata?.name ||
+                        authMetadata?.display_name ||
+                        profile?.full_name ||
+                        profile?.name ||
+                        '',
+                ).trim() ||
+                (resolvedEmail ? resolvedEmail.split('@')[0] : '') ||
+                (contact && contact.includes('@') ? contact.split('@')[0] : '') ||
+                'User';
+        }
+
+        if (this.isWeakTemplateValue(resolvedDeviceName)) {
+            resolvedDeviceName =
+                String(authMetadata?.device_name || authMetadata?.deviceName || '').trim() ||
+                'ORBI Mobile';
+        }
+
+        return {
+            name: resolvedName,
+            deviceName: resolvedDeviceName,
+            email: resolvedEmail,
+        };
+    }
+
     /**
      * Generate and send a new OTP for a specific action
      */
@@ -121,14 +235,14 @@ export class OTPService {
                     authMetadata = authData.user?.user_metadata || {};
                 }
 
-                name =
-                    name ||
-                    authMetadata?.full_name ||
-                    authMetadata?.name ||
-                    authMetadata?.display_name ||
-                    authMetadata?.first_name ||
-                    (email ? email.split('@')[0] : '') ||
-                    'User';
+                const resolvedIdentity = await this.resolveTemplateIdentity(sb, userId, contact, {
+                    name,
+                    deviceName,
+                    email,
+                });
+                name = resolvedIdentity.name;
+                email = resolvedIdentity.email || email;
+                deviceName = resolvedIdentity.deviceName;
 
                 isTanzania = country.toLowerCase().includes('tanzania') || 
                                    country.toLowerCase().includes('tz') || 
@@ -194,7 +308,7 @@ export class OTPService {
                 await orbiGatewayService.sendTemplate('OTP_Message', actualContact, { 
                     otp: code, 
                     name: name,
-                    deviceName: deviceName || 'Unknown Device',
+                    deviceName: deviceName || 'ORBI Mobile',
                     androidHash: ANDROID_HASH 
                 }, { messageType: 'transactional', language, fcmToken, channel: 'sms', requestId });
             } else if (actualType === 'whatsapp') {
@@ -202,7 +316,7 @@ export class OTPService {
                 await orbiGatewayService.sendTemplate('OTP_Message', actualContact, { 
                     otp: code, 
                     name: name,
-                    deviceName: deviceName || 'Unknown Device',
+                    deviceName: deviceName || 'ORBI Mobile',
                     androidHash: ANDROID_HASH 
                 }, { messageType: 'transactional', language, fcmToken, channel: 'whatsapp', requestId });
             } else if (actualType === 'email') {
@@ -210,7 +324,7 @@ export class OTPService {
                 await orbiGatewayService.sendTemplate('OTP_Message', actualContact, { 
                     otp: code, 
                     name: name,
-                    deviceName: deviceName || 'Unknown Device',
+                    deviceName: deviceName || 'ORBI Mobile',
                     androidHash: ANDROID_HASH 
                 }, { messageType: 'transactional', language, fcmToken, channel: 'email', requestId });
             } else if (actualType === 'push' && fcmToken) {
@@ -218,7 +332,7 @@ export class OTPService {
                 await orbiGatewayService.sendTemplate('OTP_Message', fcmToken, { 
                     otp: code, 
                     name: name,
-                    deviceName: deviceName || 'Unknown Device',
+                    deviceName: deviceName || 'ORBI Mobile',
                     androidHash: ANDROID_HASH 
                 }, { messageType: 'transactional', language, fcmToken, channel: 'push', requestId });
             }

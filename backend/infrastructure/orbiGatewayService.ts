@@ -40,6 +40,46 @@ class OrbiGatewayService {
         }
     }
 
+    private normalizeTemplateData<T extends TemplateName>(templateName: T, data: TemplatePayloads[T]): TemplatePayloads[T] {
+        const normalized: Record<string, any> = { ...(data as Record<string, any>) };
+
+        for (const [key, value] of Object.entries(normalized)) {
+            if (typeof value === 'string') {
+                normalized[key] = value.trim();
+            }
+        }
+
+        const fallbackName =
+            normalized.name ||
+            normalized.full_name ||
+            normalized.customerName ||
+            normalized.recipientName ||
+            normalized.senderName ||
+            'User';
+        const fallbackDeviceName =
+            normalized.deviceName ||
+            normalized.device_name ||
+            'ORBI Mobile';
+
+        switch (templateName) {
+            case 'OTP_Message':
+                normalized.name = normalized.name || fallbackName;
+                normalized.deviceName = normalized.deviceName || fallbackDeviceName;
+                break;
+            case 'Welcome_Message':
+            case 'LOW_BALANCE':
+                normalized.name = normalized.name || fallbackName;
+                break;
+            case 'New_Device_Alert':
+                normalized.deviceName = normalized.deviceName || fallbackDeviceName;
+                break;
+            default:
+                break;
+        }
+
+        return normalized as TemplatePayloads[T];
+    }
+
     async sendSms(recipient: string, body: string, language: string = 'en', ownerUid?: string, ownerEmail?: string, requestId?: string): Promise<boolean> {
         if (!this.apiKey || !this.baseUrl) {
             gatewayInfraLogger.error('gateway_service.sms_missing_configuration', { channel: 'sms' });
@@ -183,10 +223,11 @@ class OrbiGatewayService {
         const normalizedRecipient = (channel === 'sms' || channel === 'whatsapp') ? this.normalizePhone(recipient) : recipient;
 
         try {
+            const normalizedData = this.normalizeTemplateData(templateName, data);
             const payload = {
                 templateName,
                 recipient: normalizedRecipient,
-                data,
+                data: normalizedData,
                 channel,
                 language,
                 messageType,
