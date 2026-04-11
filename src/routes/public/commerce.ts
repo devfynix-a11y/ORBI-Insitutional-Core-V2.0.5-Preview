@@ -1,9 +1,22 @@
 import type { RequestHandler, Router } from 'express';
+import {
+  normalizeFinancialPartnerMetadata,
+  resolveProviderCode,
+} from '../../../backend/payments/financialPartnerMetadata.js';
+
+type BillProviderRecord = {
+  label: string;
+  provider_code?: string;
+  display_icon?: string;
+  color?: string;
+  logo_url?: string;
+  metadata: Record<string, unknown>;
+};
 
 type BillProviderCategoryRecord = {
   key: string;
   label: string;
-  providers: string[];
+  providers: BillProviderRecord[];
 };
 
 const billCategoryLabels: Record<string, string> = {
@@ -136,22 +149,52 @@ async function listRegistryBackedBillProviders(
 ): Promise<BillProviderCategoryRecord[]> {
   const { data: partners, error } = await sb
     .from('financial_partners')
-    .select('id, name, status, provider_metadata')
+    .select('id, name, type, icon, color, status, provider_metadata')
     .eq('status', 'ACTIVE');
   if (error) throw error;
 
-  const bucket = new Map<string, Set<string>>();
+  const bucket = new Map<string, Map<string, BillProviderRecord>>();
   for (const partner of partners || []) {
     if (!supportsBillPayments(partner)) continue;
+    const metadata = normalizeFinancialPartnerMetadata(partner);
     const providerName = normalizeBillProviderName(
-      partner?.provider_metadata?.brand_name || partner?.name,
+      metadata.brand_name || metadata.display_name || partner?.name,
     );
     if (!providerName) continue;
+    const providerCode = resolveProviderCode(partner) || undefined;
+    const providerRecord: BillProviderRecord = {
+      label: providerName,
+      ...(providerCode ? { provider_code: providerCode } : {}),
+      ...(metadata.display_icon ? { display_icon: String(metadata.display_icon) } : {}),
+      ...(metadata.color ? { color: String(metadata.color) } : {}),
+      ...((metadata as any).logo_url || (metadata as any).logoUrl
+        ? { logo_url: String((metadata as any).logo_url || (metadata as any).logoUrl) }
+        : {}),
+      metadata: {
+        group: metadata.group,
+        rail: metadata.rail,
+        brand_name: metadata.brand_name,
+        display_name: metadata.display_name,
+        display_icon: metadata.display_icon,
+        provider_code: metadata.provider_code,
+        color: metadata.color,
+        logo_url: (metadata as any).logo_url || (metadata as any).logoUrl || '',
+        channels: metadata.channels,
+        bill_categories: metadata.bill_categories || metadata.billCategories || [],
+        operations: metadata.operations,
+        checkout_mode: metadata.checkout_mode,
+        countries: metadata.countries,
+      },
+    };
     for (const categoryKey of resolveBillCategoryKeys(partner)) {
       if (!bucket.has(categoryKey)) {
-        bucket.set(categoryKey, new Set<string>());
+        bucket.set(categoryKey, new Map<string, BillProviderRecord>());
       }
-      bucket.get(categoryKey)!.add(providerName);
+      const categoryProviders = bucket.get(categoryKey)!;
+      categoryProviders.set(
+        (providerCode || providerName).trim().toUpperCase(),
+        providerRecord,
+      );
     }
   }
 
@@ -159,7 +202,9 @@ async function listRegistryBackedBillProviders(
     .map(([key, providers]) => ({
       key,
       label: billCategoryLabels[key] || key,
-      providers: Array.from(providers).sort((a, b) => a.localeCompare(b)),
+      providers: Array.from(providers.values()).sort((a, b) =>
+        a.label.localeCompare(b.label),
+      ),
     }))
     .sort((a, b) => a.label.localeCompare(b.label));
 }
