@@ -73,6 +73,24 @@ const AdminUserSearchSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
 });
 
+const AccountStatusUpdateWithReasonSchema = z.object({
+  status: z.enum(['active', 'blocked', 'frozen', 'pending']),
+  reason: z.string().trim().min(5).max(500),
+});
+
+const AdminAuditTrailQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  eventType: z.string().trim().optional(),
+  actorId: z.string().trim().optional(),
+  transactionId: z.string().trim().optional(),
+  action: z.string().trim().optional(),
+});
+
+const AdminRiskAlertsQuerySchema = z.object({
+  status: z.string().trim().optional(),
+  days: z.coerce.number().int().min(1).max(90).optional(),
+});
+
 const StaffDirectMessageSchema = z.object({
   recipientId: z.string().uuid().optional(),
   targetRole: z.string().trim().optional(),
@@ -495,14 +513,14 @@ export const registerAdminOpsRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
-  v1.patch('/admin/users/:id/status', authenticate, validate(AccountStatusUpdateSchema), async (req, res) => {
+  v1.patch('/admin/users/:id/status', authenticate, validate(AccountStatusUpdateWithReasonSchema), async (req, res) => {
     const session = (req as any).session;
     if (!sessionHasAnyRole(session, ['ADMIN', 'SUPER_ADMIN', 'HUMAN_RESOURCE'])) {
       return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
     }
 
     try {
-      await LogicCore.updateAccountStatus(req.params.id as string, req.body.status, session.sub);
+      await LogicCore.updateAccountStatus(req.params.id as string, req.body.status, session.sub, req.body.reason);
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });
@@ -560,6 +578,85 @@ export const registerAdminOpsRoutes = (v1: Router, deps: Deps) => {
       const { data, error } = await dbQuery;
       if (error) return res.status(500).json({ success: false, error: error.message });
       res.json({ success: true, data: data || [] });
+    } catch (e: any) {
+      res.status(400).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.get('/admin/audit-trail', authenticate, async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, ['ADMIN', 'SUPER_ADMIN', 'AUDIT', 'IT', 'RISK_OFFICER'])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const query = AdminAuditTrailQuerySchema.parse(req.query);
+      const sb = getAdminSupabase() || getSupabase();
+      if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+
+      let dbQuery = sb
+        .from('audit_trail')
+        .select('id, timestamp, event_type, actor_id, transaction_id, action, metadata, hash, signature')
+        .order('timestamp', { ascending: false })
+        .limit(query.limit || 100);
+
+      if (query.eventType) dbQuery = dbQuery.eq('event_type', query.eventType.toUpperCase());
+      if (query.actorId) dbQuery = dbQuery.eq('actor_id', query.actorId);
+      if (query.transactionId) dbQuery = dbQuery.eq('transaction_id', query.transactionId);
+      if (query.action) dbQuery = dbQuery.ilike('action', `%${query.action}%`);
+
+      const { data, error } = await dbQuery;
+      if (error) return res.status(500).json({ success: false, error: error.message });
+      res.json({ success: true, data: data || [] });
+    } catch (e: any) {
+      res.status(400).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.get('/admin/risk/alerts', authenticate, async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, ['ADMIN', 'SUPER_ADMIN', 'AUDIT', 'IT', 'RISK_OFFICER'])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const query = AdminRiskAlertsQuerySchema.parse(req.query);
+      const [amlAlerts, anomalyReport] = await Promise.all([
+        LogicCore.getPendingAMLAlerts(),
+        LogicCore.getAnomalyReport(query.days || 7),
+      ]);
+
+      const anomalyDetails = Array.isArray(anomalyReport?.details) ? anomalyReport.details : [];
+      const records = [
+        ...(Array.isArray(amlAlerts) ? amlAlerts : []).map((alert: any) => ({
+          id: alert.id,
+          source: 'AML',
+          signal: 'AML_TRANSACTION_MONITORING',
+          severity: Number(alert.risk_score || 0) >= 80 ? 'critical' : 'high',
+          subject: alert.transaction_id || alert.user_id,
+          state: alert.status,
+          risk_score: alert.risk_score,
+          reason: alert.reason,
+          created_at: alert.created_at,
+        })),
+        ...anomalyDetails.map((alert: any) => ({
+          id: alert.id,
+          source: 'PROVIDER_ANOMALY',
+          signal: Array.isArray(alert.detection_flags) ? alert.detection_flags.join(', ') : 'PROVIDER_ANOMALY_DETECTED',
+          severity: Number(alert.risk_score || 0) >= 80 ? 'critical' : 'high',
+          subject: alert.transaction_id || alert.wallet_id || alert.user_id,
+          state: alert.status,
+          risk_score: alert.risk_score,
+          reason: Array.isArray(alert.detection_flags) ? alert.detection_flags.join(' | ') : '',
+          created_at: alert.created_at,
+        })),
+      ];
+
+      const filtered = query.status
+        ? records.filter((record) => String(record.state || '').toUpperCase() === query.status!.toUpperCase())
+        : records;
+
+      res.json({ success: true, data: filtered });
     } catch (e: any) {
       res.status(400).json({ success: false, error: e.message });
     }
