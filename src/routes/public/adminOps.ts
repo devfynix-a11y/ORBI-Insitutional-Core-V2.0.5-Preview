@@ -64,6 +64,57 @@ const StaffSystemSmsSchema = z.object({
   maxRecipients: z.coerce.number().int().min(1).max(500).optional(),
 });
 
+const AdminUserSearchSchema = z.object({
+  query: z.string().trim().optional(),
+  role: z.string().trim().optional(),
+  registryType: z.string().trim().optional(),
+  accountStatus: z.string().trim().optional(),
+  kycStatus: z.string().trim().optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+});
+
+const AccountStatusUpdateWithReasonSchema = z.object({
+  status: z.enum(['active', 'blocked', 'frozen', 'pending']),
+  reason: z.string().trim().min(5).max(500),
+});
+
+const AdminAuditTrailQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  eventType: z.string().trim().optional(),
+  actorId: z.string().trim().optional(),
+  transactionId: z.string().trim().optional(),
+  action: z.string().trim().optional(),
+});
+
+const AdminRiskAlertsQuerySchema = z.object({
+  status: z.string().trim().optional(),
+  days: z.coerce.number().int().min(1).max(90).optional(),
+});
+
+const StaffDirectMessageSchema = z.object({
+  recipientId: z.string().uuid().optional(),
+  targetRole: z.string().trim().optional(),
+  content: z.string().min(1).max(4000),
+});
+
+const SupportTicketCreateSchema = z.object({
+  title: z.string().min(1).max(200),
+  body: z.string().min(1).max(4000),
+  category: z.string().trim().min(1).max(80).default('support'),
+  priority: z.enum(['low', 'normal', 'high', 'critical']).optional(),
+  customerId: z.string().uuid().optional(),
+  customerQuery: z.string().trim().optional(),
+  assignedTo: z.string().uuid().optional(),
+  tags: z.array(z.string().trim().min(1).max(50)).optional(),
+});
+
+const SupportTicketUpdateSchema = z.object({
+  status: z.enum(['open', 'in_progress', 'resolved', 'closed']).optional(),
+  assignedTo: z.string().uuid().nullable().optional(),
+  resolution: z.string().trim().max(4000).optional(),
+  internalNote: z.string().trim().max(4000).optional(),
+});
+
 type Deps = {
   authenticate: RequestHandler;
   adminOnly: RequestHandler;
@@ -433,7 +484,7 @@ export const registerAdminOpsRoutes = (v1: Router, deps: Deps) => {
         requestedRole: existing.requested_role,
       });
 
-      res.json({ success: true, data, provisioning });
+      res.json({ success: true, data: { ...data, provisioning } });
     } catch (e: any) {
       console.error('[Admin] Service Access Review Error:', e);
       res.status(500).json({ success: false, error: e.message });
@@ -462,14 +513,14 @@ export const registerAdminOpsRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
-  v1.patch('/admin/users/:id/status', authenticate, validate(AccountStatusUpdateSchema), async (req, res) => {
+  v1.patch('/admin/users/:id/status', authenticate, validate(AccountStatusUpdateWithReasonSchema), async (req, res) => {
     const session = (req as any).session;
     if (!sessionHasAnyRole(session, ['ADMIN', 'SUPER_ADMIN', 'HUMAN_RESOURCE'])) {
       return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
     }
 
     try {
-      await LogicCore.updateAccountStatus(req.params.id as string, req.body.status, session.sub);
+      await LogicCore.updateAccountStatus(req.params.id as string, req.body.status, session.sub, req.body.reason);
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });
@@ -488,6 +539,298 @@ export const registerAdminOpsRoutes = (v1: Router, deps: Deps) => {
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.get('/admin/users/search', authenticate, async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, ['ADMIN', 'SUPER_ADMIN', 'CUSTOMER_CARE', 'AUDIT', 'HUMAN_RESOURCE'])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const query = AdminUserSearchSchema.parse(req.query);
+      const sb = getAdminSupabase() || getSupabase();
+      if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+
+      let dbQuery = sb
+        .from('users')
+        .select('id, full_name, avatar_url, customer_id, phone, email, registry_type, role, account_status, kyc_status, created_at')
+        .order('created_at', { ascending: false })
+        .limit(query.limit || 25);
+
+      if (query.query) {
+        const term = query.query.trim();
+        dbQuery = dbQuery.or(
+          [
+            `full_name.ilike.%${term}%`,
+            `customer_id.ilike.%${term}%`,
+            `phone.ilike.%${term}%`,
+            `email.ilike.%${term}%`,
+          ].join(','),
+        );
+      }
+      if (query.role) dbQuery = dbQuery.eq('role', query.role.toUpperCase());
+      if (query.registryType) dbQuery = dbQuery.eq('registry_type', query.registryType.toUpperCase());
+      if (query.accountStatus) dbQuery = dbQuery.eq('account_status', query.accountStatus.toLowerCase());
+      if (query.kycStatus) dbQuery = dbQuery.eq('kyc_status', query.kycStatus.toLowerCase());
+
+      const { data, error } = await dbQuery;
+      if (error) return res.status(500).json({ success: false, error: error.message });
+      res.json({ success: true, data: data || [] });
+    } catch (e: any) {
+      res.status(400).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.get('/admin/audit-trail', authenticate, async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, ['ADMIN', 'SUPER_ADMIN', 'AUDIT', 'IT', 'RISK_OFFICER'])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const query = AdminAuditTrailQuerySchema.parse(req.query);
+      const sb = getAdminSupabase() || getSupabase();
+      if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+
+      let dbQuery = sb
+        .from('audit_trail')
+        .select('id, timestamp, event_type, actor_id, transaction_id, action, metadata, hash, signature')
+        .order('timestamp', { ascending: false })
+        .limit(query.limit || 100);
+
+      if (query.eventType) dbQuery = dbQuery.eq('event_type', query.eventType.toUpperCase());
+      if (query.actorId) dbQuery = dbQuery.eq('actor_id', query.actorId);
+      if (query.transactionId) dbQuery = dbQuery.eq('transaction_id', query.transactionId);
+      if (query.action) dbQuery = dbQuery.ilike('action', `%${query.action}%`);
+
+      const { data, error } = await dbQuery;
+      if (error) return res.status(500).json({ success: false, error: error.message });
+      res.json({ success: true, data: data || [] });
+    } catch (e: any) {
+      res.status(400).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.get('/admin/risk/alerts', authenticate, async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, ['ADMIN', 'SUPER_ADMIN', 'AUDIT', 'IT', 'RISK_OFFICER'])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const query = AdminRiskAlertsQuerySchema.parse(req.query);
+      const [amlAlerts, anomalyReport] = await Promise.all([
+        LogicCore.getPendingAMLAlerts(),
+        LogicCore.getAnomalyReport(query.days || 7),
+      ]);
+
+      const anomalyDetails = Array.isArray(anomalyReport?.details) ? anomalyReport.details : [];
+      const records = [
+        ...(Array.isArray(amlAlerts) ? amlAlerts : []).map((alert: any) => ({
+          id: alert.id,
+          source: 'AML',
+          signal: 'AML_TRANSACTION_MONITORING',
+          severity: Number(alert.risk_score || 0) >= 80 ? 'critical' : 'high',
+          subject: alert.transaction_id || alert.user_id,
+          state: alert.status,
+          risk_score: alert.risk_score,
+          reason: alert.reason,
+          created_at: alert.created_at,
+        })),
+        ...anomalyDetails.map((alert: any) => ({
+          id: alert.id,
+          source: 'PROVIDER_ANOMALY',
+          signal: Array.isArray(alert.detection_flags) ? alert.detection_flags.join(', ') : 'PROVIDER_ANOMALY_DETECTED',
+          severity: Number(alert.risk_score || 0) >= 80 ? 'critical' : 'high',
+          subject: alert.transaction_id || alert.wallet_id || alert.user_id,
+          state: alert.status,
+          risk_score: alert.risk_score,
+          reason: Array.isArray(alert.detection_flags) ? alert.detection_flags.join(' | ') : '',
+          created_at: alert.created_at,
+        })),
+      ];
+
+      const filtered = query.status
+        ? records.filter((record) => String(record.state || '').toUpperCase() === query.status!.toUpperCase())
+        : records;
+
+      res.json({ success: true, data: filtered });
+    } catch (e: any) {
+      res.status(400).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.get('/admin/staff-messages', authenticate, async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, ['ADMIN', 'SUPER_ADMIN', 'CUSTOMER_CARE', 'AUDIT', 'HUMAN_RESOURCE', 'IT'])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const sb = getAdminSupabase() || getSupabase();
+      if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+      const { data, error } = await sb.from('staff_messages').select('*').order('created_at', { ascending: false }).limit(100);
+      if (error) return res.status(500).json({ success: false, error: error.message });
+      res.json({ success: true, data: data || [] });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.post('/admin/staff-messages', authenticate, async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, ['ADMIN', 'SUPER_ADMIN', 'CUSTOMER_CARE', 'HUMAN_RESOURCE', 'IT'])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const payload = StaffDirectMessageSchema.parse(req.body);
+      const sb = getAdminSupabase() || getSupabase();
+      if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+
+      const insertPayload = {
+        sender_id: session.sub,
+        sender_name: session.user?.full_name || session.user?.email || 'Institutional staff',
+        recipient_id: payload.recipientId || null,
+        target_role: payload.targetRole || null,
+        content: payload.content,
+        type: 'staff',
+        created_at: new Date().toISOString(),
+      };
+
+      const { data, error } = await sb.from('staff_messages').insert(insertPayload).select('*').single();
+      if (error) return res.status(500).json({ success: false, error: error.message });
+      res.json({ success: true, data });
+    } catch (e: any) {
+      res.status(400).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.patch('/admin/staff-messages/:id/flag', authenticate, async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, ['ADMIN', 'SUPER_ADMIN', 'CUSTOMER_CARE', 'AUDIT', 'IT'])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const sb = getAdminSupabase() || getSupabase();
+      if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+      const { data, error } = await sb
+        .from('staff_messages')
+        .update({ is_flagged: true })
+        .eq('id', req.params.id)
+        .select('*')
+        .single();
+      if (error) return res.status(500).json({ success: false, error: error.message });
+      res.json({ success: true, data });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.get('/admin/support-tickets', authenticate, async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, ['ADMIN', 'SUPER_ADMIN', 'CUSTOMER_CARE', 'AUDIT', 'HUMAN_RESOURCE'])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const sb = getAdminSupabase() || getSupabase();
+      if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+      const { data, error } = await sb.from('support_tickets').select('*').order('created_at', { ascending: false }).limit(100);
+      if (error) return res.status(500).json({ success: false, error: error.message });
+      const normalized = (data || []).map((ticket: any) => ({
+        id: ticket.id,
+        created_at: ticket.created_at,
+        ...(ticket.data || {}),
+      }));
+      res.json({ success: true, data: normalized });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.post('/admin/support-tickets', authenticate, async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, ['ADMIN', 'SUPER_ADMIN', 'CUSTOMER_CARE', 'HUMAN_RESOURCE'])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const payload = SupportTicketCreateSchema.parse(req.body);
+      const sb = getAdminSupabase() || getSupabase();
+      if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+
+      let resolvedCustomerId = payload.customerId || null;
+      if (!resolvedCustomerId && payload.customerQuery) {
+        const profile = await LogicCore.lookupUser(payload.customerQuery);
+        resolvedCustomerId = profile?.id || null;
+      }
+
+      const record = {
+        title: payload.title,
+        body: payload.body,
+        category: payload.category,
+        priority: payload.priority || 'normal',
+        status: 'open',
+        customer_id: resolvedCustomerId,
+        customer_query: payload.customerQuery || null,
+        assigned_to: payload.assignedTo || null,
+        tags: payload.tags || [],
+        created_by: session.sub,
+        created_by_name: session.user?.full_name || session.user?.email || 'Institutional staff',
+      };
+
+      const { data, error } = await sb
+        .from('support_tickets')
+        .insert({ data: record, created_at: new Date().toISOString() })
+        .select('*')
+        .single();
+      if (error) return res.status(500).json({ success: false, error: error.message });
+      res.json({ success: true, data: { id: data.id, created_at: data.created_at, ...(data.data || {}) } });
+    } catch (e: any) {
+      res.status(400).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.patch('/admin/support-tickets/:id', authenticate, async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, ['ADMIN', 'SUPER_ADMIN', 'CUSTOMER_CARE', 'HUMAN_RESOURCE'])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const payload = SupportTicketUpdateSchema.parse(req.body);
+      const sb = getAdminSupabase() || getSupabase();
+      if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+
+      const { data: existing, error: fetchError } = await sb.from('support_tickets').select('*').eq('id', req.params.id).maybeSingle();
+      if (fetchError) return res.status(500).json({ success: false, error: fetchError.message });
+      if (!existing) return res.status(404).json({ success: false, error: 'TICKET_NOT_FOUND' });
+
+      const current = existing.data || {};
+      const next = {
+        ...current,
+        ...(payload.status ? { status: payload.status } : {}),
+        ...(payload.assignedTo !== undefined ? { assigned_to: payload.assignedTo } : {}),
+        ...(payload.resolution ? { resolution: payload.resolution, resolved_at: new Date().toISOString() } : {}),
+        ...(payload.internalNote ? { internal_note: payload.internalNote } : {}),
+        updated_by: session.sub,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { data, error } = await sb
+        .from('support_tickets')
+        .update({ data: next })
+        .eq('id', req.params.id)
+        .select('*')
+        .single();
+      if (error) return res.status(500).json({ success: false, error: error.message });
+      res.json({ success: true, data: { id: data.id, created_at: data.created_at, ...(data.data || {}) } });
+    } catch (e: any) {
+      res.status(400).json({ success: false, error: e.message });
     }
   });
 

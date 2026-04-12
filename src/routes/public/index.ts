@@ -282,7 +282,7 @@ export const registerLegacyGatewayRoute = (app: Express, deps: LegacyGatewayDeps
           break;
         case 'treasury':
           if (operation === 'treasury_withdraw') result = await LogicCore.requestTreasuryWithdrawal(payload.orgId, payload.amount, payload.currency, payload.destination, session!.sub);
-          else if (operation === 'treasury_approve') result = await LogicCore.approveTreasuryWithdrawal(payload.withdrawalId, session!.sub);
+          else if (operation === 'treasury_approve') result = await LogicCore.approveTreasuryWithdrawal(session!.sub, payload.withdrawalId, payload.reason || 'Legacy treasury approval request');
           break;
         case 'strategy':
           if (operation === 'strategy_goal_list') result = await LogicCore.getGoals(session!.sub, token || undefined);

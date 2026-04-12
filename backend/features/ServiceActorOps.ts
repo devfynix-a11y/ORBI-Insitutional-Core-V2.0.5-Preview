@@ -80,6 +80,31 @@ class ServiceActorOperations {
         return `${prefix}${digits}`.slice(0, totalLength);
     }
 
+    private async generateUniqueBusinessId(
+        table: 'merchants' | 'agents',
+        seed: string,
+        prefix: string,
+        totalLength = 12,
+    ) {
+        const sb = this.getDb();
+        if (!sb) throw new Error('DB_OFFLINE');
+
+        for (let attempt = 0; attempt < 8; attempt++) {
+            const candidate = this.deriveNumericCode(`${seed}:business:${attempt}`, totalLength, prefix);
+            const { data: existing } = await sb
+                .from(table)
+                .select('id')
+                .contains('metadata', { business_id: candidate })
+                .maybeSingle();
+
+            if (!existing?.id) {
+                return candidate;
+            }
+        }
+
+        throw new Error(`${table.toUpperCase()}_BUSINESS_ID_GENERATION_FAILED`);
+    }
+
     private async generateUniqueAgentNumber(
         column: 'service_pay_number' | 'cash_withdraw_till',
         seed: string,
@@ -358,11 +383,52 @@ class ServiceActorOperations {
 
         const { data: existing } = await sb
             .from('merchants')
-            .select('id')
+            .select('id,business_name,status,metadata,created_at,updated_at')
             .eq('owner_user_id', actorId)
             .maybeSingle();
 
-        if (existing) return existing;
+        const businessId =
+            existing?.metadata?.business_id ||
+            (await this.generateUniqueBusinessId('merchants', `${actorId}:${businessName}`, '31'));
+
+        if (existing) {
+            const nextMetadata = {
+                ...(existing.metadata || {}),
+                actor_role: 'MERCHANT',
+                business_type: actor?.user_metadata?.business_type || existing.metadata?.business_type || 'general',
+                business_id: businessId,
+            };
+
+            const nextBusinessName = existing.business_name || businessName;
+            const nextStatus = existing.status || 'active';
+
+            if (
+                JSON.stringify(nextMetadata) !== JSON.stringify(existing.metadata || {}) ||
+                nextBusinessName !== existing.business_name ||
+                nextStatus !== existing.status
+            ) {
+                const { data: updated, error: updateError } = await sb
+                    .from('merchants')
+                    .update({
+                        business_name: nextBusinessName,
+                        status: nextStatus,
+                        metadata: nextMetadata,
+                        updated_at: new Date().toISOString(),
+                    })
+                    .eq('id', existing.id)
+                    .select('id,business_name,status,metadata,created_at,updated_at')
+                    .single();
+                if (updateError) throw new Error(`MERCHANT_PROFILE_UPDATE_FAILED: ${updateError.message}`);
+                return updated;
+            }
+
+            return {
+                ...existing,
+                business_name: nextBusinessName,
+                status: nextStatus,
+                metadata: nextMetadata,
+            };
+        }
 
         const payload = {
             business_name: businessName,
@@ -371,10 +437,15 @@ class ServiceActorOperations {
             metadata: {
                 actor_role: 'MERCHANT',
                 business_type: actor?.user_metadata?.business_type || 'general',
+                business_id: businessId,
             },
         };
 
-        const { data, error } = await sb.from('merchants').insert(payload).select('id').single();
+        const { data, error } = await sb
+            .from('merchants')
+            .insert(payload)
+            .select('id,business_name,status,metadata,created_at,updated_at')
+            .single();
         if (error) throw new Error(`MERCHANT_PROFILE_CREATE_FAILED: ${error.message}`);
         return data;
     }
@@ -392,11 +463,39 @@ class ServiceActorOperations {
 
         const { data: existing } = await sb
             .from('agents')
-            .select('id')
+            .select('id,user_id,display_name,status,service_pay_number,cash_withdraw_till,service_wallet_id,commission_wallet_id,metadata,created_at,updated_at')
             .eq('user_id', actorId)
             .maybeSingle();
 
-        if (existing) return existing;
+        const businessId =
+            existing?.metadata?.business_id ||
+            (await this.generateUniqueBusinessId('agents', `${actorId}:${displayName}`, '41'));
+
+        if (existing) {
+            const nextMetadata = {
+                ...(existing.metadata || {}),
+                actor_role: 'AGENT',
+                branch: actor?.user_metadata?.branch || existing.metadata?.branch || null,
+                business_id: businessId,
+            };
+            if (JSON.stringify(nextMetadata) !== JSON.stringify(existing.metadata || {})) {
+                const { data: updated, error: updateError } = await sb
+                    .from('agents')
+                    .update({
+                        metadata: nextMetadata,
+                        updated_at: new Date().toISOString(),
+                    })
+                    .eq('id', existing.id)
+                    .select('id,user_id,display_name,status,service_pay_number,cash_withdraw_till,service_wallet_id,commission_wallet_id,metadata,created_at,updated_at')
+                    .single();
+                if (updateError) throw new Error(`AGENT_PROFILE_UPDATE_FAILED: ${updateError.message}`);
+                return updated;
+            }
+            return {
+                ...existing,
+                metadata: nextMetadata,
+            };
+        }
 
         const { data, error } = await sb
             .from('agents')
@@ -412,9 +511,10 @@ class ServiceActorOperations {
                 metadata: {
                     actor_role: 'AGENT',
                     branch: actor?.user_metadata?.branch || null,
+                    business_id: businessId,
                 },
             })
-            .select('id')
+            .select('id,user_id,display_name,status,service_pay_number,cash_withdraw_till,service_wallet_id,commission_wallet_id,metadata,created_at,updated_at')
             .single();
 
         if (error) throw new Error(`AGENT_PROFILE_CREATE_FAILED: ${error.message}`);
@@ -624,9 +724,24 @@ class ServiceActorOperations {
 
     public async provisionApprovedActorAccess(userId: string, actorRole: ServiceActorRole) {
         if (actorRole === 'MERCHANT') {
-            await this.ensureMerchantProfile({ id: userId });
-            await this.syncMerchantWallets(userId);
-            return null;
+            const merchant = await this.ensureMerchantProfile({ id: userId });
+            const wallets = await this.syncMerchantWallets(userId);
+            const primaryWallet =
+                wallets.find((wallet: any) => wallet.is_primary) ||
+                wallets[0] ||
+                null;
+            return {
+                actor_role: 'MERCHANT',
+                merchant_id: merchant.id,
+                business_name: merchant.business_name || 'Merchant Account',
+                business_id: merchant.metadata?.business_id || null,
+                status: merchant.status || 'active',
+                primary_wallet_id: primaryWallet?.id || null,
+                base_wallet_id: primaryWallet?.base_wallet_id || null,
+                merchant_wallet_ids: wallets.map((wallet: any) => wallet.id).filter(Boolean),
+                created_at: merchant.created_at || null,
+                updated_at: merchant.updated_at || null,
+            };
         }
 
         const agent = await this.ensureAgentProfile({ id: userId });
@@ -643,10 +758,16 @@ class ServiceActorOperations {
 
         return {
             actor_role: 'AGENT',
+            agent_id: agent.id,
+            display_name: agent.display_name || 'Agent Operator',
+            business_id: agent.metadata?.business_id || null,
+            status: agent.status || 'active',
             service_pay_number: operationalIdentity.servicePayNumber,
             cash_withdraw_till: operationalIdentity.cashWithdrawTill,
             service_wallet_id: operationalIdentity.serviceWalletId,
             commission_wallet_id: operationalIdentity.commissionWalletId,
+            created_at: agent.created_at || null,
+            updated_at: agent.updated_at || null,
         };
     }
 

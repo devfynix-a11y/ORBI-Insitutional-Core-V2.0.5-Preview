@@ -22,7 +22,7 @@ export class PartnerRegistry {
         const secured = await secureProviderRegistryPayload({
             ...normalized,
         });
-        return await this.sb!.from('financial_partners').insert(secured);
+        return await this.sb!.from('financial_partners').insert(secured).select('*').single();
     }
 
     public static async updatePartner(id: string, updates: Partial<FinancialPartner>) {
@@ -51,7 +51,7 @@ export class PartnerRegistry {
         };
         assertPartnerActivationReady(activationCandidate);
         const secured = await secureProviderRegistryPayload(normalized);
-        return await this.sb!.from('financial_partners').update(secured).eq('id', id);
+        return await this.sb!.from('financial_partners').update(secured).eq('id', id).select('*').single();
     }
 
     public static async deletePartner(id: string) {

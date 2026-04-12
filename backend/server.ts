@@ -861,7 +861,7 @@ class OrbiServer {
         return { success: true };
     }
 
-    async updateAccountStatus(userId: string, status: string, actorId: string) {
+    async updateAccountStatus(userId: string, status: string, actorId: string, reason?: string) {
         const sb = getAdminSupabase();
         if (!sb) return;
 
@@ -878,6 +878,11 @@ class OrbiServer {
         }
 
         await this.security.logActivity(actorId, 'GOVERNANCE_STATUS_UPDATE', 'success', `Node ${userId} rotated to ${status}`);
+        await Audit.log('ADMIN', actorId, 'ACCOUNT_STATUS_UPDATE', {
+            targetUserId: userId,
+            status,
+            reason: reason || 'No reason supplied',
+        });
     }
     async getForensicState(): Promise<ForensicReport> { return VaultAuditor.getForensicReport(); }
     async getDetailedUserActivity(uid: string) { return this.security.getUserActivity(uid); }
@@ -1559,8 +1564,17 @@ class OrbiServer {
         }
     }
 
-    async approveTreasuryWithdrawal(adminId: string, txId: string) {
+    async approveTreasuryWithdrawal(adminId: string, txId: string, reason?: string) {
+        await Audit.log('FINANCIAL', adminId, 'TREASURY_WITHDRAWAL_APPROVAL_REQUESTED', {
+            txId,
+            reason: reason || 'No reason supplied',
+        }, txId);
         const isFullyApproved = await Treasury.approveWithdrawal(adminId, txId);
+        await Audit.log('FINANCIAL', adminId, 'TREASURY_WITHDRAWAL_APPROVAL_RECORDED', {
+            txId,
+            reason: reason || 'No reason supplied',
+            isFullyApproved,
+        }, txId);
         return { isFullyApproved };
     }
 
@@ -1599,8 +1613,15 @@ class OrbiServer {
     }
 
     // --- RECONCILIATION ENGINE ---
-    async runFullReconciliation() {
-        return ReconEngine.runAllRecon();
+    async runFullReconciliation(actorId?: string, reason?: string) {
+        await Audit.log('ADMIN', actorId || 'SYSTEM', 'RECONCILIATION_RUN_REQUESTED', {
+            reason: reason || 'No reason supplied',
+        });
+        const result = await ReconEngine.runAllRecon();
+        await Audit.log('ADMIN', actorId || 'SYSTEM', 'RECONCILIATION_RUN_COMPLETED', {
+            reason: reason || 'No reason supplied',
+        });
+        return result;
     }
 
     async getReconciliationReports(limit: number = 50) {

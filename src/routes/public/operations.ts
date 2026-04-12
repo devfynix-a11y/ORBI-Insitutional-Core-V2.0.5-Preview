@@ -1,5 +1,15 @@
 import { type RequestHandler, type Router } from 'express';
+import { z } from 'zod';
 import { sessionHasAnyRole } from '../../middleware/auth/authorization.js';
+
+const TreasuryApprovalSchema = z.object({
+  txId: z.string().min(1),
+  reason: z.string().trim().min(5).max(500),
+});
+
+const ReconciliationRunSchema = z.object({
+  reason: z.string().trim().min(5).max(500),
+});
 
 type Deps = {
   authenticate: RequestHandler;
@@ -113,9 +123,9 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
 
   v1.post('/enterprise/treasury/withdraw/approve', authenticate as any, async (req, res) => {
     const session = (req as any).session;
-    const { txId } = req.body;
     try {
-      const result = await LogicCore.approveTreasuryWithdrawal(session.sub, txId);
+      const { txId, reason } = TreasuryApprovalSchema.parse(req.body);
+      const result = await LogicCore.approveTreasuryWithdrawal(session.sub, txId, reason);
       res.json({ success: true, data: result });
     } catch (e: any) {
       res.status(400).json({ success: false, error: e.message });
@@ -224,9 +234,11 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
-  v1.post('/admin/reconciliation/run', authenticate as any, requireSessionPermission(['reconciliation.run'], ['ADMIN', 'SUPER_ADMIN', 'AUDIT']), async (_req, res) => {
+  v1.post('/admin/reconciliation/run', authenticate as any, requireSessionPermission(['reconciliation.run'], ['ADMIN', 'SUPER_ADMIN', 'AUDIT']), async (req, res) => {
     try {
-      await LogicCore.runFullReconciliation();
+      const { reason } = ReconciliationRunSchema.parse(req.body);
+      const session = (req as any).session;
+      await LogicCore.runFullReconciliation(session.sub, reason);
       res.json({ success: true, message: 'Full reconciliation cycle triggered.' });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });
