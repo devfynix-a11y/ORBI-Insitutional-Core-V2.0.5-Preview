@@ -367,6 +367,9 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='notif_marketing') THEN
         ALTER TABLE public.users ADD COLUMN notif_marketing BOOLEAN DEFAULT FALSE;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='fcm_token') THEN
+        ALTER TABLE public.users ADD COLUMN fcm_token TEXT;
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='security_tx_pin_hash') THEN
         ALTER TABLE public.users ADD COLUMN security_tx_pin_hash TEXT;
     END IF;

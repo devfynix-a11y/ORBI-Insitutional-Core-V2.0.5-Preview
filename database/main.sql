@@ -1,9 +1,3 @@
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='staff' AND column_name='address') THEN
-        ALTER TABLE public.staff ADD COLUMN address TEXT;
-    END IF;
-END $$;
 -- ORBI SOVEREIGN MASTER SCHEMA V93.0 (IDEMPOTENT MASTER KEY)
 -- This script is designed to be run multiple times without data loss.
 -- It adds missing columns, tables, and updates functions to the latest version.
@@ -270,6 +264,9 @@ BEGIN
     END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='notif_marketing') THEN
         ALTER TABLE public.users ADD COLUMN notif_marketing BOOLEAN DEFAULT FALSE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='fcm_token') THEN
+        ALTER TABLE public.users ADD COLUMN fcm_token TEXT;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='security_tx_pin_hash') THEN
         ALTER TABLE public.users ADD COLUMN security_tx_pin_hash TEXT;

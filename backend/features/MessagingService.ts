@@ -23,31 +23,46 @@ import { officialGatewayTemplatePolicy } from './OfficialGatewayTemplatePolicy.j
 class MessagingService {
     private readonly profileCache = new Map<string, { value: any; expiresAt: number }>();
     private readonly profileInflight = new Map<string, Promise<any>>();
+    private readonly profileCacheEpoch = new Map<string, number>();
     private readonly PROFILE_CACHE_TTL_MS = 30_000;
 
+    public invalidateUserProfile(userId: string) {
+        const key = String(userId || '').trim();
+        if (!key) return;
+        this.profileCache.delete(key);
+        this.profileInflight.delete(key);
+        this.profileCacheEpoch.set(key, (this.profileCacheEpoch.get(key) || 0) + 1);
+    }
+
     private async getUserProfile(userId: string): Promise<any> {
+        const key = String(userId || '').trim();
         const now = Date.now();
-        const cached = this.profileCache.get(userId);
+        const cached = this.profileCache.get(key);
         if (cached && cached.expiresAt > now) {
             return cached.value;
         }
 
-        const inflight = this.profileInflight.get(userId);
+        const inflight = this.profileInflight.get(key);
         if (inflight) {
             return inflight;
         }
 
-        const loadPromise = this.loadUserProfile(userId);
-        this.profileInflight.set(userId, loadPromise);
+        const cacheEpoch = this.profileCacheEpoch.get(key) || 0;
+        const loadPromise = this.loadUserProfile(key);
+        this.profileInflight.set(key, loadPromise);
         try {
             const profile = await loadPromise;
-            this.profileCache.set(userId, {
-                value: profile,
-                expiresAt: now + this.PROFILE_CACHE_TTL_MS,
-            });
+            if ((this.profileCacheEpoch.get(key) || 0) === cacheEpoch) {
+                this.profileCache.set(key, {
+                    value: profile,
+                    expiresAt: now + this.PROFILE_CACHE_TTL_MS,
+                });
+            }
             return profile;
         } finally {
-            this.profileInflight.delete(userId);
+            if (this.profileInflight.get(key) === loadPromise) {
+                this.profileInflight.delete(key);
+            }
         }
     }
 

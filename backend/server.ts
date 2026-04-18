@@ -1190,6 +1190,7 @@ class OrbiServer {
                 }
             }
             
+            Messaging.invalidateUserProfile(userId);
             await this.security.logActivity(userId, 'PROFILE_UPDATE', 'success', `Updated fields: ${attemptedFields.join(', ')}`);
             return { success: true };
         } catch (e: any) {
