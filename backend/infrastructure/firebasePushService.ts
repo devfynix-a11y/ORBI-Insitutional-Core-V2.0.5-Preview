@@ -95,7 +95,7 @@ class FirebasePushService {
         android: {
           priority: 'high',
           notification: {
-            channelId: 'orbi_foreground_notifications',
+            channelId: 'orbi_alert_notifications_v2',
             sound: 'default',
           },
         },
