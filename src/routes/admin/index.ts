@@ -5,7 +5,6 @@ import { PartnerRegistry } from '../../../backend/admin/partnerRegistry.js';
 import { TransactionService } from '../../../ledger/transactionService.js';
 import { Server as LogicCore } from '../../../backend/server.js';
 import { requireSessionPermission } from '../../middleware/auth/sessionAuth.js';
-import { createAuthorizationMiddleware } from '../../middleware/auth/authorization.js';
 
 const InstitutionalAccountSchema = z.object({
   role: z.enum(['MAIN_COLLECTION', 'FEE_COLLECTION', 'TAX_COLLECTION', 'TRANSFER_SAVINGS']),
@@ -100,8 +99,6 @@ const queryStringValue = (value: unknown) => {
 
 export const registerAdminRoutes = (admin: Router, authenticate: RequestHandler) => {
   admin.use(authenticate);
-
-  admin.use(createAuthorizationMiddleware({ allowedRoles: ['ADMIN', 'SUPER_ADMIN', 'IT'] }));
 
   admin.get('/partners', requireSessionPermission(['provider.read', 'provider.write'], ['ADMIN', 'SUPER_ADMIN', 'IT']), async (_req, res) => {
     try {

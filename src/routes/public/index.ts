@@ -4,6 +4,7 @@ import {
   extractBearerToken,
   getInternalAuditMetadata,
 } from '../../middleware/auth/authorization.js';
+import { isHttpShuttingDown } from '../../bootstrap/http.js';
 
 let lastBrokerHeartbeat: any = null;
 
@@ -191,6 +192,65 @@ export const registerTopLevelPublicRoutes = (app: Express, deps: TopLevelDeps) =
       uptime: (process as any).uptime(),
       ts: Date.now(),
     });
+  });
+
+  app.get('/live', (_req, res) => {
+    res.json({
+      status: 'ALIVE',
+      node: process.env.RENDER_INSTANCE_ID || 'DPS-PRIMARY-RELAY',
+      uptime: (process as any).uptime(),
+      ts: Date.now(),
+    });
+  });
+
+  app.get('/ready', async (_req, res) => {
+    if (isHttpShuttingDown()) {
+      return res.status(503).json({
+        status: 'NOT_READY',
+        reason: 'SHUTTING_DOWN',
+      });
+    }
+
+    try {
+      const snapshot = await OperationalHealthService.captureSnapshot();
+      const ready = snapshot.status !== 'CRITICAL';
+      res.status(ready ? 200 : 503).json({
+        status: ready ? 'READY' : 'NOT_READY',
+        platformStatus: snapshot.status,
+        capturedAt: snapshot.capturedAt,
+        connectivity: snapshot.connectivity,
+        jobs: {
+          status: snapshot.jobs.status,
+          schedulerRunning: snapshot.jobs.scheduler.running,
+          backlogTotal: snapshot.jobs.scheduler.backlogTotal,
+        },
+      });
+    } catch (e: any) {
+      res.status(503).json({
+        status: 'NOT_READY',
+        error: e?.message || 'READINESS_PROBE_FAILED',
+      });
+    }
+  });
+
+  app.get('/health/deep', async (_req, res) => {
+    try {
+      const snapshot = await OperationalHealthService.captureSnapshot();
+      res.status(snapshot.status === 'CRITICAL' ? 503 : 200).json({
+        status: snapshot.status,
+        shutdown: isHttpShuttingDown(),
+        capturedAt: snapshot.capturedAt,
+        connectivity: snapshot.connectivity,
+        jobs: snapshot.jobs,
+        metrics: snapshot.metrics,
+      });
+    } catch (e: any) {
+      res.status(503).json({
+        status: 'CRITICAL',
+        shutdown: isHttpShuttingDown(),
+        error: e?.message || 'HEALTH_PROBE_FAILED',
+      });
+    }
   });
 
   app.post('/api/broker/heartbeat', createInternalWorkerMiddleware({ requiredScopes: ['broker:heartbeat'] }), (req, res) => {

@@ -3,6 +3,7 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import type { DetailedPeerCertificate, TLSSocket } from 'tls';
 import { RedisClusterFactory } from '../../../backend/infrastructure/RedisClusterFactory.js';
 import { Audit } from '../../../backend/security/audit.js';
+import { isInstitutionalStaffContext, normalizeRole } from './roles.js';
 
 export type AuthorizationScope = 'USER' | 'ADMIN' | 'SYSTEM' | 'INTERNAL';
 export type InternalRequestAuthMode = 'legacy-shared-secret' | 'signed-hmac-sha256';
@@ -129,7 +130,7 @@ export const extractBearerToken = (req: Pick<Request, 'headers'>): string | null
 };
 
 export const resolveSessionRole = (session: any): string =>
-  normalizeUpper(
+  normalizeRole(
     session?.role ||
       session?.user?.role ||
       session?.user?.user_metadata?.role ||
@@ -154,7 +155,7 @@ export const resolveAuthorizationScope = (session: any): AuthorizationScope => {
     return 'SYSTEM';
   }
 
-  if (registryType === 'STAFF' || ['ADMIN', 'SUPER_ADMIN', 'IT', 'AUDIT', 'HUMAN_RESOURCE', 'CUSTOMER_CARE', 'ACCOUNTANT', 'FRAUD', 'STAFF'].includes(role)) {
+  if (isInstitutionalStaffContext(role, registryType)) {
     return 'ADMIN';
   }
 

@@ -82,7 +82,9 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+      - key: REDIS_TLS_ENABLED
+        value: "true"
       - key: REDIS_URL
-        value: "redis://red-d6ubkhs50q8c73fumq4g:6379"
+        sync: false
       - key: KYC_BUCKET
         sync: false

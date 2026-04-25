@@ -1,6 +1,14 @@
 import { type RequestHandler, type Router } from 'express';
 import { z } from 'zod';
 import { sessionHasAnyRole } from '../../middleware/auth/authorization.js';
+import {
+  CONFIG_COMMISSION_VIEW_ROLES,
+  CONFIG_FX_VIEW_ROLES,
+  CONFIG_LEDGER_ADMIN_ROLES,
+  RECONCILIATION_REPORT_ROLES,
+  RECONCILIATION_RUN_ROLES,
+  SUPER_ADMIN_AND_ADMIN_ROLES,
+} from '../../middleware/auth/roles.js';
 
 const TreasuryApprovalSchema = z.object({
   txId: z.string().min(1),
@@ -45,7 +53,7 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
       if (!req.body.userId) req.body.userId = session.sub;
 
       if (req.body.userId !== session.sub) {
-        if (!sessionHasAnyRole(session, ['ADMIN', 'SUPER_ADMIN'])) {
+        if (!sessionHasAnyRole(session, [...SUPER_ADMIN_AND_ADMIN_ROLES])) {
           return res.status(403).json({ success: false, error: 'ACCESS_DENIED: You can only activate your own account.' });
         }
       }
@@ -211,7 +219,7 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
     const { referenceId } = req.body;
     const userId = (req as any).user.id;
 
-    if (!sessionHasAnyRole(session, ['ADMIN', 'SUPER_ADMIN'])) {
+    if (!sessionHasAnyRole(session, [...SUPER_ADMIN_AND_ADMIN_ROLES])) {
       return res.status(403).json({ success: false, error: 'UNAUTHORIZED_ADMIN_ONLY' });
     }
 
@@ -234,7 +242,7 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
-  v1.post('/admin/reconciliation/run', authenticate as any, requireSessionPermission(['reconciliation.run'], ['ADMIN', 'SUPER_ADMIN', 'AUDIT']), async (req, res) => {
+  v1.post('/admin/reconciliation/run', authenticate as any, requireSessionPermission(['reconciliation.run'], [...RECONCILIATION_RUN_ROLES]), async (req, res) => {
     try {
       const { reason } = ReconciliationRunSchema.parse(req.body);
       const session = (req as any).session;
@@ -245,7 +253,7 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
-  v1.get('/admin/reconciliation/reports', authenticate as any, requireSessionPermission(['reconciliation.read', 'reconciliation.run'], ['ADMIN', 'SUPER_ADMIN', 'AUDIT', 'ACCOUNTANT']), async (req, res) => {
+  v1.get('/admin/reconciliation/reports', authenticate as any, requireSessionPermission(['reconciliation.read', 'reconciliation.run'], [...RECONCILIATION_REPORT_ROLES]), async (req, res) => {
     const limit = Number(req.query.limit || 50);
     try {
       const result = await LogicCore.getReconciliationReports(limit);
@@ -255,7 +263,7 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
-  v1.get('/admin/config/ledger', authenticate as any, requireSessionPermission(['config.ledger.read', 'config.ledger.write'], ['ADMIN', 'SUPER_ADMIN']), async (_req, res) => {
+  v1.get('/admin/config/ledger', authenticate as any, requireSessionPermission(['config.ledger.read', 'config.ledger.write'], [...CONFIG_LEDGER_ADMIN_ROLES]), async (_req, res) => {
     try {
       const config = await ConfigClient.getRuleConfig(true);
       res.json({ success: true, data: config.transaction_limits });
@@ -264,7 +272,7 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
-  v1.post('/admin/config/ledger', authenticate as any, requireSessionPermission(['config.ledger.write'], ['ADMIN', 'SUPER_ADMIN']), async (req, res) => {
+  v1.post('/admin/config/ledger', authenticate as any, requireSessionPermission(['config.ledger.write'], [...CONFIG_LEDGER_ADMIN_ROLES]), async (req, res) => {
     try {
       const currentConfig = await ConfigClient.getRuleConfig();
       const newLimits = req.body;
@@ -283,7 +291,7 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
-  v1.get('/admin/config/commissions', authenticate as any, requireSessionPermission(['config.commissions.read', 'config.commissions.write'], ['ADMIN', 'SUPER_ADMIN', 'ACCOUNTANT']), async (_req, res) => {
+  v1.get('/admin/config/commissions', authenticate as any, requireSessionPermission(['config.commissions.read', 'config.commissions.write'], [...CONFIG_COMMISSION_VIEW_ROLES]), async (_req, res) => {
     try {
       const config = await ConfigClient.getRuleConfig(true);
       res.json({ success: true, data: config.commission_programs || {} });
@@ -292,7 +300,7 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
-  v1.post('/admin/config/commissions', authenticate as any, requireSessionPermission(['config.commissions.write'], ['ADMIN', 'SUPER_ADMIN']), async (req, res) => {
+  v1.post('/admin/config/commissions', authenticate as any, requireSessionPermission(['config.commissions.write'], [...CONFIG_LEDGER_ADMIN_ROLES]), async (req, res) => {
     try {
       const currentConfig = await ConfigClient.getRuleConfig();
       const updatedConfig = {
@@ -309,7 +317,7 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
-  v1.get('/admin/config/fx-rates', authenticate as any, requireSessionPermission(['config.fx.read', 'config.fx.write'], ['ADMIN', 'SUPER_ADMIN', 'ACCOUNTANT', 'IT']), async (_req, res) => {
+  v1.get('/admin/config/fx-rates', authenticate as any, requireSessionPermission(['config.fx.read', 'config.fx.write'], [...CONFIG_FX_VIEW_ROLES]), async (_req, res) => {
     try {
       const config = await ConfigClient.getRuleConfig(true);
       res.json({ success: true, data: config.exchange_rates });
@@ -318,7 +326,7 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
-  v1.post('/admin/config/fx-rates', authenticate as any, requireSessionPermission(['config.fx.write'], ['ADMIN', 'SUPER_ADMIN']), async (req, res) => {
+  v1.post('/admin/config/fx-rates', authenticate as any, requireSessionPermission(['config.fx.write'], [...CONFIG_LEDGER_ADMIN_ROLES]), async (req, res) => {
     try {
       const currentConfig = await ConfigClient.getRuleConfig();
       const newRates = req.body;

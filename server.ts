@@ -1,8 +1,10 @@
-import { httpServer, PORT, ALLOWED_ORIGINS, gatewayBackgroundJobsEnabled } from './src/app/createApp.js';
+import { httpServer, PORT, ALLOWED_ORIGINS, gatewayBackgroundJobsEnabled, startupDependenciesReady } from './src/app/createApp.js';
 import { bootstrapRealtime } from './src/bootstrap/realtime.js';
 import { bootstrapJobs } from './src/bootstrap/jobs.js';
 import { bootstrapHttp } from './src/bootstrap/http.js';
 import { logger } from './backend/infrastructure/logger.js';
+
+await startupDependenciesReady;
 
 const realtime = bootstrapRealtime({ httpServer, allowedOrigins: ALLOWED_ORIGINS });
 let jobsController: { stop: () => Promise<void> } = {

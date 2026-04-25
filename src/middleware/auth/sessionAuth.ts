@@ -17,6 +17,7 @@ import {
   sessionHasAnyPermission,
   sessionHasAnyRole,
 } from './authorization.js';
+import { ADMIN_ONLY_ROLES, LEGACY_INSTITUTIONAL_ROLE_ALIASES } from './roles.js';
 
 export const authenticate = async (req: Request, res: Response, next: NextFunction) => {
   const token = extractBearerToken(req);
@@ -133,7 +134,7 @@ export const mapServiceRoleToRegistryType = (role: string): 'MERCHANT' | 'AGENT'
 export const adminOnly = createAuthorizationMiddleware(
   {
     allowedScopes: ['ADMIN'],
-    allowedRoles: ['ADMIN', 'STAFF', 'SUPER_ADMIN'],
+    allowedRoles: [...ADMIN_ONLY_ROLES, ...LEGACY_INSTITUTIONAL_ROLE_ALIASES],
     allowedOrgRoles: ['ADMIN'],
   },
   {

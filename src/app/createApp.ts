@@ -13,12 +13,18 @@ import { tracingMiddleware } from '../../backend/middleware/tracing.js';
 import { logger } from '../../backend/infrastructure/logger.js';
 
 validateStartupEnvironment();
-void validateStartupDependencies()
+
+const fatalOnStartupDependencyFailure = process.env.NODE_ENV === 'production';
+
+const startupDependenciesReady = validateStartupDependencies()
   .then(() => {
     logger.info('startup.dependencies_validated');
   })
   .catch((error) => {
     logger.error('startup.dependencies_validation_failed', undefined, error);
+    if (fatalOnStartupDependencyFailure) {
+      throw error;
+    }
   });
 
 const { app, httpServer, upload, port: PORT } = createRuntime();
@@ -39,8 +45,10 @@ const {
 } = createAppContext(app);
 
 // Request correlation + session monitoring middleware
-app.use('/api/v1', tracingMiddleware);
-app.use('/api/v1', continuousSessionMonitor);
+for (const mount of ['/api/v1', '/v1']) {
+  app.use(mount, tracingMiddleware);
+  app.use(mount, continuousSessionMonitor);
+}
 
 registerSystemRoutes({
     app,
@@ -48,22 +56,31 @@ registerSystemRoutes({
 });
 
 registerAppPublicRoutes({
-    ...buildPublicRouteDeps({
-        app,
-        globalIpLimiter: globalIpLimiter as any,
-        legacyApiGatewayEnabled,
-        legacyBiometricAliasesEnabled,
-        messagingTestRoutesEnabled,
-        sandboxRoutesEnabled,
-        authenticate: authenticate as any,
-        adminOnly: adminOnly as any,
-        validate,
-        requireSessionPermission,
-        upload,
-        resolveSessionRole,
-        resolveSessionRegistryType,
-        mapServiceRoleToRegistryType,
-    }),
+  ...buildPublicRouteDeps({
+    app,
+    globalIpLimiter: globalIpLimiter as any,
+    legacyApiGatewayEnabled,
+    legacyBiometricAliasesEnabled,
+    messagingTestRoutesEnabled,
+    sandboxRoutesEnabled,
+    authenticate: authenticate as any,
+    adminOnly: adminOnly as any,
+    validate,
+    requireSessionPermission,
+    upload,
+    resolveSessionRole,
+    resolveSessionRegistryType,
+    mapServiceRoleToRegistryType,
+  }),
 });
 
-export { app, httpServer, PORT, gatewayBackgroundJobsEnabled, ALLOWED_ORIGINS, globalIpLimiter, legacyApiGatewayEnabled };
+export {
+  app,
+  httpServer,
+  PORT,
+  gatewayBackgroundJobsEnabled,
+  ALLOWED_ORIGINS,
+  globalIpLimiter,
+  legacyApiGatewayEnabled,
+  startupDependenciesReady,
+};
