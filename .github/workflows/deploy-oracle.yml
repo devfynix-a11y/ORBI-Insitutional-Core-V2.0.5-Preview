@@ -16,6 +16,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/orbi-institutional-core
   APP_DIR: /opt/orbi/orbi-institutional-core
+  DEPLOY_BASE_URL: ${{ github.event.inputs.base_url || secrets.ORBI_BASE_URL }}
 
 jobs:
   deploy:
@@ -99,8 +100,8 @@ jobs:
             "${APP_DIR}/deploy-vm.sh"
 
       - name: Release smoke test
-        if: ${{ github.event.inputs.base_url != '' || secrets.ORBI_BASE_URL != '' }}
+        if: ${{ env.DEPLOY_BASE_URL != '' }}
         env:
-          ORBI_BASE_URL: ${{ github.event.inputs.base_url || secrets.ORBI_BASE_URL }}
+          ORBI_BASE_URL: ${{ env.DEPLOY_BASE_URL }}
           ORBI_MONITOR_API_KEY: ${{ secrets.ORBI_MONITOR_API_KEY }}
         run: node scripts/release-smoke.mjs
