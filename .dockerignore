@@ -1,0 +1,11 @@
+node_modules
+dist
+.git
+.github
+npm-debug.log
+Dockerfile*
+render.yaml
+coverage
+*.local
+*.tmp
+*.log

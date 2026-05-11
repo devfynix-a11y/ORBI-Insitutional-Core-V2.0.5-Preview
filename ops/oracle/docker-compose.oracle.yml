@@ -1,0 +1,9 @@
+services:
+  api:
+    image: ${ORBI_IMAGE:?ORBI_IMAGE is required}
+    container_name: orbi-institutional-core
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${HOST_PORT:-3000}:3000"

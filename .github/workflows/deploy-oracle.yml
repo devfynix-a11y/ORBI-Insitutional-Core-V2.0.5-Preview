@@ -1,0 +1,106 @@
+name: Deploy Oracle Cloud
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: Base URL to validate after deploy
+        required: false
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/orbi-institutional-core
+  APP_DIR: /opt/orbi/orbi-institutional-core
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run lint
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Copy Oracle deployment bundle
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.OCI_SSH_HOST }}
+          username: ${{ secrets.OCI_SSH_USER }}
+          key: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          port: ${{ secrets.OCI_SSH_PORT || 22 }}
+          source: "ops/oracle/docker-compose.oracle.yml,ops/oracle/deploy-vm.sh"
+          target: ${{ env.APP_DIR }}
+          strip_components: 2
+
+      - name: Deploy on Oracle VM
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          ORBI_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          ORBI_ENV_FILE_B64: ${{ secrets.OCI_APP_ENV_FILE_B64 }}
+          APP_DIR: ${{ env.APP_DIR }}
+        with:
+          host: ${{ secrets.OCI_SSH_HOST }}
+          username: ${{ secrets.OCI_SSH_USER }}
+          key: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          port: ${{ secrets.OCI_SSH_PORT || 22 }}
+          envs: ORBI_IMAGE,ORBI_ENV_FILE_B64,APP_DIR
+          script: |
+            chmod +x "${APP_DIR}/deploy-vm.sh"
+            "${APP_DIR}/deploy-vm.sh"
+
+      - name: Release smoke test
+        if: ${{ github.event.inputs.base_url != '' || secrets.ORBI_BASE_URL != '' }}
+        env:
+          ORBI_BASE_URL: ${{ github.event.inputs.base_url || secrets.ORBI_BASE_URL }}
+          ORBI_MONITOR_API_KEY: ${{ secrets.ORBI_MONITOR_API_KEY }}
+        run: node scripts/release-smoke.mjs
