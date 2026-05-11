@@ -1,6 +1,7 @@
 import { NextFunction, Request, Response } from 'express';
+import crypto from 'crypto';
 
-type CachedResponse = { status: number; body: any };
+type CachedResponse = { status: number; body: any; state?: 'COMPLETED' | 'PROCESSING' };
 
 type CreateIdempotencyOptions = {
   redisClient: any;
@@ -10,6 +11,42 @@ type CreateIdempotencyOptions = {
 
 export const resolveIdempotencyHeader = (req: Request) =>
   req.header('Idempotency-Key') || req.header('x-idempotency-key');
+
+const stableStringify = (value: any): string => {
+  if (value === null || value === undefined) return '';
+  if (Buffer.isBuffer(value)) return value.toString('base64');
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+};
+
+const buildRequestFingerprint = (req: Request, key: string) => {
+  const bodyHash = crypto
+    .createHash('sha256')
+    .update(stableStringify((req as any).body || {}))
+    .digest('hex');
+  const path = req.baseUrl
+    ? `${req.baseUrl}${req.path}`
+    : (req.route?.path ? `${req.originalUrl.split('?')[0]}` : req.originalUrl.split('?')[0]);
+  return `${req.method.toUpperCase()}:${path}:${key}:${bodyHash}`;
+};
+
+export const requireIdempotencyKey = (req: Request, res: Response, next: NextFunction) => {
+  const key = resolveIdempotencyHeader(req);
+  if (!key || !String(key).trim()) {
+    return res.status(428).json({
+      success: false,
+      error: 'IDEMPOTENCY_KEY_REQUIRED',
+      message: 'Money movement requests require an Idempotency-Key header.',
+    });
+  }
+  return next();
+};
 
 export const createIdempotencyMiddleware = ({
   redisClient,
@@ -35,6 +72,29 @@ export const createIdempotencyMiddleware = ({
     }
 
     return null;
+  };
+
+  const reserveIdempotencyKey = async (key: string): Promise<boolean> => {
+    const processingValue = JSON.stringify({ state: 'PROCESSING' });
+    if (redisClient) {
+      try {
+        const result = await redisClient.set(
+          `idempotency:${key}`,
+          processingValue,
+          'EX',
+          idempotencyTtlSeconds,
+          'NX',
+        );
+        return result === 'OK';
+      } catch (e) {
+        console.warn('[Idempotency] Redis reservation failed:', e);
+      }
+    }
+
+    if (!allowProcessLocalIdempotency) return true;
+    if (idempotencyCache.has(key)) return false;
+    idempotencyCache.set(key, { status: 202, body: null, state: 'PROCESSING' });
+    return true;
   };
 
   const writeIdempotencyCache = async (key: string, value: CachedResponse) => {
@@ -67,18 +127,36 @@ export const createIdempotencyMiddleware = ({
   };
 
   return async (req: Request, res: Response, next: NextFunction) => {
-    const key = resolveIdempotencyHeader(req);
-    if (!key) return next();
+    const rawKey = resolveIdempotencyHeader(req);
+    if (!rawKey) return next();
+
+    const key = buildRequestFingerprint(req, String(rawKey).trim());
 
     const cached = await readIdempotencyCache(key);
     if (cached) {
-      console.info(`[Idempotency] Duplicate request detected for key: ${key}`);
+      if (cached.state === 'PROCESSING') {
+        return res.status(409).json({
+          success: false,
+          error: 'IDEMPOTENT_REQUEST_IN_PROGRESS',
+          message: 'A request with this Idempotency-Key and payload is still processing.',
+        });
+      }
+      console.info(`[Idempotency] Duplicate request detected for key: ${rawKey}`);
       return res.status(cached.status).json(cached.body);
+    }
+
+    const reserved = await reserveIdempotencyKey(key);
+    if (!reserved) {
+      return res.status(409).json({
+        success: false,
+        error: 'IDEMPOTENT_REQUEST_IN_PROGRESS',
+        message: 'A request with this Idempotency-Key and payload is still processing.',
+      });
     }
 
     const originalJson = res.json;
     res.json = function (body: any) {
-      void writeIdempotencyCache(key, { status: res.statusCode, body });
+      void writeIdempotencyCache(key, { status: res.statusCode, body, state: 'COMPLETED' });
       return originalJson.call(this, body);
     };
 

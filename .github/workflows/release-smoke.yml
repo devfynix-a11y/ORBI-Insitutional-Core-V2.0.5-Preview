@@ -1,0 +1,35 @@
+name: Release Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: Base URL to validate
+        required: true
+        type: string
+      expect_broker_health:
+        description: Require broker heartbeat health
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run release smoke test
+        env:
+          ORBI_BASE_URL: ${{ inputs.base_url }}
+          ORBI_MONITOR_API_KEY: ${{ secrets.ORBI_MONITOR_API_KEY }}
+          ORBI_EXPECT_BROKER_HEALTH: ${{ inputs.expect_broker_health }}
+        run: node scripts/release-smoke.mjs

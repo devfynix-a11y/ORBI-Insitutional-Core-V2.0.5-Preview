@@ -1,0 +1,82 @@
+groups:
+  - name: orbi-platform
+    rules:
+      - alert: OrbiPlatformCritical
+        expr: orbi_operational_status == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: orbi-core
+        annotations:
+          summary: ORBI platform health is critical
+          description: Operational health reports a critical platform state.
+
+      - alert: OrbiDatabaseUnavailable
+        expr: orbi_db_connectivity == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: orbi-core
+        annotations:
+          summary: ORBI database connectivity unavailable
+          description: Database health checks are failing from the operational health probe.
+
+      - alert: OrbiRedisUnavailable
+        expr: orbi_redis_connectivity == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: orbi-core
+        annotations:
+          summary: ORBI Redis connectivity unavailable
+          description: Redis health checks are failing and replay protection or queue flows may degrade.
+
+      - alert: OrbiJobFailuresDetected
+        expr: orbi_job_queue_failed > 0
+        for: 10m
+        labels:
+          severity: warning
+          service: orbi-core
+        annotations:
+          summary: ORBI background jobs are failing
+          description: Failed background jobs have been detected for longer than 10 minutes.
+
+      - alert: OrbiSettlementBacklogHigh
+        expr: orbi_settlement_backlog > 50
+        for: 10m
+        labels:
+          severity: warning
+          service: orbi-core
+        annotations:
+          summary: ORBI settlement backlog is elevated
+          description: Settlement backlog has exceeded 50 items for longer than 10 minutes.
+
+      - alert: OrbiWebhookFailuresHigh
+        expr: orbi_failed_webhook_count > 10
+        for: 10m
+        labels:
+          severity: warning
+          service: orbi-core
+        annotations:
+          summary: ORBI webhook failures are elevated
+          description: Failed or rejected provider webhook applications exceeded 10.
+
+      - alert: OrbiReconciliationMismatchDetected
+        expr: orbi_reconciliation_mismatch_count > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: orbi-core
+        annotations:
+          summary: ORBI reconciliation mismatch detected
+          description: At least one non-wallet-drift reconciliation mismatch is active.
+
+      - alert: OrbiWalletDriftDetected
+        expr: orbi_wallet_drift_count > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: orbi-core
+        annotations:
+          summary: ORBI wallet drift detected
+          description: Wallet drift mismatch count is above zero and requires investigation.

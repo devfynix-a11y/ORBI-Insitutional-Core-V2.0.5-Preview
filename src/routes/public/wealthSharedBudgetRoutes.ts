@@ -1,5 +1,6 @@
 import { type RequestHandler, type Router } from 'express';
 import { Messaging } from '../../../backend/features/MessagingService.js';
+import { requireIdempotencyKey } from '../../middleware/security/idempotency.js';
 
 type Deps = {
   authenticate: RequestHandler;
@@ -540,7 +541,8 @@ export const registerSharedBudgetRoutes = (v1: Router, deps: Deps) => {
       const payload = SharedBudgetSpendSchema.parse(req.body);
       const sb = getAdminSupabase() || getSupabase();
       if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
-      const { budget, membership } = await resolveSharedBudgetMembership(sb, req.params.id, session.sub);
+      const budgetId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const { budget, membership } = await resolveSharedBudgetMembership(sb, budgetId, session.sub);
       if (!canSpendFromSharedBudget(String(membership.role || ''))) {
         return res.status(403).json({ success: false, error: 'SHARED_BUDGET_SPEND_DENIED' });
       }
@@ -599,13 +601,14 @@ export const registerSharedBudgetRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
-  v1.post('/wealth/shared-budgets/:id/spend/settle', authenticate as any, async (req, res) => {
+  v1.post('/wealth/shared-budgets/:id/spend/settle', authenticate as any, requireIdempotencyKey, async (req, res) => {
     const session = (req as any).session;
     try {
       const payload = SharedBudgetSpendSchema.parse(req.body);
       const sb = getAdminSupabase() || getSupabase();
       if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
-      const { budget, membership } = await resolveSharedBudgetMembership(sb, req.params.id, session.sub);
+      const budgetId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const { budget, membership } = await resolveSharedBudgetMembership(sb, budgetId, session.sub);
       if (!canSpendFromSharedBudget(String(membership.role || ''))) {
         return res.status(403).json({ success: false, error: 'SHARED_BUDGET_SPEND_DENIED' });
       }

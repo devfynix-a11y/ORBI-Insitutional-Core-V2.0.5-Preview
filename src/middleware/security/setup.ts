@@ -71,12 +71,6 @@ export const configureCoreSecurityMiddleware = (app: Express, options: SecurityS
     });
   }
 
-  app.use(createIdempotencyMiddleware({
-    redisClient,
-    allowProcessLocalIdempotency,
-    idempotencyTtlSeconds,
-  }));
-
   app.use(cors({
     origin: (origin, callback) => {
       if (!origin) {
@@ -101,6 +95,7 @@ export const configureCoreSecurityMiddleware = (app: Express, options: SecurityS
       'x-orbi-registry-type',
       'x-orbi-bootstrap-secret',
       'x-orbi-trace',
+      'Idempotency-Key',
       'x-idempotency-key',
       'x-orbi-apk-hash',
       'x-orbi-fingerprint',
@@ -129,6 +124,12 @@ export const configureCoreSecurityMiddleware = (app: Express, options: SecurityS
       }
     },
   }) as any);
+
+  app.use(createIdempotencyMiddleware({
+    redisClient,
+    allowProcessLocalIdempotency,
+    idempotencyTtlSeconds,
+  }));
 
   app.use(wafInspect);
   app.use(sanitizeContent);

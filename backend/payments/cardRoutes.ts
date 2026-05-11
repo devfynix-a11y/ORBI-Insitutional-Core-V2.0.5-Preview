@@ -3,6 +3,7 @@ import { cardProcessor, CardTokenRequest, CardPaymentRequest } from './cardProce
 import { validationMiddleware } from '../middleware/validation.js';
 import { z } from 'zod';
 import { Audit } from '../security/audit.js';
+import { requireIdempotencyKey } from '../../src/middleware/security/idempotency.js';
 
 type AuthenticatedRequest = Request & {
   user?: { id?: string; email?: string; role?: string };
@@ -138,6 +139,7 @@ cardRouter.delete('/:cardTokenId', async (req: Request, res: Response) => {
  */
 cardRouter.post(
   '/authorize',
+  requireIdempotencyKey,
   validationMiddleware(
     z.object({
       cardTokenId: z.string(),
@@ -188,6 +190,7 @@ cardRouter.post(
  */
 cardRouter.post(
   '/transactions/:cardTransactionId/settle',
+  requireIdempotencyKey,
   validationMiddleware(
     z.object({
       sourceWalletId: z.string().uuid(),
@@ -222,6 +225,7 @@ cardRouter.post(
  */
 cardRouter.post(
   '/transactions/:cardTransactionId/refund',
+  requireIdempotencyKey,
   validationMiddleware(z.object({ reason: z.optional(z.string()) })),
   async (req: Request, res: Response) => {
     try {

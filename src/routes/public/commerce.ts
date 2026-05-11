@@ -3,6 +3,10 @@ import {
   normalizeFinancialPartnerMetadata,
   resolveProviderCode,
 } from '../../../backend/payments/financialPartnerMetadata.js';
+import {
+  requireIdempotencyKey,
+  resolveIdempotencyHeader,
+} from '../../middleware/security/idempotency.js';
 
 type BillProviderRecord = {
   label: string;
@@ -104,6 +108,13 @@ function readStringArray(value: unknown): string[] {
 
 function inferLegacyBillCategory(providerName: string): string {
   return legacyBillProviderCategoryMap[providerName.trim().toUpperCase()] || '';
+}
+
+function attachIdempotencyKey(req: any) {
+  const idempotencyKey = resolveIdempotencyHeader(req);
+  if (idempotencyKey && req.body && typeof req.body === 'object') {
+    req.body.idempotencyKey = String(idempotencyKey).trim();
+  }
 }
 
 function resolveBillCategoryKeys(partner: any): string[] {
@@ -413,12 +424,13 @@ export const registerCommerceRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
-  v1.post('/merchant/payments/settle', authenticate, validate(PaymentIntentSchema), async (req, res) => {
+  v1.post('/merchant/payments/settle', authenticate, validate(PaymentIntentSchema), requireIdempotencyKey, async (req, res) => {
     const session = (req as any).session;
     if (!requireRole(session, ['MERCHANT', 'ADMIN', 'SUPER_ADMIN'])) {
       return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
     }
     try {
+      attachIdempotencyKey(req);
       const result = await LogicCore.processMerchantPayment(req.body, session.user);
       if (!result.success) return res.status(400).json(result);
       res.json({ success: true, data: result });
@@ -441,12 +453,13 @@ export const registerCommerceRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
-  v1.post('/payments/orbi-pay/settle', authenticate, validate(PaymentIntentSchema), async (req, res) => {
+  v1.post('/payments/orbi-pay/settle', authenticate, validate(PaymentIntentSchema), requireIdempotencyKey, async (req, res) => {
     const session = (req as any).session;
     if (!requireRole(session, ['CONSUMER', 'USER', 'MERCHANT', 'ADMIN', 'SUPER_ADMIN'])) {
       return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
     }
     try {
+      attachIdempotencyKey(req);
       const result = await LogicCore.processOrbiPayPayment(req.body, session.user);
       if (!result.success) return res.status(400).json(result);
       res.json({ success: true, data: result });
@@ -485,12 +498,13 @@ export const registerCommerceRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
-  v1.post('/payments/bills/settle', authenticate, validate(PaymentIntentSchema), async (req, res) => {
+  v1.post('/payments/bills/settle', authenticate, validate(PaymentIntentSchema), requireIdempotencyKey, async (req, res) => {
     const session = (req as any).session;
     if (!requireRole(session, ['CONSUMER', 'USER', 'MERCHANT', 'ADMIN', 'SUPER_ADMIN'])) {
       return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
     }
     try {
+      attachIdempotencyKey(req);
       const sb = getAdminSupabase() || getSupabase();
       if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
       const sourceWalletId = String(req.body?.sourceWalletId || req.body?.source_wallet_id || '').trim();
@@ -563,12 +577,13 @@ export const registerCommerceRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
-  v1.post('/payments/bills/settle-from-reserve', authenticate, async (req, res) => {
+  v1.post('/payments/bills/settle-from-reserve', authenticate, requireIdempotencyKey, async (req, res) => {
     const session = (req as any).session;
     if (!requireRole(session, ['CONSUMER', 'USER', 'MERCHANT', 'ADMIN', 'SUPER_ADMIN'])) {
       return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
     }
     try {
+      attachIdempotencyKey(req);
       const payload = BillReservePaymentSchema.parse(req.body);
       const reserveId = String(payload.bill_reserve_id || payload.reserve_id || '').trim();
       const sb = getAdminSupabase() || getSupabase();
@@ -689,12 +704,13 @@ export const registerCommerceRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
-  v1.post('/agent/cash/deposit/settle', authenticate, validate(PaymentIntentSchema), async (req, res) => {
+  v1.post('/agent/cash/deposit/settle', authenticate, validate(PaymentIntentSchema), requireIdempotencyKey, async (req, res) => {
     const session = (req as any).session;
     if (!requireRole(session, ['AGENT', 'ADMIN', 'SUPER_ADMIN'])) {
       return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
     }
     try {
+      attachIdempotencyKey(req);
       const result = await LogicCore.processAgentCashOperation(req.body, session.user, 'deposit');
       if (!result.success) return res.status(400).json(result);
       res.json({ success: true, data: result });
@@ -721,12 +737,13 @@ export const registerCommerceRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
-  v1.post('/agent/cash/withdraw/settle', authenticate, validate(PaymentIntentSchema), async (req, res) => {
+  v1.post('/agent/cash/withdraw/settle', authenticate, validate(PaymentIntentSchema), requireIdempotencyKey, async (req, res) => {
     const session = (req as any).session;
     if (!requireRole(session, ['AGENT', 'ADMIN', 'SUPER_ADMIN'])) {
       return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
     }
     try {
+      attachIdempotencyKey(req);
       const result = await LogicCore.processAgentCashOperation(req.body, session.user, 'withdrawal');
       if (!result.success) return res.status(400).json(result);
       res.json({ success: true, data: result });

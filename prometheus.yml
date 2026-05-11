@@ -6,8 +6,7 @@ global:
 
 # Load rules once and periodically evaluate them according to the global 'evaluation_interval'.
 rule_files:
-  # - "first_rules.yml"
-  # - "second_rules.yml"
+  - "ops/observability/prometheus-alerts.yml"
 
 # A scrape configuration containing exactly one endpoint to scrape:
 # Here it's Prometheus itself.
@@ -33,6 +32,8 @@ scrape_configs:
 
   # Integration for Orbi Node Metrics (Optional but recommended for the ecosystem)
   - job_name: 'orbi-core-node'
-    metrics_path: '/sys/status'
+    metrics_path: '/api/admin/monitor/operational-metrics/prometheus'
+    authorization:
+      credentials_file: /etc/prometheus/secrets/orbi-monitor-api-key
     static_configs:
       - targets: ['localhost:3002']

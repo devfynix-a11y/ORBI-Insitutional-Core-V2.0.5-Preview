@@ -37,6 +37,7 @@
 - `ORBI_ANDROID_APP_HASH`
 
 ### Strongly Recommended
+- `ORBI_MONITOR_API_KEY`
 - `REDIS_URL` or `REDIS_CLUSTER_NODES`
 - `REDIS_TLS_ENABLED=true`
 - `REDIS_ALLOW_INSECURE_TLS=false`
@@ -74,6 +75,8 @@
 7. Validate Redis connectivity (or accept degraded mode if intentionally disabled).
 8. Verify provider registry readiness for active partners (mapping config, webhook callback config).
 9. Run `/health` and `/api/admin/monitor/operational-health` before opening traffic.
+10. Run the automated smoke test:
+   - `ORBI_BASE_URL=https://target-host ORBI_MONITOR_API_KEY=... node scripts/release-smoke.mjs`
 
 ## TLS / SSL
 - If you are behind a managed edge such as Render, keep:
@@ -143,6 +146,13 @@
   3. Run `/health` and `/api/admin/monitor/operational-health`
   4. Resume traffic only after DB/RPC checks pass
 
+## Release Automation
+
+- CI validation is defined in `.github/workflows/backend-ci.yml`
+- manual release smoke validation is defined in `.github/workflows/release-smoke.yml`
+- operator checklist is defined in `docs/RELEASE_CHECKLIST.md`
+- protected monitor endpoints now use a dedicated internal monitor token, separate from tenant `x-api-key` flows
+
 ## Incident Recovery Basics
 - Use `audit_trail` and `provider_webhook_events` for forensic reconstruction.
 - For ledger drift:
@@ -154,6 +164,9 @@
 - For provider webhook failures:
   - Check `provider_webhook_events` for `failed` status
   - Use replay and re-claim only via controlled worker paths
+- For backup restore drills and evidence capture:
+  - follow `docs/BACKUP_RESTORE_DRILL_PROCEDURE.md`
+  - generate drill evidence with `node scripts/drill-report.mjs`
 
 ## Reconciliation Operations
 - Read-only checks:

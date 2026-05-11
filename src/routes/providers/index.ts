@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import type { RequestHandler, Router } from 'express';
 import { Server as LogicCore } from '../../../backend/server.js';
+import {
+  requireIdempotencyKey,
+  resolveIdempotencyHeader,
+} from '../../middleware/security/idempotency.js';
 
 const ExternalFundMovementSchema = z.object({
   direction: z.enum(['INTERNAL_TO_EXTERNAL', 'EXTERNAL_TO_INTERNAL', 'EXTERNAL_TO_EXTERNAL']),
@@ -42,6 +46,7 @@ const ExternalFundMovementSchema = z.object({
   targetExternalRef: z.string().optional(),
   feeAmount: z.coerce.number().min(0).optional(),
   taxAmount: z.coerce.number().min(0).optional(),
+  idempotencyKey: z.string().min(8).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -61,10 +66,13 @@ export const registerProviderRoutes = (v1: Router, authenticate: RequestHandler)
     }
   });
 
-  v1.post('/external-funds/deposit-intents', authenticate, async (req, res) => {
+  v1.post('/external-funds/deposit-intents', authenticate, requireIdempotencyKey, async (req, res) => {
     try {
       const session = (req as any).session;
-      const payload = IncomingDepositIntentSchema.parse(req.body);
+      const payload = IncomingDepositIntentSchema.parse({
+        ...req.body,
+        idempotencyKey: String(resolveIdempotencyHeader(req) || '').trim(),
+      });
       const data = await LogicCore.createIncomingDepositIntent(session.sub, payload);
       res.json({ success: true, data });
     } catch (e: any) {
@@ -72,10 +80,13 @@ export const registerProviderRoutes = (v1: Router, authenticate: RequestHandler)
     }
   });
 
-  v1.post('/external-funds/settle', authenticate, async (req, res) => {
+  v1.post('/external-funds/settle', authenticate, requireIdempotencyKey, async (req, res) => {
     try {
       const session = (req as any).session;
-      const payload = ExternalFundMovementSchema.parse(req.body);
+      const payload = ExternalFundMovementSchema.parse({
+        ...req.body,
+        idempotencyKey: String(resolveIdempotencyHeader(req) || '').trim(),
+      });
       const data = await LogicCore.processExternalFundMovement(session.sub, payload);
       res.json({ success: true, data });
     } catch (e: any) {

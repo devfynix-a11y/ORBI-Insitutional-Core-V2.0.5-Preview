@@ -17,6 +17,14 @@ CREATE TABLE IF NOT EXISTS public.secrets (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS public.schema_migrations (
+    version TEXT PRIMARY KEY,
+    description TEXT,
+    checksum TEXT,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    applied_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS public.wal_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     data TEXT NOT NULL,
@@ -1013,6 +1021,51 @@ CREATE TABLE IF NOT EXISTS public.financial_partners (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS public.provider_config_versions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    provider_id UUID NOT NULL REFERENCES public.financial_partners(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    mapping_config JSONB NOT NULL,
+    provider_metadata JSONB DEFAULT '{}'::jsonb,
+    status TEXT NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT', 'CANARY', 'ACTIVE', 'ARCHIVED', 'ROLLBACK')),
+    canary_percentage NUMERIC NOT NULL DEFAULT 0 CHECK (canary_percentage >= 0 AND canary_percentage <= 100),
+    created_by UUID,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    activated_at TIMESTAMP WITH TIME ZONE,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    UNIQUE(provider_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_provider_config_versions_provider_status
+    ON public.provider_config_versions(provider_id, status, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_config_versions_one_active
+    ON public.provider_config_versions(provider_id)
+    WHERE status = 'ACTIVE';
+
+CREATE TABLE IF NOT EXISTS public.provider_performance_metrics (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    provider_id UUID REFERENCES public.financial_partners(id) ON DELETE CASCADE,
+    metric_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    operation_code TEXT NOT NULL DEFAULT 'ALL',
+    total_requests INTEGER NOT NULL DEFAULT 0,
+    success_count INTEGER NOT NULL DEFAULT 0,
+    failure_count INTEGER NOT NULL DEFAULT 0,
+    avg_latency_ms NUMERIC NOT NULL DEFAULT 0,
+    p95_latency_ms NUMERIC NOT NULL DEFAULT 0,
+    p99_latency_ms NUMERIC NOT NULL DEFAULT 0,
+    error_rate NUMERIC NOT NULL DEFAULT 0,
+    sla_violations INTEGER NOT NULL DEFAULT 0,
+    cost_per_transaction NUMERIC NOT NULL DEFAULT 0,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(provider_id, metric_date, operation_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_provider_performance_provider_date
+    ON public.provider_performance_metrics(provider_id, metric_date DESC);
+
 CREATE TABLE IF NOT EXISTS public.institutional_payment_accounts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     role TEXT NOT NULL,
@@ -1110,6 +1163,14 @@ CREATE TABLE IF NOT EXISTS public.inbound_sms_messages (
     signature_status TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_inbound_sms_gateway_carrier_ref
+    ON public.inbound_sms_messages(gateway_id, carrier_ref)
+    WHERE carrier_ref IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_inbound_sms_gateway_request
+    ON public.inbound_sms_messages(gateway_id, request_id)
+    WHERE request_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS public.offline_transaction_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -3954,6 +4015,8 @@ BEGIN
     ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.financial_ledger ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.financial_partners ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.provider_config_versions ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.provider_performance_metrics ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.institutional_payment_accounts ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.external_fund_movements ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.settlement_lifecycle ENABLE ROW LEVEL SECURITY;
@@ -4007,6 +4070,7 @@ BEGIN
     ALTER TABLE public.treasury_approvers ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.budget_alerts ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.reconciliation_reports ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.schema_migrations ENABLE ROW LEVEL SECURITY;
 EXCEPTION WHEN OTHERS THEN NULL;
 END $$;
 
@@ -4137,6 +4201,32 @@ CREATE POLICY "Admin manage provider routing rules" ON public.provider_routing_r
 
 DROP POLICY IF EXISTS "Service role provider routing bypass" ON public.provider_routing_rules;
 CREATE POLICY "Service role provider routing bypass" ON public.provider_routing_rules
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Admin manage provider config versions" ON public.provider_config_versions;
+CREATE POLICY "Admin manage provider config versions" ON public.provider_config_versions
+    FOR ALL USING ((SELECT public.get_auth_role()) IN ('SUPER_ADMIN', 'ADMIN', 'IT', 'FINANCE'))
+    WITH CHECK ((SELECT public.get_auth_role()) IN ('SUPER_ADMIN', 'ADMIN', 'IT', 'FINANCE'));
+
+DROP POLICY IF EXISTS "Service role provider config version bypass" ON public.provider_config_versions;
+CREATE POLICY "Service role provider config version bypass" ON public.provider_config_versions
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Admin view provider performance metrics" ON public.provider_performance_metrics;
+CREATE POLICY "Admin view provider performance metrics" ON public.provider_performance_metrics
+    FOR SELECT USING ((SELECT public.get_auth_role()) IN ('SUPER_ADMIN', 'ADMIN', 'IT', 'FINANCE', 'AUDIT'));
+
+DROP POLICY IF EXISTS "Service role provider performance bypass" ON public.provider_performance_metrics;
+CREATE POLICY "Service role provider performance bypass" ON public.provider_performance_metrics
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Admin manage schema migrations" ON public.schema_migrations;
+CREATE POLICY "Admin manage schema migrations" ON public.schema_migrations
+    FOR ALL USING ((SELECT public.get_auth_role()) IN ('SUPER_ADMIN', 'ADMIN', 'IT', 'AUDIT'))
+    WITH CHECK ((SELECT public.get_auth_role()) IN ('SUPER_ADMIN', 'ADMIN', 'IT', 'AUDIT'));
+
+DROP POLICY IF EXISTS "Service role schema migrations bypass" ON public.schema_migrations;
+CREATE POLICY "Service role schema migrations bypass" ON public.schema_migrations
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Service role inbound sms bypass" ON public.inbound_sms_messages;

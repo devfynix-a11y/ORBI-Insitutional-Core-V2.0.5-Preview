@@ -9,7 +9,7 @@ import { isHttpShuttingDown } from '../../bootstrap/http.js';
 let lastBrokerHeartbeat: any = null;
 
 type MonitoringDeps = {
-  authenticateApiKey: any;
+  authenticateMonitorApiKey: any;
   ReconEngine: { runFullAudit: () => Promise<any>; auditWalletTimeline: (walletId: string) => Promise<any> };
   OperationalHealthService: {
     captureSnapshot: () => Promise<any>;
@@ -38,9 +38,9 @@ type LegacyGatewayDeps = {
 };
 
 export const registerMonitoringRoutes = (app: Express, deps: MonitoringDeps) => {
-  const { authenticateApiKey, ReconEngine, OperationalHealthService } = deps;
+  const { authenticateMonitorApiKey, ReconEngine, OperationalHealthService } = deps;
 
-  app.get('/api/admin/monitor/ledger-health', authenticateApiKey, async (_req, res) => {
+  app.get('/api/admin/monitor/ledger-health', authenticateMonitorApiKey, async (_req, res) => {
     try {
       const auditResult = await ReconEngine.runFullAudit();
       res.json({
@@ -54,7 +54,7 @@ export const registerMonitoringRoutes = (app: Express, deps: MonitoringDeps) => 
     }
   });
 
-  app.get('/api/admin/monitor/wallet-forensics/:walletId', authenticateApiKey, async (req, res) => {
+  app.get('/api/admin/monitor/wallet-forensics/:walletId', authenticateMonitorApiKey, async (req, res) => {
     try {
       const walletId = String(req.params.walletId);
       const result = await ReconEngine.auditWalletTimeline(walletId);
@@ -68,7 +68,7 @@ export const registerMonitoringRoutes = (app: Express, deps: MonitoringDeps) => 
     }
   });
 
-  app.get('/api/admin/monitor/operational-health', authenticateApiKey, async (_req, res) => {
+  app.get('/api/admin/monitor/operational-health', authenticateMonitorApiKey, async (_req, res) => {
     try {
       const snapshot = await OperationalHealthService.captureSnapshot();
       res.json({ success: true, data: snapshot });
@@ -77,7 +77,7 @@ export const registerMonitoringRoutes = (app: Express, deps: MonitoringDeps) => 
     }
   });
 
-  app.get('/api/admin/monitor/operational-metrics', authenticateApiKey, async (_req, res) => {
+  app.get('/api/admin/monitor/operational-metrics', authenticateMonitorApiKey, async (_req, res) => {
     try {
       const snapshot = await OperationalHealthService.captureSnapshot();
       res.json({
@@ -93,7 +93,7 @@ export const registerMonitoringRoutes = (app: Express, deps: MonitoringDeps) => 
     }
   });
 
-  app.get('/api/admin/monitor/operational-metrics/prometheus', authenticateApiKey, async (_req, res) => {
+  app.get('/api/admin/monitor/operational-metrics/prometheus', authenticateMonitorApiKey, async (_req, res) => {
     try {
       const snapshot = await OperationalHealthService.captureSnapshot();
       res.type('text/plain').send(OperationalHealthService.renderPrometheus(snapshot));
@@ -102,7 +102,7 @@ export const registerMonitoringRoutes = (app: Express, deps: MonitoringDeps) => 
     }
   });
 
-  app.post('/api/admin/monitor/operational-metrics/snapshot', authenticateApiKey, async (_req, res) => {
+  app.post('/api/admin/monitor/operational-metrics/snapshot', authenticateMonitorApiKey, async (_req, res) => {
     try {
       const snapshot = await OperationalHealthService.persistSnapshot();
       res.json({ success: true, data: snapshot });

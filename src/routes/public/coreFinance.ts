@@ -1,4 +1,8 @@
 import { type RequestHandler, type Router } from 'express';
+import {
+  requireIdempotencyKey,
+  resolveIdempotencyHeader,
+} from '../../middleware/security/idempotency.js';
 
 type Deps = {
   authenticate: RequestHandler;
@@ -268,10 +272,9 @@ export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
-  v1.post('/transactions/settle', authenticate as any, validate(PaymentIntentSchema), async (req, res) => {
+  v1.post('/transactions/settle', authenticate as any, validate(PaymentIntentSchema), requireIdempotencyKey, async (req, res) => {
     const session = (req as any).session;
-    const rawIdempotencyKey = req.headers['x-idempotency-key'];
-    const idempotencyKey = Array.isArray(rawIdempotencyKey) ? rawIdempotencyKey[0] : rawIdempotencyKey;
+    const idempotencyKey = resolveIdempotencyHeader(req);
 
     const kycStatus = session.user.user_metadata?.kyc_status || 'unverified';
     const amount = req.body.amount || 0;
@@ -295,7 +298,7 @@ export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
     }
 
     try {
-      req.body.idempotencyKey = idempotencyKey || `tx-${Date.now()}-${Math.random()}`;
+      req.body.idempotencyKey = String(idempotencyKey).trim();
 
       const result = await LogicCore.processSecurePayment(req.body, session.user);
 

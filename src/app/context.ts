@@ -1,7 +1,7 @@
 import type { Express } from 'express';
 import { registerMonitoringRoutes, registerTopLevelPublicRoutes } from '../routes/public/index.js';
 import { configureCoreSecurityMiddleware, createGlobalIpLimiter } from '../middleware/security/setup.js';
-import { authenticateApiKey } from '../../backend/middleware/apiKeyAuth.js';
+import { authenticateMonitorApiKey } from '../../backend/middleware/monitorApiKeyAuth.js';
 import { RedisClusterFactory } from '../../backend/infrastructure/RedisClusterFactory.js';
 import { ResilienceEngine } from '../../backend/infrastructure/ResilienceEngine.js';
 import { operationalHealthService } from '../../backend/infrastructure/OperationalHealthService.js';
@@ -33,7 +33,7 @@ export const createAppContext = (app: Express) => {
   });
 
   registerMonitoringRoutes(app, {
-    authenticateApiKey,
+    authenticateMonitorApiKey,
     ReconEngine,
     OperationalHealthService: operationalHealthService,
   });
