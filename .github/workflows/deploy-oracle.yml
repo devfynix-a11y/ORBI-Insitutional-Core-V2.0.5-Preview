@@ -107,17 +107,27 @@ jobs:
           ORBI_SMOKE_APP_ID: ORBI_INSTITUTIONAL_CORE_V2026
           ORBI_SMOKE_APP_ORIGIN: ORBI_INSTITUTIONAL_CORE_V2026
         run: |
+          smoke_curl() {
+            local url="$1"
+            shift
+            curl --fail --show-error --silent \
+              --connect-timeout 5 \
+              --max-time 20 \
+              --retry 6 --retry-delay 5 --retry-connrefused \
+              "$@" \
+              "$url"
+          }
+
           sleep 15
-          curl --fail --show-error --silent \
-            --retry 6 --retry-delay 5 --retry-connrefused \
+          echo "Checking public health endpoint..."
+          smoke_curl "$ORBI_BASE_URL/health" \
+            -H "X-Forwarded-Proto: https" \
+            -H "x-orbi-app-id: $ORBI_SMOKE_APP_ID" \
+            -H "x-orbi-app-origin: $ORBI_SMOKE_APP_ORIGIN"
+          echo
+          echo "Checking monitor operational health endpoint..."
+          smoke_curl "$ORBI_BASE_URL/api/admin/monitor/operational-health" \
             -H "X-Forwarded-Proto: https" \
             -H "x-orbi-app-id: $ORBI_SMOKE_APP_ID" \
             -H "x-orbi-app-origin: $ORBI_SMOKE_APP_ORIGIN" \
-            "$ORBI_BASE_URL/health"
-          curl --fail --show-error --silent \
-            --retry 6 --retry-delay 5 --retry-connrefused \
-            -H "X-Forwarded-Proto: https" \
-            -H "x-orbi-app-id: $ORBI_SMOKE_APP_ID" \
-            -H "x-orbi-app-origin: $ORBI_SMOKE_APP_ORIGIN" \
-            -H "Authorization: Bearer $ORBI_MONITOR_API_KEY" \
-            "$ORBI_BASE_URL/api/admin/monitor/operational-health"
+            -H "Authorization: Bearer $ORBI_MONITOR_API_KEY"
