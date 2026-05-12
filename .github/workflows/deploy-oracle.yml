@@ -105,7 +105,10 @@ jobs:
           ORBI_BASE_URL: ${{ env.DEPLOY_BASE_URL }}
           ORBI_MONITOR_API_KEY: ${{ secrets.ORBI_MONITOR_API_KEY }}
         run: |
-          curl --fail --show-error --silent "$ORBI_BASE_URL/health"
           curl --fail --show-error --silent \
+            -H "X-Forwarded-Proto: https" \
+            "$ORBI_BASE_URL/health"
+          curl --fail --show-error --silent \
+            -H "X-Forwarded-Proto: https" \
             -H "x-monitor-api-key: $ORBI_MONITOR_API_KEY" \
             "$ORBI_BASE_URL/api/admin/monitor/operational-health"
