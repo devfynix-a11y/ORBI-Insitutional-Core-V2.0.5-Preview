@@ -8,7 +8,7 @@
 
 ## 1. The Basics
 
-*   **Base URL**: `https://orbi-financial-technologies-c0re-v2026.onrender.com`
+*   **Base URL**: `https://api.orbi.example.com`
 *   **Auth Type**: Bearer Token (JWT)
 *   **Content-Type**: `application/json`
 *   **Mandatory Headers**: `x-orbi-app-id`, `x-orbi-app-origin`, `x-orbi-apk-hash` (for Android)
@@ -18,7 +18,7 @@
 Verify the node is online and the Neural Sentinel is active.
 
 ```bash
-curl -X GET https://orbi-financial-technologies-c0re-v2026.onrender.com/health
+curl -X GET https://api.orbi.example.com/health
 ```
 **Response**:
 ```json

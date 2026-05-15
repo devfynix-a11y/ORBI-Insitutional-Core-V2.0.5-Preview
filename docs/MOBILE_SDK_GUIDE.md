@@ -10,8 +10,8 @@
 The **ORBI Mobile SDK** connects your application to the **Sovereign Backend Node**. It handles authentication, secure storage, and real-time ledger synchronization.
 
 ### 1.1 Base Configuration
-*   **API Endpoint**: `https://orbi-financial-technologies-c0re-v2026.onrender.com`
-*   **WebSocket Endpoint**: `wss://orbi-financial-technologies-c0re-v2026.onrender.com/nexus-stream`
+*   **API Endpoint**: `https://api.orbi.example.com`
+*   **WebSocket Endpoint**: `wss://api.orbi.example.com/nexus-stream`
 *   **App Identity**: You must include `x-orbi-app-id`, `x-orbi-app-origin`, and `x-orbi-apk-hash` (for Android) in every request. Consumer/mobile builds use `mobile-android` or `mobile-ios` with `ORBI_MOBILE_V2026`; institutional/core builds use `OBI_INSTITUTIONAL_CORE_V25` or `DPS_INSTITUTIONAL_CORE_V25` with the matching origin.
 
 ---

@@ -62,14 +62,40 @@ sudo chown -R $USER:$USER /opt/orbi/orbi-institutional-core
    - `ORBI_TLS_ENABLED=false`
    - `ORBI_INTERNAL_MTLS_SOURCE=proxy`
 
+## Domain And TLS
+
+Use a real API domain in production instead of the raw VM IP.
+
+1. Create an `A` record such as `api.orbi.example.com` pointing to the Oracle
+   VM public IP or OCI Load Balancer IP.
+2. Configure the reverse proxy to forward traffic to `127.0.0.1:3000`.
+3. Terminate public TLS at Nginx, Apache, or OCI Load Balancer.
+4. Update the production `.env` before base64 encoding it:
+   - `BACKEND_URL=https://api.orbi.example.com`
+   - `ORBI_BASE_URL=https://api.orbi.example.com`
+   - `ORBI_ALLOWED_ORIGINS=https://api.orbi.example.com`
+   - `ORBI_WEB_ORIGIN=https://api.orbi.example.com`
+   - `ORIGIN=https://api.orbi.example.com`
+   - `VITE_API_BASE_URL=https://api.orbi.example.com`
+   - `RP_ID=api.orbi.example.com`
+5. Set the GitHub secret `ORBI_BASE_URL` to the same HTTPS domain for smoke
+   tests.
+
+For direct Nginx TLS on Ubuntu, the common path is:
+
+```bash
+sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d api.orbi.example.com
+```
+
 ## First Deployment
 
 1. Push this repository to GitHub.
 2. Add the secrets above.
 3. Run the `Deploy Oracle Cloud` workflow manually or push to `main`.
 4. Confirm:
-   - `https://your-domain/health`
-   - `https://your-domain/api/admin/monitor/operational-health`
+   - `https://api.orbi.example.com/health`
+   - `https://api.orbi.example.com/api/admin/monitor/operational-health`
 
 ## How The Workflow Works
 

@@ -1,7 +1,7 @@
 
 /**
  * ORBI BACKEND CONFIGURATION
- * Optimized for Render Production Node
+ * Optimized for production deployments behind a managed edge or reverse proxy.
  */
 const isProd = process.env.NODE_ENV === 'production';
 const defaultBackendUrl = isProd

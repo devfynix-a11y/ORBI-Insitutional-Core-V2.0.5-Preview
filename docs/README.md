@@ -5,8 +5,8 @@ This is the **Sovereign Financial Operating System** powering the ORBI ecosystem
 
 ## 📚 Documentation
 
-*   **[Deployment Guide](./DEPLOYMENT_GUIDE.md)**: Legacy Render deployment steps.
-*   **[Oracle Cloud Deployment](./ORACLE_CLOUD_GITHUB_ACTIONS_DEPLOYMENT.md)**: GitHub Actions deployment to an Oracle Cloud VM.
+*   **[Oracle Cloud Deployment](./ORACLE_CLOUD_GITHUB_ACTIONS_DEPLOYMENT.md)**: Primary GitHub Actions deployment path for Oracle Cloud VMs.
+*   **[Legacy Render Notes](./DEPLOYMENT_GUIDE.md)**: Archived Render-specific deployment notes kept only for migration reference.
 *   **[Project Structure](./PROJECT_STRUCTURE.md)**: Breakdown of file locations and functions.
 *   **[Financial Core Engine (Core Banking Architecture)](./CORE_BANKING_ARCHITECTURE.md)**: **NEW** - Multi-Tenant Fintech Platform, Banking-as-a-Service (BaaS).
 *   **[Enterprise B2B Architecture](./ENTERPRISE_B2B_ARCHITECTURE.md)**: Multi-Tenancy, Corporate Goals, and Hard Budgets.
@@ -46,8 +46,9 @@ This is the **Sovereign Financial Operating System** powering the ORBI ecosystem
 - **Transaction Service (V2.0)**: Enhanced financial integrity with proactive balance verification, system-wide reconciliation, and forensic reversal capabilities.
 
 ##  Deployment
-This node supports Oracle Cloud VM deployments through GitHub Actions and still
-includes the older Render configuration for compatibility.
+This node is productionized for Oracle Cloud VM deployments through GitHub
+Actions. Legacy Render references remain only where older client integrations
+need migration context.
 
 ## 🏢 Enterprise Readiness
 The ORBI Sovereign Backend is a professional, enterprise-grade financial infrastructure designed for high-stakes operations. It features:

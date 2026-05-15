@@ -1,6 +1,12 @@
-# Production Deployment Guide (Render)
+# Legacy Render Deployment Notes
 
-This guide details the steps to deploy the ORBI Sovereign Node to a production-ready environment on Render.
+This document is retained only for teams migrating off Render. The active
+production deployment path for this repository is Oracle Cloud VM deployment via
+GitHub Actions:
+
+- See [Oracle Cloud Deployment](./ORACLE_CLOUD_GITHUB_ACTIONS_DEPLOYMENT.md)
+- Use a custom domain such as `https://api.orbi.example.com`
+- Keep Render-specific values out of current production environment files
 
 ## 1. Prerequisites
 

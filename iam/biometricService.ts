@@ -11,11 +11,10 @@ import { AuthService } from './authService.js';
 import { OTPService } from '../backend/security/otpService.js';
 
 // Configuration
-// Default to the known Cloud Run domain if env vars are missing
-const DEFAULT_HOST = 'orbi-financial-technologies-c0re-v2026.onrender.com';
+const DEFAULT_HOST = 'localhost';
 const RP_NAME = 'ORBI Sovereign Bank';
 const RP_ID = process.env.RP_ID || DEFAULT_HOST;
-const ORIGIN = process.env.ORIGIN || `https://${DEFAULT_HOST}`;
+const ORIGIN = process.env.ORIGIN || `http://${DEFAULT_HOST}:3000`;
 
 export interface Authenticator {
     credentialID: string;

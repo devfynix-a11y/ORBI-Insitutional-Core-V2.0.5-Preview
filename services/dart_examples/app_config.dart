@@ -7,13 +7,13 @@
 enum Environment {
   dev,
   prod,
-  render,
+  oracle,
 }
 
 class AppConfig {
   // 1. CURRENT ENVIRONMENT
-  // Change this to Environment.render for live Render deployment
-  static const Environment _currentEnv = Environment.render;
+  // Change this to Environment.oracle for the live Oracle Cloud deployment.
+  static const Environment _currentEnv = Environment.oracle;
 
   // 2. BASE URLS
   // NOTE: 
@@ -24,20 +24,17 @@ class AppConfig {
   // Defaulting to User's LAN IP for Physical Device Testing
   static const String _devUrl = 'http://192.168.0.107:3000'; 
   
-  // AI Studio Preview URL (Deprecated - Redirecting to Render)
-  static const String _aiStudioUrl = 'https://orbi-financial-technologies-c0re-v2026.onrender.com';
-
-  // Render Deployment URL
-  static const String _renderUrl = 'https://orbi-financial-technologies-c0re-v2026.onrender.com';
+  // Production deployment URL on Oracle Cloud.
+  static const String _prodUrl = 'https://api.orbi.example.com';
 
   static String get baseUrl {
     switch (_currentEnv) {
       case Environment.dev:
         return _devUrl;
       case Environment.prod:
-        return _aiStudioUrl;
-      case Environment.render:
-        return _renderUrl;
+        return _prodUrl;
+      case Environment.oracle:
+        return _prodUrl;
     }
   }
 

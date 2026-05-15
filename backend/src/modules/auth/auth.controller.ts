@@ -46,8 +46,8 @@ const isTrustedIosBundleOrigin = (origin: string) => {
 };
 
 const validateBiometricContext = (req: any) => {
-    // Strictly use the specified domain for both prod and dev
-    const finalRpId = process.env.RP_ID || 'orbi-financial-technologies-c0re-v2026.onrender.com';
+    // Prefer the configured relying-party ID and fall back to the active request host.
+    const finalRpId = process.env.RP_ID || req.hostname || 'localhost';
     
     let origin = '';
 
