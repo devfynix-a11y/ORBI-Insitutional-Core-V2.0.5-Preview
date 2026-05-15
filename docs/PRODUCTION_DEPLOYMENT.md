@@ -79,7 +79,7 @@
    - `ORBI_BASE_URL=https://target-host ORBI_MONITOR_API_KEY=... node scripts/release-smoke.mjs`
 
 ## TLS / SSL
-- If you are behind a managed edge such as Render, keep:
+- If you are behind a managed edge such as Nginx, Apache, or OCI Load Balancer, keep:
   - `ORBI_ENFORCE_HTTPS=true`
   - `ORBI_TLS_ENABLED=false`
   This relies on the platform TLS terminator plus strict HTTPS enforcement and HSTS inside the app.
@@ -91,11 +91,11 @@
 - In production, startup now fails if HTTPS enforcement is disabled or TLS file paths are missing while `ORBI_TLS_ENABLED=true`.
 - Database/API transport is also locked down:
   - `SUPABASE_URL` must use `https://` in production
-  - Redis should use `rediss://` with `REDIS_TLS_ENABLED=true`
+  - Redis should use your provider's TLS-compatible connection settings with `REDIS_TLS_ENABLED=true`
   - direct insecure database transport is not allowed by startup validation
 
 ## Internal mTLS
-- Preferred on Render:
+- Preferred behind a managed reverse proxy:
   - `ORBI_INTERNAL_MTLS_SOURCE=proxy`
   - trusted proxy/service mesh verifies client certs
   - proxy injects `ORBI_INTERNAL_MTLS_PROXY_HEADER` with secret `ORBI_INTERNAL_MTLS_PROXY_SHARED_SECRET`

@@ -187,7 +187,7 @@ export const registerTopLevelPublicRoutes = (app: Express, deps: TopLevelDeps) =
   app.get(['/health', '/heath'], (_req, res) => {
     res.json({
       status: 'ONLINE',
-      node: process.env.RENDER_INSTANCE_ID || 'DPS-PRIMARY-RELAY',
+      node: process.env.ORBI_NODE_ID || process.env.RENDER_INSTANCE_ID || 'DPS-PRIMARY-RELAY',
       version: '28.0.0',
       uptime: (process as any).uptime(),
       ts: Date.now(),
@@ -197,7 +197,7 @@ export const registerTopLevelPublicRoutes = (app: Express, deps: TopLevelDeps) =
   app.get('/live', (_req, res) => {
     res.json({
       status: 'ALIVE',
-      node: process.env.RENDER_INSTANCE_ID || 'DPS-PRIMARY-RELAY',
+      node: process.env.ORBI_NODE_ID || process.env.RENDER_INSTANCE_ID || 'DPS-PRIMARY-RELAY',
       uptime: (process as any).uptime(),
       ts: Date.now(),
     });

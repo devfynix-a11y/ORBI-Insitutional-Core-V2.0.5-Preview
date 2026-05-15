@@ -107,7 +107,7 @@ const uploadAvatar = async (imageUri) => {
     name: 'avatar.jpg',
   });
 
-  const response = await fetch('https://orbi-financial-technologies-c0re-v2026.onrender.com/v1/user/avatar', {
+  const response = await fetch('https://api.orbi.example.com/v1/user/avatar', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
@@ -226,7 +226,7 @@ Connect to the WebSocket to update the UI instantly when money arrives or leaves
 
 **Implementation**:
 ```typescript
-const ws = new WebSocket('wss://orbi-financial-technologies-c0re-v2026.onrender.com/nexus-stream');
+const ws = new WebSocket('wss://api.orbi.example.com/nexus-stream');
 
 ws.onopen = () => {
   console.log('Connected to Nexus');

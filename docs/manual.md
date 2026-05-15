@@ -328,7 +328,7 @@ For detailed information on platform mechanics, external integrations, and inves
 
 ## 13. Infrastructure & Background Processing (Firebase Broker)
 
-ORBI utilizes a distributed **Firebase Broker** system to handle heavy asynchronous tasks and ensure high availability across cloud environments (e.g., Render).
+ORBI utilizes a distributed **Firebase Broker** system to handle heavy asynchronous tasks and ensure high availability across cloud environments.
 
 ### 13.1 Distributed Task Processing
 Heavy operations are offloaded from the main API thread to specialized worker nodes via Firestore:
@@ -340,7 +340,7 @@ Heavy operations are offloaded from the main API thread to specialized worker no
 ### 13.2 Node Heartbeat & Monitoring
 To ensure the integrity of the distributed cluster, every node maintains a dual-layer heartbeat:
 1.  **Presence Heartbeat**: Nodes update their `lastSeen` status in Firestore every 60 seconds. The `isRecent()` security rule ensures only healthy nodes can claim tasks.
-2.  **System Heartbeat (Keep-Alive)**: Nodes ping the main application's `/health` endpoint every minute to prevent "sleeping" on serverless platforms like Render.
+2.  **System Heartbeat (Keep-Alive)**: Nodes ping the main application's `/health` endpoint every minute to maintain active cluster telemetry and detect stale nodes quickly.
 
 ### 13.3 Health Telemetry
 The main application provides real-time visibility into the broker's status:
