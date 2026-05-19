@@ -1,4 +1,4 @@
-import { getSupabase } from '../../supabaseClient.js';
+import { getAdminSupabase, getSupabase } from '../../supabaseClient.js';
 import crypto from 'crypto';
 
 /**
@@ -12,10 +12,11 @@ export class LockManager {
      * Acquires locks for multiple resources in a deterministic order to prevent deadlocks.
      * Includes a retry mechanism for high-concurrency environments.
      */
-    public static async acquireLocks(resourceIds: string[], ttlSeconds: number = 10, retries: number = 3): Promise<boolean> {
-        // Sort IDs to prevent deadlocks
-        const sortedIds = [...resourceIds].sort();
-        const sb = getSupabase();
+    public static async acquireLocks(resourceIds: string[], ttlSeconds: number = 15, retries: number = 5): Promise<boolean> {
+        // Sort and de-duplicate IDs to prevent deadlocks and self-conflicts.
+        const sortedIds = [...new Set(resourceIds.filter(Boolean))].sort();
+        if (sortedIds.length === 0) return true;
+        const sb = getAdminSupabase() || getSupabase();
         if (!sb) return false;
         
         for (let attempt = 0; attempt <= retries; attempt++) {
@@ -49,7 +50,7 @@ export class LockManager {
                 return true;
             }
 
-            // Rollback acquired locks if we fail to get all of them
+            // Rollback acquired locks if we fail to get all of them.
             await this.releaseLocks(acquiredLocks);
 
             if (attempt < retries) {
@@ -66,10 +67,10 @@ export class LockManager {
      * Releases locks for multiple resources.
      */
     public static async releaseLocks(resourceIds: string[]): Promise<void> {
-        const sb = getSupabase();
+        const sb = getAdminSupabase() || getSupabase();
         if (!sb) return;
         
-        for (const id of resourceIds) {
+        for (const id of [...new Set(resourceIds.filter(Boolean))]) {
             await sb.from('ent_locks').delete().eq('lock_key', `lock:wallet:${id}`);
         }
     }

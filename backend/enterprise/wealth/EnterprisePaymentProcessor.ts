@@ -363,7 +363,12 @@ export class EnterprisePaymentProcessor {
             }
 
             // 4. DISTRIBUTED LOCKING & ATOMIC COMMIT (via BankingEngine)
-            const lockIds = [intent.sourceWalletId, intent.targetWalletId].filter((id): id is string => !!id);
+            const lockIds = [...new Set([
+                intent.sourceWalletId,
+                intent.targetWalletId,
+                intent.metadata?.intermediate_operating_wallet,
+                intent.metadata?.source_internal_vault_id,
+            ].filter((id): id is string => !!id))];
             const result = await LockManager.withLock(
                 lockIds, 
                 async () => {
