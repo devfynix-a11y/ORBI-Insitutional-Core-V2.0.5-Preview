@@ -13,6 +13,17 @@ type QuoteInput = {
   payload: any;
 };
 
+type PreflightIssueSeverity = 'warning' | 'blocking';
+
+type PreflightIssue = {
+  code: string;
+  severity: PreflightIssueSeverity;
+  subject: string;
+  message: string;
+  retryable?: boolean;
+  metadata?: Record<string, any>;
+};
+
 type WalletSnapshot = {
   id: string;
   table: 'wallets' | 'platform_vaults';
@@ -23,6 +34,10 @@ type WalletSnapshot = {
   role?: string | null;
   status?: string | null;
   isPrimary?: boolean;
+  isLocked?: boolean;
+  lockReason?: string | null;
+  lockedAt?: string | null;
+  metadata?: Record<string, any> | null;
 };
 
 const DEBIT_TYPES = new Set([
@@ -81,54 +96,64 @@ export class TransactionQuoteService {
       channel: payload.channel,
     });
     const user = await this.resolveUser(sb, userId);
-    const { sourceWallet, targetWallet } = await this.resolveTransactionWallets({
-      sb,
-      userId,
-      type,
-      currency,
-      payload,
-      metadata,
-      sourceWalletId,
-      targetWalletId,
-    });
+    const issues: PreflightIssue[] = [];
+    let sourceWallet: WalletSnapshot | null = null;
+    let targetWallet: WalletSnapshot | null = null;
+
+    try {
+      ({ sourceWallet, targetWallet } = await this.resolveTransactionWallets({
+        sb,
+        userId,
+        type,
+        currency,
+        payload,
+        metadata,
+        sourceWalletId,
+        targetWalletId,
+      }));
+    } catch (error) {
+      issues.push(this.issueFromError(error, 'wallet_resolution'));
+    }
 
     const sourceCurrency = sourceWallet?.currency || currency;
     const targetCurrency = targetWallet?.currency || currency;
-    const provider = await this.resolveProviderIfRequired(type, currency, metadata, classification);
-    const fee = await platformFeeService.resolveFee({
-      flowCode: classification.flowCode,
+    const provider = await this.resolveProviderForPreview(type, currency, metadata, classification, issues);
+    const fee = await this.resolveFeeForPreview({
       amount,
       currency,
-      providerId: provider?.providerId,
-      countryCode: metadata.countryCode || metadata.country_code,
-      rail: provider?.rail || classification.rail,
-      channel: classification.channel,
-      direction: classification.direction,
-      transactionModel: classification.transactionModel,
-      categoryCode: classification.categoryCode,
-      categoryId: classification.categoryId,
-      operationType: classification.operationType,
-      transactionType: classification.transactionType,
+      classification,
       metadata,
+      provider,
+      issues,
     });
 
-    const fx = sourceCurrency !== targetCurrency
-      ? await FXEngine.processConversion(amount, sourceCurrency, targetCurrency)
-      : null;
+    const fx = await this.resolveFxForPreview(amount, sourceCurrency, targetCurrency, issues);
 
     const totalDebit = this.round(amount + fee.totalFee);
-    const balance = await this.resolveBalance(userId, sourceWallet, type);
-    const risk = await this.rules.evaluate(user as any, {
+    const balance = await this.resolveBalanceForPreview(userId, sourceWallet, type, issues);
+    const history = await this.fetchRuleHistory(sb, userId);
+    const risk = await this.evaluateRulesForPreview(user as any, {
       ...payload,
       type,
       classification,
       amount,
       currency,
+      sourceWalletId: sourceWallet?.id || sourceWalletId || undefined,
+      targetWalletId: targetWallet?.id || targetWalletId || undefined,
       metadata: {
         ...metadata,
         quote_only: true,
       },
-    }, []);
+    }, history, issues);
+
+    issues.push(...this.buildAccountIssues(user, amount, currency));
+    issues.push(...this.buildWalletIssues('source_wallet', sourceWallet, type));
+    issues.push(...this.buildWalletIssues('target_wallet', targetWallet, type));
+    issues.push(...this.buildBalanceIssues(type, balance, totalDebit, sourceWallet));
+    issues.push(...this.buildRiskIssues(risk));
+
+    const state = this.resolvePreflightState(issues, risk.decision);
+    const canSubmit = !issues.some((issue) => issue.severity === 'blocking');
 
     const quoteId = `qt_${UUID.generate()}`;
     const expiresAt = new Date(Date.now() + this.resolveQuoteTtlMs()).toISOString();
@@ -137,7 +162,10 @@ export class TransactionQuoteService {
       success: true,
       quoteId,
       expiresAt,
-      status: risk.decision === 'BLOCK' ? 'blocked' : 'ready',
+      status: canSubmit ? (risk.decision === 'CHALLENGE' ? 'challenge_required' : 'ready') : 'blocked',
+      state,
+      canSubmit,
+      issues,
       amount,
       currency,
       type,
@@ -180,7 +208,21 @@ export class TransactionQuoteService {
         challengeRequired: risk.decision === 'CHALLENGE',
         blocked: risk.decision === 'BLOCK',
       },
-      warnings: this.buildWarnings(type, balance, totalDebit, risk.decision),
+      checks: this.buildChecks({
+        user,
+        type,
+        amount,
+        currency,
+        sourceWallet,
+        targetWallet,
+        provider,
+        fee,
+        balance,
+        totalDebit,
+        risk,
+        issues,
+      }),
+      warnings: this.buildWarnings(type, balance, totalDebit, risk.decision, issues),
     };
   }
 
@@ -190,7 +232,7 @@ export class TransactionQuoteService {
 
     const { data: profile } = await sb
       .from('users')
-      .select('account_status, kyc_status, currency, language, full_name')
+      .select('account_status, kyc_status, currency, language, full_name, registry_type, role, organization_id, customer_id')
       .eq('id', userId)
       .maybeSingle();
 
@@ -205,7 +247,7 @@ export class TransactionQuoteService {
   private async resolveWallet(sb: any, walletId: string): Promise<WalletSnapshot> {
     const { data: wallet } = await sb
       .from('wallets')
-      .select('id, name, currency, balance, user_id, type, status, is_primary, management_tier')
+      .select('id, name, currency, balance, user_id, type, status, is_primary, management_tier, is_locked, lock_reason, locked_at, metadata')
       .eq('id', walletId)
       .maybeSingle();
 
@@ -220,12 +262,16 @@ export class TransactionQuoteService {
         role: wallet.type || wallet.management_tier || null,
         status: wallet.status || null,
         isPrimary: wallet.is_primary === true,
+        isLocked: wallet.is_locked === true,
+        lockReason: wallet.lock_reason || null,
+        lockedAt: wallet.locked_at || null,
+        metadata: wallet.metadata || null,
       };
     }
 
     const { data: vault } = await sb
       .from('platform_vaults')
-      .select('id, name, currency, balance, user_id, vault_role, status')
+      .select('id, name, currency, balance, user_id, vault_role, status, is_locked, lock_reason, locked_at, metadata')
       .eq('id', walletId)
       .maybeSingle();
 
@@ -239,6 +285,10 @@ export class TransactionQuoteService {
         balance: Number(vault.balance || 0),
         role: vault.vault_role || null,
         status: vault.status || null,
+        isLocked: vault.is_locked === true,
+        lockReason: vault.lock_reason || null,
+        lockedAt: vault.locked_at || null,
+        metadata: vault.metadata || null,
       };
     }
 
@@ -306,7 +356,7 @@ export class TransactionQuoteService {
     const normalizedCurrency = this.normalizeCurrency(currency);
     const { data: vaults, error: vaultError } = await sb
       .from('platform_vaults')
-      .select('id, name, currency, balance, user_id, vault_role, status')
+      .select('id, name, currency, balance, user_id, vault_role, status, is_locked, lock_reason, locked_at, metadata')
       .eq('user_id', userId);
 
     if (vaultError) throw new Error(vaultError.message);
@@ -321,6 +371,10 @@ export class TransactionQuoteService {
       role: vault.vault_role || null,
       status: vault.status || null,
       isPrimary: false,
+      isLocked: vault.is_locked === true,
+      lockReason: vault.lock_reason || null,
+      lockedAt: vault.locked_at || null,
+      metadata: vault.metadata || null,
     }));
 
     const preferredVault = this.pickBestWallet(vaultCandidates, normalizedCurrency, [
@@ -332,7 +386,7 @@ export class TransactionQuoteService {
 
     const { data: wallets, error: walletError } = await sb
       .from('wallets')
-      .select('id, name, currency, balance, user_id, type, status, is_primary, management_tier')
+      .select('id, name, currency, balance, user_id, type, status, is_primary, management_tier, is_locked, lock_reason, locked_at, metadata')
       .eq('user_id', userId);
 
     if (walletError) throw new Error(walletError.message);
@@ -347,6 +401,10 @@ export class TransactionQuoteService {
       role: wallet.type || wallet.management_tier || null,
       status: wallet.status || null,
       isPrimary: wallet.is_primary === true,
+      isLocked: wallet.is_locked === true,
+      lockReason: wallet.lock_reason || null,
+      lockedAt: wallet.locked_at || null,
+      metadata: wallet.metadata || null,
     }));
 
     const preferredWallet = this.pickBestWallet(walletCandidates, normalizedCurrency, [
@@ -433,6 +491,20 @@ export class TransactionQuoteService {
     return txService.getLatestBalance(userId, wallet.id);
   }
 
+  private async resolveBalanceForPreview(
+    userId: string,
+    wallet: WalletSnapshot | null,
+    type: string,
+    issues: PreflightIssue[],
+  ) {
+    try {
+      return await this.resolveBalance(userId, wallet, type);
+    } catch (error) {
+      issues.push(this.issueFromError(error, 'balance'));
+      return 0;
+    }
+  }
+
   private async resolveProviderIfRequired(type: string, currency: string, metadata: Record<string, any>, classification: ReturnType<typeof transactionFeeClassifier.classify>) {
     if (!EXTERNAL_TYPES.has(type)) return null;
 
@@ -451,12 +523,373 @@ export class TransactionQuoteService {
     });
   }
 
-  private buildWarnings(type: string, balance: number, totalDebit: number, decision: string) {
+  private async resolveProviderForPreview(
+    type: string,
+    currency: string,
+    metadata: Record<string, any>,
+    classification: ReturnType<typeof transactionFeeClassifier.classify>,
+    issues: PreflightIssue[],
+  ) {
+    try {
+      return await this.resolveProviderIfRequired(type, currency, metadata, classification);
+    } catch (error) {
+      issues.push(this.issueFromError(error, 'provider'));
+      return null;
+    }
+  }
+
+  private async resolveFeeForPreview(args: {
+    amount: number;
+    currency: string;
+    classification: ReturnType<typeof transactionFeeClassifier.classify>;
+    metadata: Record<string, any>;
+    provider: any;
+    issues: PreflightIssue[];
+  }) {
+    const { amount, currency, classification, metadata, provider, issues } = args;
+    try {
+      return await platformFeeService.resolveFee({
+        flowCode: classification.flowCode,
+        amount,
+        currency,
+        providerId: provider?.providerId,
+        countryCode: metadata.countryCode || metadata.country_code,
+        rail: provider?.rail || classification.rail,
+        channel: classification.channel,
+        direction: classification.direction,
+        transactionModel: classification.transactionModel,
+        categoryCode: classification.categoryCode,
+        categoryId: classification.categoryId,
+        operationType: classification.operationType,
+        transactionType: classification.transactionType,
+        metadata,
+      });
+    } catch (error) {
+      issues.push(this.issueFromError(error, 'fee_configuration'));
+      return this.zeroFee(classification.flowCode, amount, currency, classification);
+    }
+  }
+
+  private async resolveFxForPreview(
+    amount: number,
+    sourceCurrency: string,
+    targetCurrency: string,
+    issues: PreflightIssue[],
+  ) {
+    if (sourceCurrency === targetCurrency) return null;
+    try {
+      return await FXEngine.processConversion(amount, sourceCurrency, targetCurrency);
+    } catch (error) {
+      issues.push(this.issueFromError(error, 'fx'));
+      return null;
+    }
+  }
+
+  private async evaluateRulesForPreview(
+    user: User,
+    payload: Record<string, any>,
+    history: any[],
+    issues: PreflightIssue[],
+  ) {
+    try {
+      return await this.rules.evaluate(user as any, payload, history);
+    } catch (error) {
+      issues.push(this.issueFromError(error, 'transaction_rules'));
+      return {
+        passed: false,
+        decision: 'BLOCK',
+        score: 100,
+        results: [],
+        requirements: [],
+      };
+    }
+  }
+
+  private async fetchRuleHistory(sb: any, userId: string) {
+    const { data, error } = await sb
+      .from('transactions')
+      .select('id, amount, currency, type, status, date, created_at, metadata')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(100);
+
+    if (error) return [];
+
+    return (data || []).map((tx: any) => ({
+      id: tx.id,
+      amount: Number(tx.amount || 0),
+      currency: this.normalizeCurrency(tx.currency),
+      type: tx.type,
+      status: tx.status,
+      date: tx.date || tx.created_at,
+      metadata: tx.metadata || {},
+    }));
+  }
+
+  private buildWarnings(
+    type: string,
+    balance: number,
+    totalDebit: number,
+    decision: string,
+    issues: PreflightIssue[],
+  ) {
     return [
       this.requiresDebit(type) && balance < totalDebit ? 'INSUFFICIENT_FUNDS_IF_SUBMITTED' : '',
       decision === 'CHALLENGE' ? 'SECURITY_CHALLENGE_REQUIRED_IF_SUBMITTED' : '',
       decision === 'BLOCK' ? 'SECURITY_BLOCK_IF_SUBMITTED' : '',
+      ...issues.filter((issue) => issue.severity === 'warning').map((issue) => issue.code),
     ].filter(Boolean);
+  }
+
+  private buildAccountIssues(user: User, amount: number, currency: string): PreflightIssue[] {
+    const metadata = (user as any).user_metadata || {};
+    const accountStatus = String(metadata.account_status || 'active').trim().toLowerCase();
+    const kycStatus = String(metadata.kyc_status || 'unknown').trim().toLowerCase();
+    const issues: PreflightIssue[] = [];
+
+    if (accountStatus && accountStatus !== 'active') {
+      issues.push({
+        code: 'ACCOUNT_NOT_ACTIVE',
+        severity: 'blocking',
+        subject: 'account',
+        message: `Account is ${accountStatus}; transaction cannot be submitted until the account is active.`,
+        metadata: { accountStatus },
+      });
+    }
+
+    const highValueLimit = Number(process.env.ORBI_PREVIEW_KYC_LIMIT || 1000000);
+    if (amount >= highValueLimit && !['verified', 'approved', 'complete'].includes(kycStatus)) {
+      issues.push({
+        code: 'KYC_REQUIRED_FOR_AMOUNT',
+        severity: 'blocking',
+        subject: 'account',
+        message: `KYC must be verified before submitting a ${currency} ${amount} transaction.`,
+        metadata: { kycStatus, highValueLimit },
+      });
+    }
+
+    return issues;
+  }
+
+  private buildWalletIssues(subject: 'source_wallet' | 'target_wallet', wallet: WalletSnapshot | null, type: string): PreflightIssue[] {
+    const issues: PreflightIssue[] = [];
+    const required =
+      subject === 'source_wallet'
+        ? this.requiresDebit(type)
+        : ['INTERNAL_TRANSFER', 'PEER_TRANSFER', 'DEPOSIT'].includes(type);
+
+    if (!wallet) {
+      if (required) {
+        issues.push({
+          code: subject === 'source_wallet' ? 'SOURCE_WALLET_REQUIRED' : 'TARGET_WALLET_REQUIRED',
+          severity: 'blocking',
+          subject,
+          message: `${subject === 'source_wallet' ? 'Source' : 'Target'} wallet could not be resolved for ${type}.`,
+        });
+      }
+      return issues;
+    }
+
+    if (this.isInactiveWallet(wallet)) {
+      issues.push({
+        code: subject === 'source_wallet' ? 'SOURCE_WALLET_UNAVAILABLE' : 'TARGET_WALLET_UNAVAILABLE',
+        severity: 'blocking',
+        subject,
+        message: `${subject === 'source_wallet' ? 'Source' : 'Target'} wallet is ${wallet.status}.`,
+        metadata: { walletId: wallet.id, status: wallet.status },
+      });
+    }
+
+    if (wallet.isLocked) {
+      issues.push({
+        code: subject === 'source_wallet' ? 'SOURCE_WALLET_LOCKED' : 'TARGET_WALLET_LOCKED',
+        severity: 'blocking',
+        subject,
+        message: `${subject === 'source_wallet' ? 'Source' : 'Target'} wallet is locked${wallet.lockReason ? `: ${wallet.lockReason}` : ''}.`,
+        metadata: { walletId: wallet.id, lockReason: wallet.lockReason, lockedAt: wallet.lockedAt },
+      });
+    }
+
+    return issues;
+  }
+
+  private buildBalanceIssues(
+    type: string,
+    balance: number,
+    totalDebit: number,
+    sourceWallet: WalletSnapshot | null,
+  ): PreflightIssue[] {
+    if (!this.requiresDebit(type) || !sourceWallet) return [];
+    if (balance >= totalDebit) return [];
+    return [{
+      code: 'INSUFFICIENT_FUNDS',
+      severity: 'blocking',
+      subject: 'balance',
+      message: `Available balance is ${balance}, required debit is ${totalDebit}.`,
+      metadata: {
+        walletId: sourceWallet.id,
+        available: balance,
+        required: totalDebit,
+        deficit: this.round(totalDebit - balance),
+      },
+    }];
+  }
+
+  private buildRiskIssues(risk: any): PreflightIssue[] {
+    if (risk.decision === 'BLOCK') {
+      return [{
+        code: 'TRANSACTION_RULE_BLOCKED',
+        severity: 'blocking',
+        subject: 'transaction_rules',
+        message: 'Transaction rules blocked this preview. Review the rule results before submitting.',
+        metadata: { score: risk.score, results: risk.results || [] },
+      }];
+    }
+    if (risk.decision === 'CHALLENGE') {
+      return [{
+        code: 'SECURITY_CHALLENGE_REQUIRED',
+        severity: 'warning',
+        subject: 'transaction_rules',
+        message: 'Transaction may proceed only after the required security challenge is satisfied.',
+        metadata: { score: risk.score, requirements: risk.requirements || [] },
+      }];
+    }
+    return [];
+  }
+
+  private resolvePreflightState(issues: PreflightIssue[], decision: string) {
+    if (issues.some((issue) => issue.code === 'INSUFFICIENT_FUNDS')) return 'INSUFFICIENT_FUNDS';
+    if (issues.some((issue) => issue.code.includes('WALLET_LOCKED'))) return 'WALLET_LOCKED';
+    if (issues.some((issue) => issue.code.includes('WALLET_REQUIRED'))) return 'WALLET_REQUIRED';
+    if (issues.some((issue) => issue.code.includes('PROVIDER'))) return 'PROVIDER_UNAVAILABLE';
+    if (issues.some((issue) => issue.code.includes('FEE'))) return 'FEE_CONFIGURATION_REQUIRED';
+    if (issues.some((issue) => issue.code.includes('ACCOUNT') || issue.code.includes('KYC'))) return 'ACCOUNT_RESTRICTED';
+    if (decision === 'BLOCK') return 'RULE_BLOCKED';
+    if (decision === 'CHALLENGE') return 'CHALLENGE_REQUIRED';
+    if (issues.some((issue) => issue.severity === 'blocking')) return 'BLOCKED';
+    return 'READY';
+  }
+
+  private buildChecks(args: {
+    user: User;
+    type: string;
+    amount: number;
+    currency: string;
+    sourceWallet: WalletSnapshot | null;
+    targetWallet: WalletSnapshot | null;
+    provider: any;
+    fee: any;
+    balance: number;
+    totalDebit: number;
+    risk: any;
+    issues: PreflightIssue[];
+  }) {
+    const metadata = (args.user as any).user_metadata || {};
+    const hasIssue = (subject: string) => args.issues.some((issue) => issue.subject === subject && issue.severity === 'blocking');
+    return {
+      account: {
+        passed: !hasIssue('account'),
+        status: metadata.account_status || 'active',
+        kycStatus: metadata.kyc_status || 'unknown',
+        registryType: metadata.registry_type || null,
+        role: metadata.role || null,
+        organizationId: metadata.organization_id || null,
+      },
+      sourceWallet: {
+        passed: !hasIssue('source_wallet'),
+        required: this.requiresDebit(args.type),
+        wallet: args.sourceWallet ? this.formatWallet(args.sourceWallet) : null,
+      },
+      targetWallet: {
+        passed: !hasIssue('target_wallet'),
+        required: ['INTERNAL_TRANSFER', 'PEER_TRANSFER', 'DEPOSIT'].includes(args.type),
+        wallet: args.targetWallet ? this.formatWallet(args.targetWallet) : null,
+      },
+      balance: {
+        passed: !this.requiresDebit(args.type) || args.balance >= args.totalDebit,
+        available: args.balance,
+        required: this.requiresDebit(args.type) ? args.totalDebit : 0,
+        deficit: this.requiresDebit(args.type) ? Math.max(0, this.round(args.totalDebit - args.balance)) : 0,
+      },
+      provider: {
+        passed: !hasIssue('provider'),
+        required: EXTERNAL_TYPES.has(args.type),
+        providerId: args.provider?.providerId || null,
+        providerCode: args.provider?.providerCode || null,
+      },
+      fees: {
+        passed: !hasIssue('fee_configuration'),
+        flowCode: args.fee.flowCode,
+        configId: args.fee.configId || null,
+        totalFee: args.fee.totalFee,
+      },
+      transactionRules: {
+        passed: args.risk.passed === true,
+        decision: args.risk.decision,
+        score: args.risk.score,
+      },
+    };
+  }
+
+  private issueFromError(error: unknown, subject: string): PreflightIssue {
+    const raw = error instanceof Error ? error.message : String(error || 'UNKNOWN_ERROR');
+    const [code, detail] = raw.split(':');
+    const normalizedCode = String(code || 'UNKNOWN_ERROR').trim().toUpperCase();
+    const retryable = ['DB_OFFLINE', 'PROVIDER_ROUTE_NOT_FOUND', 'FX_RATE_UNAVAILABLE'].includes(normalizedCode);
+    return {
+      code: normalizedCode,
+      severity: 'blocking',
+      subject,
+      message: this.issueMessage(normalizedCode, detail || raw),
+      retryable,
+      metadata: { detail: detail || null },
+    };
+  }
+
+  private issueMessage(code: string, detail: string) {
+    switch (code) {
+      case 'SOURCE_WALLET_REQUIRED_FOR_QUOTE':
+        return `No usable source wallet was found for this transaction${detail ? ` (${detail})` : ''}.`;
+      case 'TARGET_WALLET_REQUIRED_FOR_QUOTE':
+        return `No usable target wallet was found for this transaction${detail ? ` (${detail})` : ''}.`;
+      case 'RECIPIENT_REQUIRED_FOR_QUOTE':
+        return 'Recipient could not be resolved to an active ORBI account.';
+      case 'SOURCE_WALLET_ACCESS_DENIED':
+        return 'The selected source wallet does not belong to the authenticated account.';
+      case 'PROVIDER_ROUTE_NOT_FOUND':
+        return 'No active provider route is configured for this transaction model.';
+      case 'PLATFORM_FEE_CONFIG_REQUIRED':
+        return 'No active platform fee configuration matches this transaction model and category.';
+      case 'DB_OFFLINE':
+        return 'Database is not reachable for transaction preview.';
+      default:
+        return detail || code;
+    }
+  }
+
+  private zeroFee(flowCode: string, amount: number, currency: string, classification: Record<string, any>) {
+    return {
+      flowCode,
+      configId: null,
+      configName: null,
+      currency,
+      amount,
+      percentageRate: 0,
+      fixedAmount: 0,
+      minimumFee: 0,
+      maximumFee: null,
+      taxRate: 0,
+      govFeeRate: 0,
+      stampDutyFixed: 0,
+      percentageFee: 0,
+      serviceFee: 0,
+      taxAmount: 0,
+      govFeeAmount: 0,
+      totalFee: 0,
+      netAmount: amount,
+      classification,
+      metadata: { fallback: true },
+    };
   }
 
   private formatWallet(wallet: WalletSnapshot) {
@@ -465,6 +898,9 @@ export class TransactionQuoteService {
       type: wallet.table,
       name: wallet.name || null,
       currency: wallet.currency,
+      role: wallet.role || null,
+      status: wallet.status || null,
+      isLocked: wallet.isLocked === true,
     };
   }
 
