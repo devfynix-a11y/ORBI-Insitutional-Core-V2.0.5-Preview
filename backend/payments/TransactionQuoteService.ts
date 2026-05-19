@@ -149,6 +149,7 @@ export class TransactionQuoteService {
     issues.push(...this.buildAccountIssues(user, amount, currency));
     issues.push(...this.buildWalletIssues('source_wallet', sourceWallet, type));
     issues.push(...this.buildWalletIssues('target_wallet', targetWallet, type));
+    issues.push(...this.buildSelfTransferIssues(sourceWallet, targetWallet));
     issues.push(...this.buildBalanceIssues(type, balance, totalDebit, sourceWallet));
     issues.push(...this.buildRiskIssues(risk));
 
@@ -194,6 +195,8 @@ export class TransactionQuoteService {
         fee: fee.totalFee,
         total: totalDebit,
         currency,
+        sourceWalletId: sourceWallet?.id || null,
+        sourceWalletName: sourceWallet ? this.resolveWalletDisplayName(sourceWallet) : null,
       },
       balance: {
         available: balance,
@@ -713,6 +716,28 @@ export class TransactionQuoteService {
     return issues;
   }
 
+  private buildSelfTransferIssues(
+    sourceWallet: WalletSnapshot | null,
+    targetWallet: WalletSnapshot | null,
+  ): PreflightIssue[] {
+    if (!sourceWallet?.id || !targetWallet?.id) return [];
+    if (String(sourceWallet.id) !== String(targetWallet.id)) return [];
+
+    const walletName = this.resolveWalletDisplayName(sourceWallet);
+    return [{
+      code: 'SELF_TRANSFER_WALLET_NOT_ALLOWED',
+      severity: 'blocking',
+      subject: 'wallet_resolution',
+      message: `You cannot send money to the same wallet (${walletName}). Select a different source wallet or target wallet.`,
+      metadata: {
+        sourceWalletId: sourceWallet.id,
+        targetWalletId: targetWallet.id,
+        sourceWalletName: walletName,
+        targetWalletName: this.resolveWalletDisplayName(targetWallet),
+      },
+    }];
+  }
+
   private buildBalanceIssues(
     type: string,
     balance: number,
@@ -758,6 +783,7 @@ export class TransactionQuoteService {
   }
 
   private resolvePreflightState(issues: PreflightIssue[], decision: string) {
+    if (issues.some((issue) => issue.code === 'SELF_TRANSFER_WALLET_NOT_ALLOWED')) return 'SELF_TRANSFER_NOT_ALLOWED';
     if (issues.some((issue) => issue.code === 'INSUFFICIENT_FUNDS')) return 'INSUFFICIENT_FUNDS';
     if (issues.some((issue) => issue.code.includes('WALLET_LOCKED'))) return 'WALLET_LOCKED';
     if (issues.some((issue) => issue.code.includes('WALLET_REQUIRED'))) return 'WALLET_REQUIRED';
@@ -799,11 +825,13 @@ export class TransactionQuoteService {
         passed: !hasIssue('source_wallet'),
         required: this.requiresDebit(args.type),
         wallet: args.sourceWallet ? this.formatWallet(args.sourceWallet) : null,
+        displayName: args.sourceWallet ? this.resolveWalletDisplayName(args.sourceWallet) : null,
       },
       targetWallet: {
         passed: !hasIssue('target_wallet'),
         required: ['INTERNAL_TRANSFER', 'PEER_TRANSFER', 'DEPOSIT'].includes(args.type),
         wallet: args.targetWallet ? this.formatWallet(args.targetWallet) : null,
+        displayName: args.targetWallet ? this.resolveWalletDisplayName(args.targetWallet) : null,
       },
       balance: {
         passed: !this.requiresDebit(args.type) || args.balance >= args.totalDebit,
@@ -897,11 +925,24 @@ export class TransactionQuoteService {
       id: wallet.id,
       type: wallet.table,
       name: wallet.name || null,
+      displayName: this.resolveWalletDisplayName(wallet),
       currency: wallet.currency,
       role: wallet.role || null,
       status: wallet.status || null,
       isLocked: wallet.isLocked === true,
     };
+  }
+
+  private resolveWalletDisplayName(wallet: WalletSnapshot) {
+    const metadata = wallet.metadata || {};
+    return (
+      wallet.name ||
+      metadata.display_name ||
+      metadata.account_name ||
+      metadata.label ||
+      wallet.role ||
+      `${wallet.currency} wallet`
+    );
   }
 
   private requiresDebit(type: string) {
