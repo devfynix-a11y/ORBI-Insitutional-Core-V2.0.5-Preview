@@ -73,10 +73,8 @@ export class PlatformFeeService {
 
     if (filters?.flowCode) query = query.eq('flow_code', String(filters.flowCode).trim().toUpperCase());
     if (filters?.status) query = query.eq('status', String(filters.status).trim().toUpperCase());
-    if (filters?.providerId) query = query.eq('provider_id', filters.providerId);
-    if (filters?.currency) query = query.eq('currency', String(filters.currency).trim().toUpperCase());
-    if (filters?.countryCode) query = query.eq('country_code', String(filters.countryCode).trim().toUpperCase());
-    if (filters?.rail) query = query.eq('rail', String(filters.rail).trim().toUpperCase());
+    // Optional dimensions are intentionally matched in selectBestConfig so
+    // wildcard rows with NULL fields remain eligible as production fallbacks.
     const { data, error } = await query;
     if (error) throw new Error(error.message);
     const rows = data || [];

@@ -23,8 +23,21 @@ type Deps = {
 
 const quoteErrorStatus = (message: string) => {
   if (/DB_OFFLINE|UNAVAILABLE/i.test(message)) return 503;
-  if (/NOT_CONFIGURED|NOT_FOUND|REQUIRED|ACCESS_DENIED|INSUFFICIENT|BLOCK/i.test(message)) return 400;
+  if (/PLATFORM_FEE_CONFIG_REQUIRED|PROVIDER_ROUTE_NOT_FOUND|NOT_CONFIGURED/i.test(message)) return 409;
+  if (/NOT_FOUND|REQUIRED|ACCESS_DENIED|INSUFFICIENT|BLOCK/i.test(message)) return 400;
   return 500;
+};
+
+const quoteErrorPayload = (error: any, context: string) => {
+  const message = String(error?.message || error || 'TRANSACTION_PREVIEW_FAILED');
+  const code = message.split(':')[0] || 'TRANSACTION_PREVIEW_FAILED';
+  return {
+    success: false,
+    error: code,
+    message,
+    context,
+    retryable: quoteErrorStatus(message) >= 500,
+  };
 };
 
 export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
@@ -327,7 +340,8 @@ export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
       res.json({ success: true, data: result });
     } catch (e: any) {
       console.error(`[Transaction] Settle Error: ${e.message}`);
-      res.status(500).json({ success: false, error: e.message });
+      const statusCode = quoteErrorStatus(String(e.message || ''));
+      res.status(statusCode).json(quoteErrorPayload(e, 'transaction_confirmation'));
     }
   });
 
@@ -340,7 +354,8 @@ export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
       }
       res.json({ success: true, data: result });
     } catch (e: any) {
-      res.status(500).json({ success: false, error: e.message });
+      const statusCode = quoteErrorStatus(String(e.message || ''));
+      res.status(statusCode).json(quoteErrorPayload(e, 'transaction_preview'));
     }
   });
 
