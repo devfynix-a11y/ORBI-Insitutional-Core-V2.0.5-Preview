@@ -12,6 +12,7 @@ import {
 import { institutionalFundsService } from './InstitutionalFundsService.js';
 import { providerWebhookEventLedger } from './ProviderWebhookEventLedger.js';
 import { logger } from '../infrastructure/logger.js';
+import { resolveProviderCode } from './financialPartnerMetadata.js';
 
 /**
  * SOVEREIGN WEBHOOK LISTENER (V4.0)
@@ -21,6 +22,31 @@ const webhookLogger = logger.child({ component: 'webhook_handler' });
 
 class WebhookHandler {
     private ledger = new TransactionService();
+
+    private async resolvePartner(sb: any, partnerIdentifier: string) {
+        const normalizedIdentifier = String(partnerIdentifier || '').trim();
+        if (!normalizedIdentifier) return null;
+
+        const { data: partnerById } = await sb
+            .from('financial_partners')
+            .select('*')
+            .eq('id', normalizedIdentifier)
+            .maybeSingle();
+        if (partnerById) {
+            return partnerById;
+        }
+
+        const { data: partners } = await sb
+            .from('financial_partners')
+            .select('*');
+
+        const normalizedLookup = normalizedIdentifier.toLowerCase();
+        return (partners || []).find((partner: any) => {
+            const providerCode = resolveProviderCode(partner).toLowerCase();
+            const partnerName = String(partner?.name || '').trim().toLowerCase();
+            return providerCode === normalizedLookup || partnerName === normalizedLookup;
+        }) || null;
+    }
 
     /**
      * PROCESS PROVIDER CALLBACK
@@ -39,7 +65,7 @@ class WebhookHandler {
         const sb = getAdminSupabase() || getSupabase();
         if (!sb) return;
 
-        const { data: partner } = await sb.from('financial_partners').select('*').eq('id', partnerId).single();
+        const partner = await this.resolvePartner(sb, partnerId);
         if (!partner) {
             webhookLogger.error('webhook.partner_unknown', { partner_id: partnerId });
             return;

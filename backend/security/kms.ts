@@ -607,12 +607,7 @@ export class SecureKMSService {
     private async getPossibleSecrets(sb: any): Promise<string[]> {
         let possibleSecrets = [
             process.env.KMS_MASTER_KEY,
-            process.env.KMS_MASTER_SALT // Legacy fallback
         ].filter(Boolean) as string[];
-
-        if (possibleSecrets.length === 0) {
-            possibleSecrets.push('orbi-dev-master-secret-fallback');
-        }
 
         if (sb) {
             try {
@@ -630,7 +625,12 @@ export class SecureKMSService {
             }
         }
         
-        return Array.from(new Set(possibleSecrets));
+        const uniqueSecrets = Array.from(new Set(possibleSecrets));
+        if (uniqueSecrets.length === 0) {
+            throw new Error('[KMS] Master secret is not configured.');
+        }
+
+        return uniqueSecrets;
     }
 
     /**

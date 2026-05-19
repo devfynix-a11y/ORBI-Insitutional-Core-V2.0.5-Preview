@@ -81,7 +81,6 @@ export const appTrustMiddleware = (req: Request, res: Response, next: NextFuncti
         '/merchants',
         '/receipt',
         '/sys',
-        '/sandbox',
     ];
     const isProtectedApiPath = protectedPrefixes.some(
         (prefix) => req.path === prefix || req.path.startsWith(`${prefix}/`),

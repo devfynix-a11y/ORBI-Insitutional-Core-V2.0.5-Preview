@@ -51,7 +51,7 @@ export class FraudPredictionService {
             transaction_amount: payload.amount,
             transaction_amount_usd: payload.amount, 
             user_avg_transaction: avg,
-            amount_zscore: (payload.amount - avg) / 100, // Normalized simulation
+            amount_zscore: (payload.amount - avg) / 100,
             transactions_last_hour: history.filter(t => (Date.now() - new Date(t.date).getTime()) < 3600000).length,
             hour_sin: Math.sin((hour * Math.PI) / 12),
             hour_cos: Math.cos((hour * Math.PI) / 12),

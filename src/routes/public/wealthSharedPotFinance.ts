@@ -1,3 +1,5 @@
+import crypto from 'crypto';
+
 type ContributeInput = {
   sb: any;
   sessionUserId: string;
@@ -60,7 +62,7 @@ const contributeViaLegacyPath = async ({
 
   const newSourceBalance = currentBalance - payload.amount;
   const newPotBalance = wealthNumber(pot.current_amount) + payload.amount;
-  const reference = `pot_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+  const reference = `pot_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
 
   const { data: tx, error: txError } = await sb
     .from('transactions')
@@ -172,7 +174,7 @@ const withdrawViaLegacyPath = async ({
   const targetBalance = wealthNumber(targetRecord.balance);
   const newTargetBalance = targetBalance + payload.amount;
   const newPotBalance = currentPotBalance - payload.amount;
-  const reference = `pot_w_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+  const reference = `pot_w_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
 
   const { data: tx, error: txError } = await sb
     .from('transactions')
@@ -292,7 +294,7 @@ export const contributeToSharedPot = async (input: ContributeInput) => {
     throw new Error('INSUFFICIENT_FUNDS');
   }
 
-  const reference = `pot_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+  const reference = `pot_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
   const metadata = {
     shared_pot_id: pot.id,
     member_role: membership.role,
@@ -350,7 +352,7 @@ export const withdrawFromSharedPot = async (input: WithdrawInput) => {
     sessionUserId,
     payload.target_wallet_id,
   );
-  const reference = `pot_w_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+  const reference = `pot_w_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
   const metadata = {
     shared_pot_id: pot.id,
     actor_role: membership.role,

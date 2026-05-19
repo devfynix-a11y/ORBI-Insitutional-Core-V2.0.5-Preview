@@ -53,6 +53,8 @@ import { PartnerRegistry } from './admin/partnerRegistry.js';
 import { ServiceActorOps } from './features/ServiceActorOps.js';
 import { institutionalFundsService } from './payments/InstitutionalFundsService.js';
 import { platformFeeService } from './payments/PlatformFeeService.js';
+import { listRegistryBackedBillProviders } from './payments/billProviderRegistry.js';
+import { transactionQuoteService } from './payments/TransactionQuoteService.js';
 import { offlineGatewayService } from './offline/OfflineGatewayService.js';
 import { buildPostgrestOrFilter } from './security/postgrest.js';
 import bcrypt from 'bcryptjs';
@@ -286,72 +288,12 @@ class OrbiServer {
 
     // --- TRANSACTION PREVIEW ---
     async getTransactionPreview(userId: string, payload: any) {
-        const sb = getAdminSupabase();
-        if (!sb) throw new Error("DB_OFFLINE");
-        const requestCurrency = typeof payload?.currency === 'string'
-            ? payload.currency.trim().toUpperCase()
-            : '';
-        if (!requestCurrency) {
-            throw new Error("CURRENCY_REQUIRED: Transaction preview requires an explicit currency.");
-        }
-        
-        // Fetch user to ensure they exist and get metadata
-        const { data: authUser } = await sb.auth.admin.getUserById(userId);
-        if (!authUser || !authUser.user) throw new Error("IDENTITY_NOT_FOUND");
-
-        // Fetch real status from public profile to ensure Rules Engine sees the correct status
-        const { data: profile } = await sb.from('users').select('account_status').eq('id', userId).single();
-        
-        const user = authUser.user;
-        if (profile) {
-            user.user_metadata = {
-                ...user.user_metadata,
-                account_status: profile.account_status
-            };
-        }
-
-        const result = await EntProcessor.process(user as any, { 
-            idempotencyKey: payload.idempotencyKey || `preview-${Date.now()}`,
-            sourceWalletId: payload.sourceWalletId,
-            targetWalletId: payload.targetWalletId,
-            recipientId: payload.recipientId,
-            recipient_customer_id: payload.recipient_customer_id,
-            amount: payload.amount,
-            currency: requestCurrency,
-            description: payload.description || 'Preview',
-            type: payload.type || 'INTERNAL_TRANSFER',
-            metadata: payload.metadata,
-            dryRun: true 
-        } as any);
-
-        return result;
+        return transactionQuoteService.quote({ userId, payload });
     }
 
     // --- WEALTH & SETTLEMENT ---
     async calculateSettlementBreakdown(payload: any) {
-        const session = await this.auth.getSession();
-        if (!session) throw new Error("IDENTITY_REQUIRED");
-        const requestCurrency = typeof payload?.currency === 'string'
-            ? payload.currency.trim().toUpperCase()
-            : '';
-        if (!requestCurrency) {
-            throw new Error("CURRENCY_REQUIRED: Settlement breakdown requires an explicit currency.");
-        }
-        return EntProcessor.process(session.user as any, { 
-            idempotencyKey: payload.idempotencyKey || `calc-${Date.now()}`,
-            sourceWalletId: payload.sourceWalletId,
-            targetWalletId: payload.targetWalletId,
-            recipientId: payload.recipientId,
-            recipient_customer_id: payload.recipient_customer_id,
-            amount: payload.amount,
-            currency: requestCurrency,
-            description: payload.description || 'Calculation',
-            type: payload.type || 'INTERNAL_TRANSFER',
-            walletType: payload.walletType,
-            category: payload.category,
-            metadata: payload.metadata,
-            dryRun: true 
-        } as any);
+        throw new Error('SETTLEMENT_BREAKDOWN_PROVIDER_NOT_CONFIGURED');
     }
 
     async processSecurePayment(payload: any, user?: any) {
@@ -365,7 +307,7 @@ class OrbiServer {
         }
         
         const result = await EntProcessor.process(sessionUser as any, {
-            idempotencyKey: payload.idempotencyKey || `tx-${Date.now()}-${Math.random()}`,
+            idempotencyKey: payload.idempotencyKey || `tx-${Date.now()}-${UUID.generate()}`,
             referenceId: payload.referenceId,
             sourceWalletId: payload.sourceWalletId,
             targetWalletId: payload.targetWalletId,
@@ -1012,15 +954,10 @@ class OrbiServer {
             },
         }, user);
     }
-    getBillPaymentProviders() {
-        return [
-            { key: 'electricity', label: 'Electricity', providers: ['TANESCO', 'ZESCO', 'LUKU'] },
-            { key: 'school-fees', label: 'School fees', providers: ['Ada ya shule', 'Ada ya chuo', 'Hosteli'] },
-            { key: 'water-bills', label: 'Water bills', providers: ['DAWASA', 'RUWASA', 'Maji ya mkoa'] },
-            { key: 'gas', label: 'Gas', providers: ['Oryx Gas', 'Taifa Gas', 'Lake Gas'] },
-            { key: 'bundles', label: 'Bundles', providers: ['Vodacom', 'Airtel', 'Tigo', 'Halotel'] },
-            { key: 'entertainment', label: 'Entertainment', providers: ['DSTV', 'Azam TV', 'Startimes', 'Netflix'] },
-        ];
+    async getBillPaymentProviders() {
+        const sb = getAdminSupabase();
+        if (!sb) return [];
+        return listRegistryBackedBillProviders(sb);
     }
     async processAgentCashOperation(payload: any, user: any, direction: 'deposit' | 'withdrawal') {
         const normalizedType = direction === 'deposit' ? 'DEPOSIT' : 'WITHDRAWAL';

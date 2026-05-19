@@ -913,6 +913,9 @@ export interface PlatformFeeConfig {
     id: string;
     name: string;
     flow_code: PlatformFeeFlowCode | string;
+    transaction_model?: string | null;
+    category_code?: string | null;
+    category_id?: string | null;
     transaction_type?: string | null;
     operation_type?: string | null;
     direction?: string | null;
@@ -954,6 +957,7 @@ export interface PlatformFeeComputation {
     govFeeAmount: number;
     totalFee: number;
     netAmount: number;
+    classification?: Record<string, any>;
     metadata?: Record<string, any>;
 }
 

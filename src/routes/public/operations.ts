@@ -28,8 +28,6 @@ type Deps = {
   KMS: any;
   DataProtection: any;
   TransactionSigning: any;
-  SandboxController: any;
-  sandboxRoutesEnabled: boolean;
 };
 
 export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
@@ -42,25 +40,7 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
     KMS,
     DataProtection,
     TransactionSigning,
-    SandboxController,
-    sandboxRoutesEnabled,
   } = deps;
-
-  if (sandboxRoutesEnabled) {
-    v1.post('/sandbox/activate', authenticate as any, async (req, res) => {
-      const session = (req as any).session;
-
-      if (!req.body.userId) req.body.userId = session.sub;
-
-      if (req.body.userId !== session.sub) {
-        if (!sessionHasAnyRole(session, [...SUPER_ADMIN_AND_ADMIN_ROLES])) {
-          return res.status(403).json({ success: false, error: 'ACCESS_DENIED: You can only activate your own account.' });
-        }
-      }
-
-      await SandboxController.activateUser(req, res);
-    });
-  }
 
   v1.get('/enterprise/organizations', authenticate as any, async (req, res) => {
     const session = (req as any).session;

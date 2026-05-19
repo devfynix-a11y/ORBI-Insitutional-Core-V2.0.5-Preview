@@ -1,4 +1,5 @@
 import { getSupabase } from '../../supabaseClient.js';
+import crypto from 'crypto';
 
 /**
  * Enterprise Distributed Lock Manager
@@ -53,7 +54,7 @@ export class LockManager {
 
             if (attempt < retries) {
                 // Exponential backoff with jitter
-                const delay = Math.pow(2, attempt) * 100 + Math.random() * 50;
+                const delay = Math.pow(2, attempt) * 100 + crypto.randomInt(0, 51);
                 await new Promise(r => setTimeout(r, delay));
             }
         }

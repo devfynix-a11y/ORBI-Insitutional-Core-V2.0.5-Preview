@@ -5,6 +5,7 @@ import { DataVault } from '../backend/security/encryption.js';
 import { UUID } from '../services/utils.js';
 import { Storage } from '../backend/storage.js';
 import { providerSecretVault } from '../backend/payments/providers/ProviderSecretVault.js';
+import crypto from 'crypto';
 
 export type SystemNodeRole = 'GOV_TAX' | 'SERVICE_FEE' | 'ESCROW_VAULT' | 'BANK_POOL' | 'FEE_COLLECTOR' | 'OPERATIONAL_RESERVE';
 
@@ -198,8 +199,8 @@ class RegulatoryControl {
         const newApp: RegisteredApp = {
             id: UUID.generate(),
             name,
-            app_id: `fnx-app-${Math.random().toString(36).substring(2, 12).toUpperCase()}`,
-            app_token: `tk_${UUID.generate().replace(/-/g, '')}${Math.random().toString(36).substring(2, 8)}`,
+            app_id: `fnx-app-${crypto.randomBytes(8).toString('hex').toUpperCase()}`,
+            app_token: `tk_${crypto.randomBytes(32).toString('hex')}`,
             tier: tier as any,
             status: 'ACTIVE',
             developer_id: userId || 'system',

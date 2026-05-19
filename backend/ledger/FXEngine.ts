@@ -33,20 +33,9 @@ export class FXEngine {
                 this.lastFetch = Date.now();
                 console.log("[FXEngine] Successfully updated live exchange rates from API.");
             }
-        } catch (error) {
-            console.error("[FXEngine] Failed to fetch rates, using hardcoded fallbacks:", error);
-            this.ratesCache = {
-                'USD': 1,
-                'EUR': 0.92,
-                'GBP': 0.78,
-                'TZS': 2550,
-                'KES': 135,
-                'UGX': 3900,
-                'RWF': 1280,
-                'ZAR': 19,
-                'NGN': 1500,
-                'GHS': 13.5
-            };
+        } catch (error: any) {
+            console.error("[FXEngine] Failed to fetch configured/live exchange rates:", error);
+            throw new Error(`FX_RATES_UNAVAILABLE:${error?.message || 'UNKNOWN'}`);
         }
     }
 
@@ -60,8 +49,11 @@ export class FXEngine {
 
         if (from === to) return 1;
 
-        const rateFrom = this.ratesCache[from] || 1; // 1 USD = rateFrom FROM
-        const rateTo = this.ratesCache[to] || 1;     // 1 USD = rateTo TO
+        const rateFrom = this.ratesCache[from]; // 1 USD = rateFrom FROM
+        const rateTo = this.ratesCache[to];     // 1 USD = rateTo TO
+        if (!rateFrom || !rateTo) {
+            throw new Error(`FX_RATE_NOT_CONFIGURED:${from}:${to}`);
+        }
 
         // Convert 1 unit of 'from' to 'to'
         // 1 FROM = (1 / rateFrom) USD

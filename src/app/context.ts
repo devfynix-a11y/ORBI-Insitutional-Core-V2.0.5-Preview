@@ -19,8 +19,6 @@ export const createAppContext = (app: Express) => {
     process.env.ORBI_ENABLE_LEGACY_API_GATEWAY === 'true';
   const legacyBiometricAliasesEnabled =
     process.env.ORBI_ENABLE_LEGACY_BIOMETRIC_ROUTES === 'true';
-  const sandboxRoutesEnabled =
-    process.env.ORBI_ENABLE_SANDBOX_ROUTES === 'true';
   const messagingTestRoutesEnabled =
     process.env.ORBI_ENABLE_MESSAGING_TEST_ROUTES === 'true';
   const idempotencyTtlSeconds = Number(process.env.ORBI_IDEMPOTENCY_TTL_SECONDS || 60 * 60);
@@ -50,7 +48,6 @@ export const createAppContext = (app: Express) => {
     gatewayBackgroundJobsEnabled,
     legacyApiGatewayEnabled,
     legacyBiometricAliasesEnabled,
-    sandboxRoutesEnabled,
     messagingTestRoutesEnabled,
     globalIpLimiter,
   };

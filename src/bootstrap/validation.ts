@@ -43,6 +43,25 @@ const REQUIRED_RPC_DEPENDENCIES = [
   'repair_wallet_balance_emergency',
 ];
 
+const DEFAULT_REQUIRED_PLATFORM_FEE_FLOWS = [
+  'CORE_TRANSACTION',
+  'EXTERNAL_PAYMENT',
+  'WITHDRAWAL',
+  'EXTERNAL_TO_INTERNAL',
+  'INTERNAL_TO_EXTERNAL',
+  'EXTERNAL_TO_EXTERNAL',
+  'CARD_SETTLEMENT',
+  'GATEWAY_SETTLEMENT',
+  'FX_CONVERSION',
+  'TENANT_SETTLEMENT_PAYOUT',
+  'MERCHANT_PAYMENT',
+  'AGENT_CASH_DEPOSIT',
+  'AGENT_CASH_WITHDRAWAL',
+  'AGENT_REFERRAL_COMMISSION',
+  'AGENT_CASH_COMMISSION',
+  'SYSTEM_OPERATION',
+];
+
 const fatalIfMissing = (key: string) => {
   logger.fatal('startup.missing_required_env', { env_key: key });
   process.exit(1);
@@ -50,6 +69,17 @@ const fatalIfMissing = (key: string) => {
 
 const warnOptional = (key: string) => {
   logger.warn('startup.missing_optional_env', { env_key: key });
+};
+
+const parseCsvEnv = (value: string | undefined, fallback: string[] = []) =>
+  String(value || '')
+    .split(',')
+    .map((item) => item.trim().toUpperCase())
+    .filter(Boolean)
+    .concat(value ? [] : fallback);
+
+const warnGovernanceConfig = (event: string, payload: Record<string, unknown>) => {
+  logger.warn(event, payload);
 };
 
 export const validateStartupEnvironment = () => {
@@ -254,6 +284,9 @@ const validateDbDependencies = async (isProd: boolean) => {
     process.exit(1);
   }
 
+  await validatePlatformFeeConfigs(adminClient);
+  await validateProviderRegistryReadiness(adminClient);
+
   const shouldValidateRpc = isProd || process.env.ORBI_VALIDATE_RPC_ON_STARTUP === 'true';
   if (!shouldValidateRpc) return;
 
@@ -290,6 +323,127 @@ const validateDbDependencies = async (isProd: boolean) => {
         logger.warn('startup.rpc_probe_error', { rpc: rpcName, message });
       }
     }
+  }
+};
+
+const validatePlatformFeeConfigs = async (adminClient: any) => {
+  const requiredFlows = parseCsvEnv(
+    process.env.ORBI_REQUIRED_PLATFORM_FEE_FLOWS,
+    DEFAULT_REQUIRED_PLATFORM_FEE_FLOWS,
+  );
+  if (requiredFlows.length === 0) return;
+
+  const { data, error } = await adminClient
+    .from('platform_fee_configs')
+    .select('flow_code, status')
+    .eq('status', 'ACTIVE')
+    .in('flow_code', requiredFlows);
+
+  if (error) {
+    warnGovernanceConfig('startup.platform_fee_config_check_failed', {
+      message: error.message,
+      enforcement: 'runtime',
+    });
+    return;
+  }
+
+  const configuredFlows = new Set((data || []).map((row: any) => String(row.flow_code || '').trim().toUpperCase()));
+  const missingFlows = requiredFlows.filter((flow) => !configuredFlows.has(flow));
+  if (missingFlows.length > 0) {
+    warnGovernanceConfig('startup.platform_fee_configs_missing', {
+      missing_flows: missingFlows,
+      enforcement: 'runtime',
+    });
+  }
+};
+
+const validateProviderRegistryReadiness = async (adminClient: any) => {
+  const { data: partners, error } = await adminClient
+    .from('financial_partners')
+    .select('id, name, status, api_base_url, webhook_secret, provider_metadata, mapping_config')
+    .eq('status', 'ACTIVE');
+
+  if (error) {
+    warnGovernanceConfig('startup.provider_registry_check_failed', {
+      message: error.message,
+      enforcement: 'runtime',
+    });
+    return;
+  }
+
+  const activePartners = partners || [];
+  if (activePartners.length === 0) {
+    warnGovernanceConfig('startup.no_active_financial_partners', {
+      enforcement: 'runtime',
+    });
+    return;
+  }
+
+  const { data: routingRules, error: routingError } = await adminClient
+    .from('provider_routing_rules')
+    .select('provider_id, status')
+    .eq('status', 'ACTIVE');
+
+  const routedProviderIds = new Set(
+    routingError ? [] : (routingRules || []).map((row: any) => String(row.provider_id || '').trim()).filter(Boolean),
+  );
+
+  const readinessFailures = activePartners
+    .map((partner: any) => {
+      const metadata = partner.provider_metadata && typeof partner.provider_metadata === 'object'
+        ? partner.provider_metadata
+        : {};
+      const registry = partner.mapping_config && typeof partner.mapping_config === 'object'
+        ? partner.mapping_config
+        : {};
+      const operations = registry.operations && typeof registry.operations === 'object'
+        ? Object.keys(registry.operations)
+        : [];
+      const callback = registry.callback && typeof registry.callback === 'object'
+        ? registry.callback
+        : null;
+      const hasBaseUrl =
+        Boolean(String(partner.api_base_url || '').trim()) ||
+        Boolean(String(registry.service_root || '').trim()) ||
+        Boolean(registry.service_roots && Object.keys(registry.service_roots).length > 0);
+      const hasWebhookSecret =
+        Boolean(String(partner.webhook_secret || '').trim()) ||
+        Boolean(String(metadata?.secrets?.webhook_secret || '').trim());
+
+      const missing = [
+        !String(metadata.provider_code || '').trim() ? 'provider_metadata.provider_code' : '',
+        operations.length === 0 ? 'mapping_config.operations' : '',
+        !callback ? 'mapping_config.callback' : '',
+        callback && !String(callback.reference_field || '').trim() ? 'mapping_config.callback.reference_field' : '',
+        callback && !String(callback.status_field || '').trim() ? 'mapping_config.callback.status_field' : '',
+        !hasWebhookSecret ? 'webhook_secret' : '',
+        !hasBaseUrl ? 'api_base_url_or_service_root' : '',
+        !routedProviderIds.has(String(partner.id)) ? 'provider_routing_rules' : '',
+      ].filter(Boolean);
+
+      return missing.length > 0
+        ? {
+            id: partner.id,
+            name: partner.name,
+            missing,
+          }
+        : null;
+    })
+    .filter(Boolean);
+
+  if (routingError) {
+    warnGovernanceConfig('startup.provider_routing_rules_check_failed', {
+      message: routingError.message,
+      enforcement: 'runtime',
+    });
+    return;
+  }
+
+  if (readinessFailures.length > 0) {
+    warnGovernanceConfig('startup.provider_registry_not_ready', {
+      providers: readinessFailures,
+      enforcement: 'runtime',
+    });
   }
 };
 

@@ -6,6 +6,7 @@ import { getAdminSupabase } from '../../services/supabaseClient.js';
 import { orbiGatewayService } from '../infrastructure/orbiGatewayService.js';
 import parsePhoneNumber from 'libphonenumber-js';
 import { logger } from '../infrastructure/logger.js';
+import crypto from 'crypto';
 
 const otpLogger = logger.child({ component: 'otp_service' });
 
@@ -153,7 +154,7 @@ export class OTPService {
         }
 
         // Generate a 6-digit code
-        const code = Math.floor(100000 + Math.random() * 900000).toString();
+        const code = crypto.randomInt(100000, 1000000).toString();
         const requestId = UUID.generate();
         
         const record: OTPRecord = {

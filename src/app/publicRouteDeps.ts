@@ -39,7 +39,6 @@ import { TransactionSigning } from '../../backend/src/modules/transaction/signin
 import { OTPService } from '../../backend/security/otpService.js';
 import { KMS } from '../../backend/security/kms.js';
 import { DataProtection } from '../../backend/security/DataProtection.js';
-import { SandboxController } from '../../backend/sandbox/sandboxController.js';
 import { syncUserIdentityClassification } from './identity.js';
 
 export const buildPublicRouteDeps = ({
@@ -48,7 +47,6 @@ export const buildPublicRouteDeps = ({
   legacyApiGatewayEnabled,
   legacyBiometricAliasesEnabled,
   messagingTestRoutesEnabled,
-  sandboxRoutesEnabled,
   authenticate,
   adminOnly,
   validate,
@@ -63,7 +61,6 @@ export const buildPublicRouteDeps = ({
   legacyApiGatewayEnabled: boolean;
   legacyBiometricAliasesEnabled: boolean;
   messagingTestRoutesEnabled: boolean;
-  sandboxRoutesEnabled: boolean;
   authenticate: RequestHandler;
   adminOnly: RequestHandler;
   validate: (schema: any) => RequestHandler;
@@ -78,7 +75,6 @@ export const buildPublicRouteDeps = ({
   legacyApiGatewayEnabled,
   legacyBiometricAliasesEnabled,
   messagingTestRoutesEnabled,
-  sandboxRoutesEnabled,
   authenticate,
   adminOnly,
   validate,
@@ -101,7 +97,6 @@ export const buildPublicRouteDeps = ({
   KMS,
   DataProtection,
   TransactionSigning,
-  SandboxController,
   Webhooks,
   resolveWealthSourceWallet,
   assertBillPaymentSourceAllowed,

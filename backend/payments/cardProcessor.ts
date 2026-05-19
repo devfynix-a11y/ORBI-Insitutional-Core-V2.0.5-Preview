@@ -201,7 +201,7 @@ export class CardProcessor {
       return this.createFailedTransaction(paymentRequest, 'BLOCKED_BY_FRAUD_ENGINE', riskAssessment);
     }
 
-    // 4. SIMULATE CARD AUTHORIZATION (In production, call real processor like Stripe/Square)
+    // 4. AUTHORIZE VIA CONFIGURED EXTERNAL CARD PROCESSOR
     const authResult = await this.performAuthorization(token, paymentRequest, riskAssessment);
 
     // 5. STORE TRANSACTION RECORD
@@ -598,7 +598,7 @@ export class CardProcessor {
     if (this.BIN_PATTERNS.MASTERCARD.test(sanitized)) return 'MASTERCARD';
     if (this.BIN_PATTERNS.AMEX.test(sanitized)) return 'AMEX';
     if (this.BIN_PATTERNS.DISCOVERY.test(sanitized)) return 'DISCOVERY';
-    return 'VISA'; // Default fallback
+    throw new Error('UNSUPPORTED_CARD_BRAND');
   }
 
   /**
@@ -620,7 +620,7 @@ export class CardProcessor {
    * HELPER: Generate STAN (System Trace Audit Number)
    */
   private generateSTAN(): string {
-    return Math.random().toString().slice(2, 8).padStart(6, '0');
+    return crypto.randomInt(0, 1000000).toString().padStart(6, '0');
   }
 
   /**
@@ -631,25 +631,14 @@ export class CardProcessor {
   }
 
   /**
-   * HELPER: Simulate card authorization
+   * HELPER: Authorize through the configured external card processor.
    */
   private async performAuthorization(
     token: any,
     request: CardPaymentRequest,
     riskAssessment: any
   ): Promise<{ success: boolean; authCode?: string; responseCode: string; responseMessage: string }> {
-    // Simulate authorization delay
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    // In production, call Stripe, Square, or Adyen API here
-    const isDeclined = Math.random() < 0.02; // 2% decline rate for simulation
-
-    return {
-      success: !isDeclined,
-      authCode: isDeclined ? undefined : `AUTH${UUID.generate().slice(0, 12)}`,
-      responseCode: isDeclined ? '05' : '00',
-      responseMessage: isDeclined ? 'Card Declined' : 'Approved',
-    };
+    throw new Error('CARD_PROCESSOR_PROVIDER_NOT_CONFIGURED');
   }
 
   /**

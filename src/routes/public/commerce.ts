@@ -1,114 +1,11 @@
 import type { RequestHandler, Router } from 'express';
 import {
-  normalizeFinancialPartnerMetadata,
-  resolveProviderCode,
-} from '../../../backend/payments/financialPartnerMetadata.js';
+  listRegistryBackedBillProviders,
+} from '../../../backend/payments/billProviderRegistry.js';
 import {
   requireIdempotencyKey,
   resolveIdempotencyHeader,
 } from '../../middleware/security/idempotency.js';
-
-type BillProviderRecord = {
-  label: string;
-  provider_code?: string;
-  display_icon?: string;
-  color?: string;
-  logo_url?: string;
-  metadata: Record<string, unknown>;
-};
-
-type BillProviderCategoryRecord = {
-  key: string;
-  label: string;
-  providers: BillProviderRecord[];
-};
-
-const billCategoryLabels: Record<string, string> = {
-  electricity: 'Electricity',
-  'school-fees': 'School fees',
-  'water-bills': 'Water bills',
-  gas: 'Gas',
-  bundles: 'Bundles',
-  internet: 'Internet',
-  'government-bills': 'Government bills',
-  insurance: 'Insurance',
-  telephone: 'Telephone',
-  entertainment: 'Entertainment',
-  'other-bills': 'Other bills',
-};
-
-const legacyBillProviderCategoryMap: Record<string, string> = {
-  TANESCO: 'electricity',
-  ZESCO: 'electricity',
-  LUKU: 'electricity',
-  DAWASA: 'water-bills',
-  RUWASA: 'water-bills',
-  'MAJI YA MKOA': 'water-bills',
-  'ORYX GAS': 'gas',
-  'TAIFA GAS': 'gas',
-  'LAKE GAS': 'gas',
-  VODACOM: 'bundles',
-  AIRTEL: 'bundles',
-  TIGO: 'bundles',
-  'MIX BY YAS': 'bundles',
-  HALOTEL: 'bundles',
-  TTCL: 'internet',
-  ZUKU: 'internet',
-  SIMBANET: 'internet',
-  'LIQUID TELECOM': 'internet',
-  'ADA YA SHULE': 'school-fees',
-  'ADA YA CHUO': 'school-fees',
-  HOSTELI: 'school-fees',
-  TRA: 'government-bills',
-  EGOVERNMENT: 'government-bills',
-  NIDA: 'government-bills',
-  'LOCAL GOVERNMENT': 'government-bills',
-  NHIF: 'insurance',
-  JUBILEE: 'insurance',
-  NIC: 'insurance',
-  'ALLIANCE LIFE': 'insurance',
-  'TTCL VOICE': 'telephone',
-  'OFFICE LINE': 'telephone',
-  'BUSINESS TEL': 'telephone',
-  DSTV: 'entertainment',
-  'AZAM TV': 'entertainment',
-  STARTIMES: 'entertainment',
-  NETFLIX: 'entertainment',
-};
-
-function normalizeBillCategoryKey(raw: unknown): string {
-  const value = String(raw || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[_\s]+/g, '-');
-  if (!value) return '';
-  if (value === 'school_fees') return 'school-fees';
-  if (value === 'water' || value === 'water-bill' || value === 'water-bills') return 'water-bills';
-  if (value === 'government' || value === 'government-bill' || value === 'government-bills') return 'government-bills';
-  if (value === 'other' || value === 'other-bill' || value === 'other-bills') return 'other-bills';
-  return value;
-}
-
-function normalizeBillProviderName(raw: unknown): string {
-  return String(raw || '').trim();
-}
-
-function readStringArray(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return value.map((item) => String(item || '').trim()).filter(Boolean);
-  }
-  if (typeof value === 'string') {
-    return value
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
-  return [];
-}
-
-function inferLegacyBillCategory(providerName: string): string {
-  return legacyBillProviderCategoryMap[providerName.trim().toUpperCase()] || '';
-}
 
 function attachIdempotencyKey(req: any) {
   const idempotencyKey = resolveIdempotencyHeader(req);
@@ -117,108 +14,11 @@ function attachIdempotencyKey(req: any) {
   }
 }
 
-function resolveBillCategoryKeys(partner: any): string[] {
-  const metadata = partner?.provider_metadata && typeof partner.provider_metadata === 'object'
-    ? partner.provider_metadata
-    : {};
-  const explicit = [
-    ...readStringArray(metadata.bill_categories),
-    ...readStringArray(metadata.billCategories),
-    ...readStringArray(metadata.service_categories),
-    ...readStringArray(metadata.serviceCategories),
-    ...readStringArray(metadata.category),
-    ...readStringArray(metadata.service_category),
-    ...readStringArray(metadata.serviceCategory),
-  ]
-    .map(normalizeBillCategoryKey)
-    .filter(Boolean);
-  if (explicit.length) return Array.from(new Set(explicit));
-
-  const inferred = inferLegacyBillCategory(normalizeBillProviderName(metadata.brand_name || partner?.name));
-  return inferred ? [inferred] : [];
-}
-
-function supportsBillPayments(partner: any): boolean {
-  const metadata = partner?.provider_metadata && typeof partner.provider_metadata === 'object'
-    ? partner.provider_metadata
-    : {};
-  const operations = readStringArray(metadata.operations).map((item) => item.toUpperCase());
-  const capabilities = readStringArray(metadata.capabilities).map((item) => item.toUpperCase());
-  const channels = readStringArray(metadata.channels).map((item) => item.toLowerCase());
-  return (
-    operations.includes('COLLECTION_REQUEST') ||
-    operations.includes('BILL_PAYMENT') ||
-    capabilities.includes('BILL_PAYMENT') ||
-    channels.includes('bill_pay') ||
-    channels.includes('bill_payment') ||
-    resolveBillCategoryKeys(partner).length > 0
-  );
-}
-
-async function listRegistryBackedBillProviders(
-  sb: any,
-): Promise<BillProviderCategoryRecord[]> {
-  const { data: partners, error } = await sb
-    .from('financial_partners')
-    .select('id, name, type, icon, color, status, provider_metadata')
-    .eq('status', 'ACTIVE');
-  if (error) throw error;
-
-  const bucket = new Map<string, Map<string, BillProviderRecord>>();
-  for (const partner of partners || []) {
-    if (!supportsBillPayments(partner)) continue;
-    const metadata = normalizeFinancialPartnerMetadata(partner);
-    const providerName = normalizeBillProviderName(
-      metadata.brand_name || metadata.display_name || partner?.name,
-    );
-    if (!providerName) continue;
-    const providerCode = resolveProviderCode(partner) || undefined;
-    const providerRecord: BillProviderRecord = {
-      label: providerName,
-      ...(providerCode ? { provider_code: providerCode } : {}),
-      ...(metadata.display_icon ? { display_icon: String(metadata.display_icon) } : {}),
-      ...(metadata.color ? { color: String(metadata.color) } : {}),
-      ...((metadata as any).logo_url || (metadata as any).logoUrl
-        ? { logo_url: String((metadata as any).logo_url || (metadata as any).logoUrl) }
-        : {}),
-      metadata: {
-        group: metadata.group,
-        rail: metadata.rail,
-        brand_name: metadata.brand_name,
-        display_name: metadata.display_name,
-        display_icon: metadata.display_icon,
-        provider_code: metadata.provider_code,
-        color: metadata.color,
-        logo_url: (metadata as any).logo_url || (metadata as any).logoUrl || '',
-        channels: metadata.channels,
-        bill_categories: metadata.bill_categories || metadata.billCategories || [],
-        operations: metadata.operations,
-        checkout_mode: metadata.checkout_mode,
-        countries: metadata.countries,
-      },
-    };
-    for (const categoryKey of resolveBillCategoryKeys(partner)) {
-      if (!bucket.has(categoryKey)) {
-        bucket.set(categoryKey, new Map<string, BillProviderRecord>());
-      }
-      const categoryProviders = bucket.get(categoryKey)!;
-      categoryProviders.set(
-        (providerCode || providerName).trim().toUpperCase(),
-        providerRecord,
-      );
-    }
-  }
-
-  return Array.from(bucket.entries())
-    .map(([key, providers]) => ({
-      key,
-      label: billCategoryLabels[key] || key,
-      providers: Array.from(providers.values()).sort((a, b) =>
-        a.label.localeCompare(b.label),
-      ),
-    }))
-    .sort((a, b) => a.label.localeCompare(b.label));
-}
+const quoteErrorStatus = (message: string) => {
+  if (/DB_OFFLINE|UNAVAILABLE/i.test(message)) return 503;
+  if (/NOT_CONFIGURED|NOT_FOUND|REQUIRED|ACCESS_DENIED|INSUFFICIENT|BLOCK/i.test(message)) return 400;
+  return 500;
+};
 
 type Deps = {
   authenticate: RequestHandler;
@@ -310,7 +110,7 @@ export const registerCommerceRoutes = (v1: Router, deps: Deps) => {
       const result = await LogicCore.createMerchantAccount(session.sub, req.body);
       res.json({ success: true, data: result });
     } catch (e: any) {
-      res.status(500).json({ success: false, error: e.message });
+      res.status(quoteErrorStatus(e.message)).json({ success: false, error: e.message });
     }
   });
 
@@ -323,7 +123,7 @@ export const registerCommerceRoutes = (v1: Router, deps: Deps) => {
       const result = await LogicCore.getUserMerchantAccounts(session.sub);
       res.json({ success: true, data: result });
     } catch (e: any) {
-      res.status(500).json({ success: false, error: e.message });
+      res.status(quoteErrorStatus(e.message)).json({ success: false, error: e.message });
     }
   });
 
@@ -494,7 +294,8 @@ export const registerCommerceRoutes = (v1: Router, deps: Deps) => {
       if (!result.success) return res.status(400).json(result);
       res.json({ success: true, data: result });
     } catch (e: any) {
-      res.status(e.message === 'GOAL_FUNDS_BILL_PAYMENT_NOT_ALLOWED' ? 400 : 500).json({ success: false, error: e.message });
+      const status = e.message === 'GOAL_FUNDS_BILL_PAYMENT_NOT_ALLOWED' ? 400 : quoteErrorStatus(e.message);
+      res.status(status).json({ success: false, error: e.message });
     }
   });
 
@@ -669,7 +470,7 @@ export const registerCommerceRoutes = (v1: Router, deps: Deps) => {
       const result = await LogicCore.getServiceLinkedCustomers(session.sub, 'AGENT');
       res.json({ success: true, data: result });
     } catch (e: any) {
-      res.status(500).json({ success: false, error: e.message });
+      res.status(quoteErrorStatus(e.message)).json({ success: false, error: e.message });
     }
   });
 
@@ -682,7 +483,7 @@ export const registerCommerceRoutes = (v1: Router, deps: Deps) => {
       const result = await LogicCore.getServiceCommissions(session.sub, 'AGENT');
       res.json({ success: true, data: result });
     } catch (e: any) {
-      res.status(500).json({ success: false, error: e.message });
+      res.status(quoteErrorStatus(e.message)).json({ success: false, error: e.message });
     }
   });
 

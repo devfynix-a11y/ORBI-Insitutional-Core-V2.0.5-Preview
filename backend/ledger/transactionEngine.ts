@@ -33,10 +33,14 @@ const bankingLogger = logger.child({ component: 'banking_engine' });
 export class BankingEngineService {
     
     public async process(user: User, intent: any): Promise<{ success: boolean, transaction?: Transaction, error?: string }> {
-        const { amount, currency, description, type, sourceWalletId, targetWalletId, categoryId, isSimulation, statusOverride } = intent;
+        if (intent.isSimulation) {
+            throw new Error('LEDGER_SIMULATION_NOT_SUPPORTED');
+        }
+
+        const { amount, currency, description, type, sourceWalletId, targetWalletId, categoryId, statusOverride } = intent;
         const txService = new TransactionService();
         
-        bankingLogger.info('banking.process_started', { actor_id: user.id, transaction_type: type, simulation: isSimulation, source_wallet_id: sourceWalletId, target_wallet_id: targetWalletId, reference_id: intent.referenceId || intent.reference_id });
+        bankingLogger.info('banking.process_started', { actor_id: user.id, transaction_type: type, source_wallet_id: sourceWalletId, target_wallet_id: targetWalletId, reference_id: intent.referenceId || intent.reference_id });
 
         try {
             const txId = UUID.generate();
@@ -83,48 +87,8 @@ export class BankingEngineService {
             }
 
             // --- ENTERPRISE BUDGET ENFORCEMENT ---
-            if (categoryId && !isSimulation) {
+            if (categoryId) {
                 await txService.enforceBudgetLimits(user.id, categoryId, amount, txId, referenceId);
-            }
-
-            if (isSimulation) {
-                return {
-                    success: true,
-                    transaction: {
-                        id: txId,
-                        user_id: user.id,
-                        amount,
-                        description: `[SIM] ${description}`,
-                        type: (type === 'INTERNAL_TRANSFER' || type === 'PEER_TRANSFER') ? 'transfer' : 
-                              (type === 'DEPOSIT') ? 'deposit' : 
-                              (type === 'WITHDRAWAL') ? 'withdrawal' : 'expense',
-                        currency: currency || intent.currency,
-                        status: initialStatus,
-                        status_history: [
-                            { status: 'created', timestamp },
-                            { status: 'pending', timestamp },
-                            { status: 'authorized', timestamp },
-                            { status: initialStatus, timestamp }
-                        ],
-                        date: timestamp,
-                        createdAt: timestamp,
-                        walletId: resolvedSourceWalletId,
-                        toWalletId: resolvedTargetWalletId,
-                        referenceId: intent.referenceId,
-                        categoryId: categoryId,
-                        metadata: {
-                            ...intent.metadata,
-                            available_balance: balanceHint,
-                            available_balance_authoritative: false
-                        },
-                        tax_info: { 
-                            vat: fees.vat, 
-                            fee: fees.fee, 
-                            gov_fee: fees.gov_fee,
-                            rate: fees.rate 
-                        }
-                    }
-                };
             }
 
             // 4. STATE: PROCESSING (Committing to DB)
@@ -327,7 +291,7 @@ export class BankingEngineService {
                 }),
             };
 
-            if (balanceHint < totalDebit && !intent.isSimulation) {
+            if (balanceHint < totalDebit) {
                 bankingLogger.warn('banking.balance_preview_insufficient', { actor_id: userId, wallet_id: sourceWalletId, required_amount: totalDebit, available_preview_balance: balanceHint, sql_authority: true });
             }
         } else {
@@ -979,8 +943,7 @@ export class BankingEngineService {
     }
 
     private async commitToLocal(userId: string, txId: string, intent: any, legs: LedgerEntry[]) {
-        // Local storage simulation
-        bankingLogger.warn('banking.local_commit_fallback', { actor_id: userId, transaction_id: txId });
+        throw new Error('LOCAL_LEDGER_COMMIT_FALLBACK_DISABLED');
     }
 
     private async verifyLedgerIntegrity(txId: string): Promise<{ valid: boolean, failures: string[] }> {

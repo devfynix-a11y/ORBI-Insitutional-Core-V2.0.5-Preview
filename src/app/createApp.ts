@@ -39,7 +39,6 @@ const {
     gatewayBackgroundJobsEnabled,
     legacyApiGatewayEnabled,
     legacyBiometricAliasesEnabled,
-    sandboxRoutesEnabled,
     messagingTestRoutesEnabled,
     globalIpLimiter,
 } = createAppContext(app);
@@ -62,7 +61,6 @@ registerAppPublicRoutes({
     legacyApiGatewayEnabled,
     legacyBiometricAliasesEnabled,
     messagingTestRoutesEnabled,
-    sandboxRoutesEnabled,
     authenticate: authenticate as any,
     adminOnly: adminOnly as any,
     validate,

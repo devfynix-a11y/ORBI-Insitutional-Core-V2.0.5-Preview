@@ -21,6 +21,12 @@ type Deps = {
   TransactionIssueSchema: any;
 };
 
+const quoteErrorStatus = (message: string) => {
+  if (/DB_OFFLINE|UNAVAILABLE/i.test(message)) return 503;
+  if (/NOT_CONFIGURED|NOT_FOUND|REQUIRED|ACCESS_DENIED|INSUFFICIENT|BLOCK/i.test(message)) return 400;
+  return 500;
+};
+
 export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
   const {
     authenticate,
@@ -55,7 +61,7 @@ export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
       const result = await LogicCore.getUserTenants(session.sub);
       res.json({ success: true, data: result });
     } catch (e: any) {
-      res.status(500).json({ success: false, error: e.message });
+      res.status(quoteErrorStatus(e.message)).json({ success: false, error: e.message });
     }
   });
 

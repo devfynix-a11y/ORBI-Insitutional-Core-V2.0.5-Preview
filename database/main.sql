@@ -1127,6 +1127,9 @@ CREATE TABLE IF NOT EXISTS public.platform_fee_configs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
     flow_code TEXT NOT NULL,
+    transaction_model TEXT,
+    category_code TEXT,
+    category_id TEXT,
     transaction_type TEXT,
     operation_type TEXT,
     direction TEXT,
@@ -1279,6 +1282,11 @@ BEGIN
             ADD CONSTRAINT financial_partners_type_check_v2
             CHECK (LOWER(type) IN ('mobile_money', 'bank', 'card', 'crypto'));
     END IF;
+
+    ALTER TABLE public.platform_fee_configs
+        ADD COLUMN IF NOT EXISTS transaction_model TEXT,
+        ADD COLUMN IF NOT EXISTS category_code TEXT,
+        ADD COLUMN IF NOT EXISTS category_id TEXT;
 
     IF NOT EXISTS (
         SELECT 1
@@ -4473,7 +4481,13 @@ CREATE INDEX IF NOT EXISTS idx_settlement_lifecycle_batch ON public.settlement_l
 CREATE INDEX IF NOT EXISTS idx_settlement_lifecycle_provider_reference ON public.settlement_lifecycle(provider_reference);
 CREATE INDEX IF NOT EXISTS idx_settlement_lifecycle_lifecycle_key ON public.settlement_lifecycle(lifecycle_key);
 CREATE INDEX IF NOT EXISTS idx_provider_routing_rules_lookup ON public.provider_routing_rules(rail, operation_code, currency, country_code, status, priority);
-CREATE INDEX IF NOT EXISTS idx_platform_fee_configs_lookup ON public.platform_fee_configs(flow_code, status, currency, provider_id, rail, channel, direction, operation_type, transaction_type, priority);
+CREATE INDEX IF NOT EXISTS idx_platform_fee_configs_lookup ON public.platform_fee_configs(flow_code, status, currency, provider_id, rail, channel, direction, transaction_model, category_code, category_id, operation_type, transaction_type, priority);
+CREATE INDEX IF NOT EXISTS idx_platform_fee_configs_model ON public.platform_fee_configs(flow_code, transaction_model, status, priority);
+CREATE INDEX IF NOT EXISTS idx_platform_fee_configs_category_code ON public.platform_fee_configs(flow_code, category_code, status, priority);
+CREATE INDEX IF NOT EXISTS idx_platform_fee_configs_category_id ON public.platform_fee_configs(flow_code, category_id, status, priority);
+COMMENT ON COLUMN public.platform_fee_configs.transaction_model IS 'Canonical fee model resolved from transaction type, rail, and service context, e.g. WALLET_TRANSFER, BILL_PAYMENT, EXTERNAL_MOBILE_MONEY, AGENT_CASH.';
+COMMENT ON COLUMN public.platform_fee_configs.category_code IS 'Optional normalized business category code for fee specialization, e.g. ELECTRICITY, AIRTIME, SCHOOL_FEES, MERCHANT_GROCERY.';
+COMMENT ON COLUMN public.platform_fee_configs.category_id IS 'Optional application category id for exact category-level fee specialization.';
 CREATE INDEX IF NOT EXISTS idx_service_commissions_actor ON public.service_commissions(actor_user_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_service_commissions_source ON public.service_commissions(source_transaction_id);
 CREATE INDEX IF NOT EXISTS idx_agent_transactions_owner ON public.agent_transactions(owner_user_id, created_at DESC);

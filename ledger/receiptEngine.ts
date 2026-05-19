@@ -79,7 +79,7 @@ export const ReceiptEngine = {
          * Creates a modern gradient background
          */
         createGradient(doc: jsPDF, x: number, y: number, width: number, height: number, colors: number[][], angle: number = 0) {
-            // Simple gradient simulation for PDF
+            // Simple gradient rendering for PDF
             const steps = 10;
             const stepWidth = width / steps;
             

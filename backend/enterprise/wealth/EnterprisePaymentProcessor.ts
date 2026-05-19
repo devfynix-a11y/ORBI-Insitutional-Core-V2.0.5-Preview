@@ -32,7 +32,6 @@ export interface EntPaymentIntent {
     categoryId?: string;
     device?: any;
     metadata?: any;
-    dryRun?: boolean;
 }
 
 /**
@@ -46,28 +45,30 @@ export class EnterprisePaymentProcessor {
     public async process(user: User, intent: EntPaymentIntent): Promise<any> {
         console.log(`[EntProcessor] Starting process for user: ${user.id || 'N/A'}, customer_id: ${(user as any).customer_id || 'N/A'}`);
 
+        if ((intent as any).dryRun) {
+            throw new Error('TRANSACTION_DRY_RUN_NOT_SUPPORTED');
+        }
+
         // 1. IDEMPOTENCY CHECK (Critical for Enterprise)
-        if (!intent.dryRun) {
-            // Ensure we have a user ID for idempotency check
-            if (!user.id && (user as any).customer_id) {
-                const profile = await Identity.lookupUser((user as any).customer_id);
-                if (profile) {
-                    user.id = profile.id;
-                }
+        // Ensure we have a user ID for idempotency check
+        if (!user.id && (user as any).customer_id) {
+            const profile = await Identity.lookupUser((user as any).customer_id);
+            if (profile) {
+                user.id = profile.id;
             }
-            
-            if (!user.id) throw new Error("VALIDATION_ERROR: Sender identity could not be resolved for idempotency check.");
+        }
+        
+        if (!user.id) throw new Error("VALIDATION_ERROR: Sender identity could not be resolved for idempotency check.");
 
-            const { isDuplicate, cachedResponse } = await IdempotencyLayer.checkOrRegister(
-                intent.idempotencyKey, 
-                user.id, 
-                '/v2/transactions/process'
-            );
+        const { isDuplicate, cachedResponse } = await IdempotencyLayer.checkOrRegister(
+            intent.idempotencyKey, 
+            user.id, 
+            '/v2/transactions/process'
+        );
 
-            if (isDuplicate) {
-                console.log(`[EntProcessor] Idempotency hit for key: ${intent.idempotencyKey}`);
-                return cachedResponse;
-            }
+        if (isDuplicate) {
+            console.log(`[EntProcessor] Idempotency hit for key: ${intent.idempotencyKey}`);
+            return cachedResponse;
         }
 
         const referenceId = intent.referenceId || `REF-${UUID.generateShortCode(12)}`;
@@ -299,97 +300,80 @@ export class EnterprisePaymentProcessor {
             
             if (report.decision === 'BLOCK') {
                 const reasons = (report.results || []).filter((r: any) => !r.passed).map((r: any) => r.message).join('; ');
-                if (!intent.dryRun) await EventBus.publish('fintech.fraud.alert_triggered', '/core/risk', { userId: user.id, reasons });
+                await EventBus.publish('fintech.fraud.alert_triggered', '/core/risk', { userId: user.id, reasons });
                 throw new Error(`SECURITY_BLOCK: Transaction rejected by Risk Engine: ${reasons}`);
             }
 
             if (report.decision === 'CHALLENGE') {
-                if (intent.dryRun || intent.metadata?.source === 'sandbox_faucet') {
-                    console.log(`[EntProcessor] Challenge bypassed for ${intent.dryRun ? 'dryRun' : 'sandbox faucet'}.`);
-                } else {
-                    // Check for recent verification to avoid loop
-                    const security = new SecurityService();
-                    const activities = await security.getUserActivity(user.id);
-                    const recentVerification = activities.find(a => 
-                        a.activity_type === 'SENSITIVE_ACTION_VERIFIED' && 
-                        (a.status === 'success' || (a.status as any) === 'VERIFIED') &&
-                        (Date.now() - new Date(a.created_at).getTime()) < 5 * 60 * 1000 // 5 minutes
-                    );
+                // Check for recent verification to avoid loop
+                const security = new SecurityService();
+                const activities = await security.getUserActivity(user.id);
+                const recentVerification = activities.find(a => 
+                    a.activity_type === 'SENSITIVE_ACTION_VERIFIED' && 
+                    (a.status === 'success' || (a.status as any) === 'VERIFIED') &&
+                    (Date.now() - new Date(a.created_at).getTime()) < 5 * 60 * 1000 // 5 minutes
+                );
 
-                    if (recentVerification) {
-                        console.log(`[EntProcessor] Challenge bypassed due to recent verification: ${recentVerification.id}`);
-                    } else {
-                        let contact = user.email || user.phone;
-                        
-                        if (!contact) {
-                            const sb = getAdminSupabase();
-                            if (sb) {
-                                const { data } = await sb.auth.admin.getUserById(user.id);
-                                if (data?.user?.email) {
-                                    contact = data.user.email;
-                                } else if (data?.user?.phone) {
-                                    contact = data.user.phone;
-                                }
+                if (recentVerification) {
+                    console.log(`[EntProcessor] Challenge bypassed due to recent verification: ${recentVerification.id}`);
+                } else {
+                    let contact = user.email || user.phone;
+                    
+                    if (!contact) {
+                        const sb = getAdminSupabase();
+                        if (sb) {
+                            const { data } = await sb.auth.admin.getUserById(user.id);
+                            if (data?.user?.email) {
+                                contact = data.user.email;
+                            } else if (data?.user?.phone) {
+                                contact = data.user.phone;
                             }
                         }
-
-                        if (!contact) {
-                            throw new Error("SECURITY_ERROR: No contact method (email or phone) available for transaction verification.");
-                        }
-
-                        const type = contact.includes('@') ? 'email' : 'sms';
-                        const deviceName =
-                            intent?.device?.deviceName ||
-                            intent?.device?.device_name ||
-                            intent?.device?.deviceModel ||
-                            intent?.device?.model ||
-                            intent?.metadata?.deviceName ||
-                            intent?.metadata?.device_name ||
-                            user.user_metadata?.device_name ||
-                            'ORBI Mobile';
-                        const { requestId, code, deliveryType } = await OTPService.generateAndSend(user.id, contact, 'transaction_verification', type as any, deviceName);
-                        
-                        const challengeResponse = {
-                            success: false,
-                            error: 'SECURITY_CHALLENGE',
-                            message: `2FA required via ${deliveryType || type}`,
-                            requestId,
-                            controlId: referenceId,
-                            // DEV ONLY: Return code in API response
-                            dev_otp_code: code 
-                        };
-
-                        // Save challenge response to idempotency layer to handle network retries gracefully
-                        if (!intent.dryRun) {
-                            await IdempotencyLayer.saveResponse(intent.idempotencyKey, user.id, '/v2/transactions/process', 200, challengeResponse);
-                        }
-
-                        return challengeResponse;
                     }
+
+                    if (!contact) {
+                        throw new Error("SECURITY_ERROR: No contact method (email or phone) available for transaction verification.");
+                    }
+
+                    const type = contact.includes('@') ? 'email' : 'sms';
+                    const deviceName =
+                        intent?.device?.deviceName ||
+                        intent?.device?.device_name ||
+                        intent?.device?.deviceModel ||
+                        intent?.device?.model ||
+                        intent?.metadata?.deviceName ||
+                        intent?.metadata?.device_name ||
+                        user.user_metadata?.device_name ||
+                        'ORBI Mobile';
+                    const { requestId, code, deliveryType } = await OTPService.generateAndSend(user.id, contact, 'transaction_verification', type as any, deviceName);
+                    
+                    const challengeResponse = {
+                        success: false,
+                        error: 'SECURITY_CHALLENGE',
+                        message: `2FA required via ${deliveryType || type}`,
+                        requestId,
+                        controlId: referenceId,
+                        // DEV ONLY: Return code in API response
+                        dev_otp_code: code 
+                    };
+
+                    await IdempotencyLayer.saveResponse(intent.idempotencyKey, user.id, '/v2/transactions/process', 200, challengeResponse);
+                    return challengeResponse;
                 }
             }
 
             // 4. DISTRIBUTED LOCKING & ATOMIC COMMIT (via BankingEngine)
-            let result;
-            if (intent.dryRun) {
-                // No lock needed for simulation
-                result = await BankingEngine.process(user, { ...intent, categoryId: intent.categoryId, isSimulation: true } as any);
-                if (result.success && result.transaction) {
-                    this.verifyTransaction(intent, result.transaction);
-                }
-            } else {
-                const lockIds = [intent.sourceWalletId, intent.targetWalletId].filter((id): id is string => !!id);
-                result = await LockManager.withLock(
-                    lockIds, 
-                    async () => {
-                        const txResult = await BankingEngine.process(user, { ...intent, categoryId: intent.categoryId, isSimulation: false } as any);
-                        if (txResult.success && txResult.transaction) {
-                            this.verifyTransaction(intent, txResult.transaction);
-                        }
-                        return txResult;
+            const lockIds = [intent.sourceWalletId, intent.targetWalletId].filter((id): id is string => !!id);
+            const result = await LockManager.withLock(
+                lockIds, 
+                async () => {
+                    const txResult = await BankingEngine.process(user, { ...intent, categoryId: intent.categoryId } as any);
+                    if (txResult.success && txResult.transaction) {
+                        this.verifyTransaction(intent, txResult.transaction);
                     }
-                );
-            }
+                    return txResult;
+                }
+            );
 
             if (!result.success || !result.transaction) {
                 throw new Error(`LEDGER_COMMIT_FAILED: ${result.error}`);
@@ -405,7 +389,6 @@ export class EnterprisePaymentProcessor {
 
             const responsePayload = {
                 success: true,
-                simulated: !!intent.dryRun,
                 controlId: referenceId,
                 transaction: {
                     ...finalTx,
@@ -428,71 +411,69 @@ export class EnterprisePaymentProcessor {
                     total: (intent.amount) + (finalTx.tax_info?.vat || 0) + (finalTx.tax_info?.fee || 0) + (finalTx.tax_info?.gov_fee || 0),
                     available_balance: finalTx.metadata?.available_balance
                 },
-                status: intent.dryRun ? 'simulation_ready' : 'completed',
+                status: 'completed',
                 metadata: {
                     security_score: report.score,
                     decision: report.decision
                 }
             };
 
-            if (!intent.dryRun) {
-                // 6. EVENT PUBLISHING (Async Ecosystem)
-                await EventBus.publish('fintech.transaction.settled', '/core/ledger', responsePayload);
+            // 6. EVENT PUBLISHING (Async Ecosystem)
+            await EventBus.publish('fintech.transaction.settled', '/core/ledger', responsePayload);
 
-                // 7. SAVE IDEMPOTENCY RESPONSE
-                await IdempotencyLayer.saveResponse(intent.idempotencyKey, user.id, '/v2/transactions/process', 200, responsePayload);
+            // 7. SAVE IDEMPOTENCY RESPONSE
+            await IdempotencyLayer.saveResponse(intent.idempotencyKey, user.id, '/v2/transactions/process', 200, responsePayload);
 
-                // 8. SEND SECURITY & THANK YOU MESSAGES (Only for non-transfers, as BankingEngine handles transfers)
-                if (intent.type !== 'INTERNAL_TRANSFER' && (intent.type as any) !== 'PEER_TRANSFER') {
-                    const timestamp = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase();
-                    const refId = referenceId || responsePayload.transaction?.id || intent.idempotencyKey || 'N/A';
-                    const amountStr = typeof intent.amount === 'number' ? intent.amount.toLocaleString() : intent.amount;
-                    
-                    const sb = getAdminSupabase();
-                    let language = 'en';
-                    let userName = user.user_metadata?.full_name;
-                    
-                    if (sb) {
-                        const { data: profile } = await sb.from('users').select('full_name, language').eq('id', user.id).maybeSingle();
-                        if (profile) {
-                            userName = profile.full_name || userName;
-                            language = profile.language || 'en';
-                        }
+            // 8. SEND SECURITY & THANK YOU MESSAGES (Only for non-transfers, as BankingEngine handles transfers)
+            if (intent.type !== 'INTERNAL_TRANSFER' && (intent.type as any) !== 'PEER_TRANSFER') {
+                const timestamp = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase();
+                const refId = referenceId || responsePayload.transaction?.id || intent.idempotencyKey || 'N/A';
+                const amountStr = typeof intent.amount === 'number' ? intent.amount.toLocaleString() : intent.amount;
+                
+                const sb = getAdminSupabase();
+                let language = 'en';
+                let userName = user.user_metadata?.full_name;
+                
+                if (sb) {
+                    const { data: profile } = await sb.from('users').select('full_name, language').eq('id', user.id).maybeSingle();
+                    if (profile) {
+                        userName = profile.full_name || userName;
+                        language = profile.language || 'en';
                     }
-                    
-                    const isSw = language === 'sw';
-                    userName = userName || (isSw ? 'Mteja' : 'Customer');
-                    const footer = isSw 
-                        ? "Asante kwa kuichagua ORBI, tunathamini imani yako. Timu ya Kifedha ya ORBI"
-                        : "Thank you For choosing ORBI, We value your trust. The ORBI Financial Team";
-                    
-                    let msg = '';
-                    let subject = isSw ? 'Muamala Umekamilika' : 'Transaction Successful';
-
-                    if (intent.type === 'DEPOSIT') {
-                        msg = isSw 
-                            ? `Ndugu ${userName} umefanikiwa kupokea ${intent.currency} ${amountStr}/= kwenye akaunti yako ya ORBI saa ${timestamp}. Kumbukumbu ${refId} . ${footer}`
-                            : `Dear ${userName} you have successfully received ${intent.currency} ${amountStr}/= on your ORBI account at ${timestamp}. Reference ${refId} . ${footer}`;
-                    } else if (intent.type === 'WITHDRAWAL') {
-                        msg = isSw
-                            ? `Ndugu ${userName} umefanikiwa kutoa ${intent.currency} ${amountStr}/= kutoka kwenye akaunti yako ya ORBI saa ${timestamp}. Kumbukumbu ${refId} . ${footer}`
-                            : `Dear ${userName} you have successfully withdrawn ${intent.currency} ${amountStr}/= from your ORBI account at ${timestamp}. Reference ${refId} . ${footer}`;
-                    } else {
-                        const typeLabel = isSw ? 'ombi lako' : `your ${intent.type.toLowerCase()} request`;
-                        msg = isSw
-                            ? `Ndugu ${userName} ${typeLabel} la ${intent.currency} ${amountStr}/= limekamilika kwa mafanikio saa ${timestamp}. Kumbukumbu ${refId} . ${footer}`
-                            : `Dear ${userName} ${typeLabel} of ${intent.currency} ${amountStr}/= has been processed successfully at ${timestamp}. Reference ${refId} . ${footer}`;
-                    }
-                    
-                    // Message to Sender (Debit/Deposit/Withdrawal) via Push & SMS
-                    await Messaging.dispatch(
-                        user.id, 
-                        'info', 
-                        subject, 
-                        msg,
-                        { sms: true, email: true }
-                    );
                 }
+                
+                const isSw = language === 'sw';
+                userName = userName || (isSw ? 'Mteja' : 'Customer');
+                const footer = isSw 
+                    ? "Asante kwa kuichagua ORBI, tunathamini imani yako. Timu ya Kifedha ya ORBI"
+                    : "Thank you For choosing ORBI, We value your trust. The ORBI Financial Team";
+                
+                let msg = '';
+                let subject = isSw ? 'Muamala Umekamilika' : 'Transaction Successful';
+
+                if (intent.type === 'DEPOSIT') {
+                    msg = isSw 
+                        ? `Ndugu ${userName} umefanikiwa kupokea ${intent.currency} ${amountStr}/= kwenye akaunti yako ya ORBI saa ${timestamp}. Kumbukumbu ${refId} . ${footer}`
+                        : `Dear ${userName} you have successfully received ${intent.currency} ${amountStr}/= on your ORBI account at ${timestamp}. Reference ${refId} . ${footer}`;
+                } else if (intent.type === 'WITHDRAWAL') {
+                    msg = isSw
+                        ? `Ndugu ${userName} umefanikiwa kutoa ${intent.currency} ${amountStr}/= kutoka kwenye akaunti yako ya ORBI saa ${timestamp}. Kumbukumbu ${refId} . ${footer}`
+                        : `Dear ${userName} you have successfully withdrawn ${intent.currency} ${amountStr}/= from your ORBI account at ${timestamp}. Reference ${refId} . ${footer}`;
+                } else {
+                    const typeLabel = isSw ? 'ombi lako' : `your ${intent.type.toLowerCase()} request`;
+                    msg = isSw
+                        ? `Ndugu ${userName} ${typeLabel} la ${intent.currency} ${amountStr}/= limekamilika kwa mafanikio saa ${timestamp}. Kumbukumbu ${refId} . ${footer}`
+                        : `Dear ${userName} ${typeLabel} of ${intent.currency} ${amountStr}/= has been processed successfully at ${timestamp}. Reference ${refId} . ${footer}`;
+                }
+                
+                // Message to Sender (Debit/Deposit/Withdrawal) via Push & SMS
+                await Messaging.dispatch(
+                    user.id, 
+                    'info', 
+                    subject, 
+                    msg,
+                    { sms: true, email: true }
+                );
             }
 
             return responsePayload;
@@ -501,20 +482,18 @@ export class EnterprisePaymentProcessor {
             // Handle Failure
             const errorPayload = { success: false, error: error.message, status: 'failed', controlId: referenceId };
             
-            if (!intent.dryRun) {
-                // Determine if error is transient
-                const isTransient = error.message.includes('LOCK_TIMEOUT') || 
-                                    error.message.includes('LEDGER_COMMIT_FAILED') || 
-                                    error.message.includes('LEDGER_FAULT') ||
-                                    error.message.includes('INFRASTRUCTURE_ERROR');
-                
-                if (isTransient) {
-                    console.warn(`[EntProcessor] Transient error encountered, clearing idempotency key for retry. Error: ${error.message}`);
-                    await IdempotencyLayer.clearKey(intent.idempotencyKey, user.id, '/v2/transactions/process');
-                } else {
-                    // Save permanent errors to idempotency cache
-                    await IdempotencyLayer.saveResponse(intent.idempotencyKey, user.id, '/v2/transactions/process', 400, errorPayload);
-                }
+            // Determine if error is transient
+            const isTransient = error.message.includes('LOCK_TIMEOUT') || 
+                                error.message.includes('LEDGER_COMMIT_FAILED') || 
+                                error.message.includes('LEDGER_FAULT') ||
+                                error.message.includes('INFRASTRUCTURE_ERROR');
+            
+            if (isTransient) {
+                console.warn(`[EntProcessor] Transient error encountered, clearing idempotency key for retry. Error: ${error.message}`);
+                await IdempotencyLayer.clearKey(intent.idempotencyKey, user.id, '/v2/transactions/process');
+            } else {
+                // Save permanent errors to idempotency cache
+                await IdempotencyLayer.saveResponse(intent.idempotencyKey, user.id, '/v2/transactions/process', 400, errorPayload);
             }
             return errorPayload;
         }

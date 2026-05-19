@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -6,7 +7,7 @@ if (!JWT_SECRET && process.env.NODE_ENV === 'production') {
     throw new Error("JWT_SECRET is required in production");
 }
 
-const FINAL_SECRET = JWT_SECRET || "secure-bank-secret-key-dev";
+const FINAL_SECRET = JWT_SECRET || crypto.randomBytes(64).toString('base64url');
 
 export class SessionService {
     createSession(

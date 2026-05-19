@@ -1,3 +1,5 @@
+import crypto from 'crypto';
+
 const isMissingRpc = (error: any, functionName: string): boolean => {
   const code = String(error?.code || '');
   const message = String(error?.message || '');
@@ -51,7 +53,7 @@ const createWealthTransaction = async (
     transactionStatus?: string;
   },
 ) => {
-  const reference = `wealth_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+  const reference = `wealth_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
   const { data, error } = await sb
     .from('transactions')
     .insert({

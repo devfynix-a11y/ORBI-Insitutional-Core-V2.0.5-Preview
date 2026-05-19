@@ -97,33 +97,7 @@ class ClusterService {
     }
 
     public async restartPod(podId: string) {
-        const pods = this.getPods();
-        const idx = pods.findIndex(p => p.id === podId);
-        if (idx !== -1) {
-            const originalStatus = pods[idx].status;
-            pods[idx].status = 'PENDING';
-            pods[idx].logs.push({ 
-                timestamp: new Date().toISOString(), 
-                level: 'WARN', 
-                message: `SIGTERM: Autonomous Healing triggered from ${originalStatus} state.` 
-            });
-            this.savePods(pods);
-            
-            // Professional staggered restart simulation
-            setTimeout(() => {
-                const latest = this.getPods();
-                const currentIdx = latest.findIndex(p => p.id === podId);
-                if (currentIdx !== -1) {
-                    latest[currentIdx].status = 'RUNNING';
-                    latest[currentIdx].logs.push({ 
-                        timestamp: new Date().toISOString(), 
-                        level: 'INFO', 
-                        message: 'Node online. Health probes passed. Traffic re-routing active.' 
-                    });
-                    this.savePods(latest);
-                }
-            }, 5000);
-        }
+        throw new Error('CLUSTER_RESTART_PROVIDER_NOT_CONFIGURED');
     }
 
     public async tripCircuit(podId: string, reason: string) {

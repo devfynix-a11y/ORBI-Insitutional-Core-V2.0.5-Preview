@@ -15,6 +15,9 @@ type PlatformFeeFilters = {
   currency?: string;
   countryCode?: string;
   rail?: string;
+  transactionModel?: string;
+  categoryCode?: string;
+  categoryId?: string;
 };
 
 type FeeResolutionInput = {
@@ -26,28 +29,12 @@ type FeeResolutionInput = {
   rail?: RailType | string;
   channel?: string;
   direction?: string;
+  transactionModel?: string;
+  categoryCode?: string;
+  categoryId?: string;
   operationType?: string;
   transactionType?: string;
   metadata?: Record<string, any>;
-};
-
-const LEGACY_DEFAULTS: Record<string, Partial<PlatformFeeConfig>> = {
-  CORE_TRANSACTION: { percentage_rate: 0.01, tax_rate: 0.05, stamp_duty_fixed: 1, gov_fee_rate: 0 },
-  EXTERNAL_PAYMENT: { percentage_rate: 0.01, tax_rate: 0.05, stamp_duty_fixed: 1, gov_fee_rate: 0.005 },
-  WITHDRAWAL: { percentage_rate: 0.01, tax_rate: 0.05, stamp_duty_fixed: 1, gov_fee_rate: 0.005 },
-  EXTERNAL_TO_INTERNAL: { percentage_rate: 0, tax_rate: 0, stamp_duty_fixed: 0, gov_fee_rate: 0 },
-  INTERNAL_TO_EXTERNAL: { percentage_rate: 0, tax_rate: 0, stamp_duty_fixed: 0, gov_fee_rate: 0 },
-  EXTERNAL_TO_EXTERNAL: { percentage_rate: 0, tax_rate: 0, stamp_duty_fixed: 0, gov_fee_rate: 0 },
-  CARD_SETTLEMENT: { percentage_rate: 0.01, tax_rate: 0, stamp_duty_fixed: 0, gov_fee_rate: 0 },
-  GATEWAY_SETTLEMENT: { percentage_rate: 0.01, tax_rate: 0, stamp_duty_fixed: 0, gov_fee_rate: 0 },
-  FX_CONVERSION: { percentage_rate: 0.005, tax_rate: 0, stamp_duty_fixed: 0, gov_fee_rate: 0 },
-  TENANT_SETTLEMENT_PAYOUT: { percentage_rate: 0.005, fixed_amount: 500, minimum_fee: 500, tax_rate: 0, stamp_duty_fixed: 0, gov_fee_rate: 0 },
-  MERCHANT_PAYMENT: { percentage_rate: 0.01, tax_rate: 0, stamp_duty_fixed: 0, gov_fee_rate: 0 },
-  AGENT_CASH_DEPOSIT: { percentage_rate: 0, tax_rate: 0, stamp_duty_fixed: 0, gov_fee_rate: 0 },
-  AGENT_CASH_WITHDRAWAL: { percentage_rate: 0.005, tax_rate: 0, stamp_duty_fixed: 0, gov_fee_rate: 0 },
-  AGENT_REFERRAL_COMMISSION: { percentage_rate: 0.005, fixed_amount: 0, tax_rate: 0, stamp_duty_fixed: 0, gov_fee_rate: 0 },
-  AGENT_CASH_COMMISSION: { percentage_rate: 0.003, fixed_amount: 0, tax_rate: 0, stamp_duty_fixed: 0, gov_fee_rate: 0 },
-  SYSTEM_OPERATION: { percentage_rate: 0, tax_rate: 0, stamp_duty_fixed: 0, gov_fee_rate: 0 },
 };
 
 export class PlatformFeeService {
@@ -90,7 +77,6 @@ export class PlatformFeeService {
     if (filters?.currency) query = query.eq('currency', String(filters.currency).trim().toUpperCase());
     if (filters?.countryCode) query = query.eq('country_code', String(filters.countryCode).trim().toUpperCase());
     if (filters?.rail) query = query.eq('rail', String(filters.rail).trim().toUpperCase());
-
     const { data, error } = await query;
     if (error) throw new Error(error.message);
     const rows = data || [];
@@ -126,6 +112,9 @@ export class PlatformFeeService {
     const normalized = {
       name: String(payload.name ?? current.name ?? '').trim(),
       flow_code: String(payload.flowCode ?? payload.flow_code ?? current.flow_code ?? '').trim().toUpperCase(),
+      transaction_model: this.normalizeNullableText(payload.transactionModel ?? payload.transaction_model ?? current.transaction_model),
+      category_code: this.normalizeNullableText(payload.categoryCode ?? payload.category_code ?? current.category_code),
+      category_id: this.normalizeNullableText(payload.categoryId ?? payload.category_id ?? current.category_id),
       transaction_type: this.normalizeNullableText(payload.transactionType ?? payload.transaction_type ?? current.transaction_type),
       operation_type: this.normalizeNullableText(payload.operationType ?? payload.operation_type ?? current.operation_type),
       direction: this.normalizeNullableText(payload.direction ?? current.direction),
@@ -194,9 +183,15 @@ export class PlatformFeeService {
       currency,
       countryCode: input.countryCode,
       rail: input.rail,
+      transactionModel: input.transactionModel,
+      categoryCode: input.categoryCode,
+      categoryId: input.categoryId,
     });
 
-    const config = this.selectBestConfig(activeConfigs as PlatformFeeConfig[], input) || this.buildLegacyFallback(flowCode, currency);
+    const config = this.selectBestConfig(activeConfigs as PlatformFeeConfig[], input);
+    if (!config) {
+      throw new Error(`PLATFORM_FEE_CONFIG_REQUIRED:${flowCode}:${currency}:${input.providerId || 'ANY'}`);
+    }
     return this.computeFromConfig(config, amount, currency, input);
   }
 
@@ -208,6 +203,9 @@ export class PlatformFeeService {
       currency: String(filters?.currency || '').trim().toUpperCase(),
       countryCode: String(filters?.countryCode || '').trim().toUpperCase(),
       rail: String(filters?.rail || '').trim().toUpperCase(),
+      transactionModel: String(filters?.transactionModel || '').trim().toUpperCase(),
+      categoryCode: String(filters?.categoryCode || '').trim().toUpperCase(),
+      categoryId: String(filters?.categoryId || '').trim(),
     };
     return JSON.stringify(normalized);
   }
@@ -220,6 +218,9 @@ export class PlatformFeeService {
       rail: this.normalizeNullableText(input.rail),
       channel: this.normalizeNullableText(input.channel),
       direction: this.normalizeNullableText(input.direction),
+      transactionModel: this.normalizeNullableText(input.transactionModel),
+      categoryCode: this.normalizeNullableText(input.categoryCode),
+      categoryId: this.normalizeNullableText(input.categoryId),
       operationType: this.normalizeNullableText(input.operationType),
       transactionType: this.normalizeNullableText(input.transactionType),
     };
@@ -231,6 +232,9 @@ export class PlatformFeeService {
       .filter((config) => this.matchesOptionalField(config.rail, normalized.rail))
       .filter((config) => this.matchesOptionalField(config.channel, normalized.channel))
       .filter((config) => this.matchesOptionalField(config.direction, normalized.direction))
+      .filter((config) => this.matchesOptionalField(config.transaction_model ?? config.metadata?.transaction_model, normalized.transactionModel))
+      .filter((config) => this.matchesOptionalField(config.category_code ?? config.metadata?.category_code, normalized.categoryCode))
+      .filter((config) => this.matchesOptionalField(config.category_id ?? config.metadata?.category_id, normalized.categoryId))
       .filter((config) => this.matchesOptionalField(config.operation_type, normalized.operationType))
       .filter((config) => this.matchesOptionalField(config.transaction_type, normalized.transactionType))
       .sort((a, b) => {
@@ -266,7 +270,7 @@ export class PlatformFeeService {
     return {
       flowCode: String(config.flow_code || input.flowCode).trim().toUpperCase(),
       configId: config.id || null,
-      configName: config.name || 'LEGACY_FALLBACK',
+      configName: config.name || 'CONFIGURED_FEE',
       currency,
       amount,
       percentageRate,
@@ -282,31 +286,21 @@ export class PlatformFeeService {
       govFeeAmount,
       totalFee,
       netAmount: this.roundAmount(amount - totalFee),
+      classification: {
+        transactionModel: input.transactionModel || null,
+        categoryCode: input.categoryCode || null,
+        categoryId: input.categoryId || null,
+        transactionType: input.transactionType || null,
+        operationType: input.operationType || null,
+        direction: input.direction || null,
+        rail: input.rail || null,
+        channel: input.channel || null,
+      },
       metadata: {
         ...(config.metadata || {}),
         input_metadata: input.metadata || {},
         provider_id: input.providerId || null,
       },
-    };
-  }
-
-  private buildLegacyFallback(flowCode: string, currency: string): Partial<PlatformFeeConfig> {
-    const fallback = LEGACY_DEFAULTS[flowCode] || LEGACY_DEFAULTS.CORE_TRANSACTION;
-    return {
-      id: null as any,
-      name: `LEGACY_${flowCode}`,
-      flow_code: flowCode,
-      currency,
-      percentage_rate: fallback.percentage_rate ?? 0,
-      fixed_amount: fallback.fixed_amount ?? 0,
-      minimum_fee: fallback.minimum_fee ?? 0,
-      maximum_fee: fallback.maximum_fee ?? null,
-      tax_rate: fallback.tax_rate ?? 0,
-      gov_fee_rate: fallback.gov_fee_rate ?? 0,
-      stamp_duty_fixed: fallback.stamp_duty_fixed ?? 0,
-      priority: 9999,
-      status: 'ACTIVE',
-      metadata: { fallback: true },
     };
   }
 
@@ -328,6 +322,9 @@ export class PlatformFeeService {
       config.rail,
       config.channel,
       config.direction,
+      config.transaction_model ?? config.metadata?.transaction_model,
+      config.category_code ?? config.metadata?.category_code,
+      config.category_id ?? config.metadata?.category_id,
       config.operation_type,
       config.transaction_type,
     ].filter((value) => value !== null && value !== undefined && String(value).trim() !== '').length;

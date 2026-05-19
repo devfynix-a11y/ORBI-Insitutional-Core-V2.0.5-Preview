@@ -1,6 +1,7 @@
 
 import { Transaction, Goal, UserRole, Permission } from './types.js';
 import { PLATFORM_LOGO_LINK } from '../services/platform_Logo.js';
+import { randomUUID } from 'crypto';
 
 export const APP_LOGO_URL = PLATFORM_LOGO_LINK;
 
@@ -60,11 +61,7 @@ export const CurrencyUtils = {
 
 export const UUID = {
     generate: (): string => {
-        if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
-        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-            const r = Math.random() * 16 | 0;
-            return (c == 'x' ? r : (r & 0x3 | 0x8)).toString(16);
-        });
+        return randomUUID();
     }
 };
 

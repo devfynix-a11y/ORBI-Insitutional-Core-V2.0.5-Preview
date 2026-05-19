@@ -576,7 +576,6 @@ export const registerSharedBudgetRoutes = (v1: Router, deps: Deps) => {
           spend_origin: 'SHARED_BUDGET',
           spend_type: payload.type || 'EXTERNAL_PAYMENT',
         },
-        dryRun: true,
       });
       if (!result.success) return res.status(400).json(result);
       res.json({

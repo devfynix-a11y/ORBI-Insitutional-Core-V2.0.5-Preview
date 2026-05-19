@@ -3,6 +3,7 @@ import { UUID } from '../../services/utils.js';
 import { Audit } from '../security/audit.js';
 import { OfflineMessageType, OfflineSessionStatus } from '../../types.js';
 import { offlineOrbiBridge } from './OfflineOrbiBridge.js';
+import crypto from 'crypto';
 
 type GatewayPayload = {
     gatewayId: string;
@@ -278,7 +279,7 @@ export class OfflineGatewayService {
     }
 
     private generateChallengeCode(): string {
-        return String(Math.floor(100000 + Math.random() * 900000));
+        return crypto.randomInt(100000, 1000000).toString();
     }
 
     private formatChallenge(requestId: string, challengeCode: string): string {

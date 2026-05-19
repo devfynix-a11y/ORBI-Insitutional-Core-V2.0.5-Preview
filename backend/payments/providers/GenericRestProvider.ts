@@ -21,6 +21,7 @@ import {
     resolveOperationServiceKey,
     resolveProviderBaseUrl,
 } from './ProviderRegistryAdapter.js';
+import crypto from 'crypto';
 import { providerCapabilityService } from '../ProviderCapabilityService.js';
 
 export class GenericRestProvider implements IProviderAdapter {
@@ -145,7 +146,7 @@ export class GenericRestProvider implements IProviderAdapter {
             providerRef:
                 response.external_id ||
                 request.reference ||
-                `GEN-${Math.random().toString(36).substring(2, 10).toUpperCase()}`,
+                `GEN-${crypto.randomBytes(5).toString('hex').toUpperCase()}`,
             status: this.normalizeExecutionStatus(response.status),
             message: response.message || `Provider request accepted by ${resolvedPartner.name}.`,
             externalId: response.external_id,

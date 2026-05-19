@@ -2,6 +2,7 @@
 import { RegulatoryConfig, User } from '../../types.js';
 import { getSupabase } from '../../services/supabaseClient.js';
 import { platformFeeService } from '../payments/PlatformFeeService.js';
+import { transactionFeeClassifier } from '../payments/TransactionFeeClassifier.js';
 
 /**
  * ORBI REGULATORY & COMPLIANCE NODE (V8.2)
@@ -17,15 +18,7 @@ export class RegulatoryServiceNode {
             if (data) return data;
         }
 
-        return {
-            id: 'reg-default-01',
-            vat_rate: 0.05,
-            service_fee_rate: 0.01,
-            gov_fee_rate: 0.005,
-            stamp_duty_fixed: 1.0,
-            is_active: true,
-            updated_at: new Date().toISOString()
-        };
+        throw new Error('REGULATORY_CONFIG_NOT_CONFIGURED');
     }
 
     /**
@@ -35,14 +28,6 @@ export class RegulatoryServiceNode {
     public async resolveSystemNode(role: 'ESCROW_VAULT' | 'FEE_COLLECTOR' | 'TAX_RESERVE' | 'FX_CLEARING'): Promise<string> {
         const sb = getSupabase();
         
-        // Fallback to deterministic IDs for local simulation
-        const fallbacks = {
-            ESCROW_VAULT: '00000000-0000-0000-0000-000000000001',
-            FEE_COLLECTOR: '00000000-0000-0000-0000-000000000003',
-            TAX_RESERVE: '00000000-0000-0000-0000-000000000004',
-            FX_CLEARING: '00000000-0000-0000-0000-000000000005'
-        };
-
         if (sb) {
             try {
                 const { data } = await sb.from('system_nodes').select('vault_id').eq('node_type', role).maybeSingle();
@@ -54,7 +39,7 @@ export class RegulatoryServiceNode {
             }
         }
         
-        return fallbacks[role];
+        throw new Error(`SYSTEM_NODE_NOT_CONFIGURED:${role}`);
     }
 
     public async calculateFees(
@@ -69,25 +54,29 @@ export class RegulatoryServiceNode {
             throw new Error(`FEE_CURRENCY_REQUIRED:${normalizedType || 'CORE_TRANSACTION'}`);
         }
         const metadata = context?.metadata || {};
-        const serviceContext = String(metadata.service_context || '').trim().toUpperCase();
-        const cashDirection = String(metadata.cash_direction || '').trim().toLowerCase();
-
-        const flowCode =
-            serviceContext === 'MERCHANT' ? 'MERCHANT_PAYMENT'
-            : serviceContext === 'AGENT_CASH' && cashDirection === 'withdrawal' ? 'AGENT_CASH_WITHDRAWAL'
-            : serviceContext === 'AGENT_CASH' ? 'AGENT_CASH_DEPOSIT'
-            : serviceContext === 'SERVICE_COMMISSION' || serviceContext === 'SYSTEM' ? 'SYSTEM_OPERATION'
-            : normalizedType === 'EXTERNAL_PAYMENT' ? 'EXTERNAL_PAYMENT'
-            : normalizedType === 'WITHDRAWAL' ? 'WITHDRAWAL'
-            : normalizedType === 'DEPOSIT' ? 'DEPOSIT'
-            : normalizedType === 'INTERNAL_TRANSFER' ? 'INTERNAL_TRANSFER'
-            : 'CORE_TRANSACTION';
+        const classification = transactionFeeClassifier.classify({
+            type: normalizedType,
+            category: context?.category,
+            categoryId: metadata.category_id || metadata.categoryId,
+            metadata,
+            channel: metadata.channel,
+            rail: metadata.rail,
+            operation: metadata.operation || metadata.operation_code,
+        });
 
         const feeResult = await platformFeeService.resolveFee({
-            flowCode,
+            flowCode: classification.flowCode,
             amount,
             currency: normalizedCurrency,
-            transactionType: normalizedType,
+            rail: classification.rail,
+            channel: classification.channel,
+            direction: classification.direction,
+            transactionModel: classification.transactionModel,
+            categoryCode: classification.categoryCode,
+            categoryId: classification.categoryId,
+            operationType: classification.operationType,
+            transactionType: classification.transactionType,
+            metadata,
         });
 
         return {

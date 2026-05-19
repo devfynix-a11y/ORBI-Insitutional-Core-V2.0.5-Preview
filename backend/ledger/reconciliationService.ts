@@ -7,6 +7,7 @@ import { UUID } from '../../services/utils.js';
 import { TransactionService } from '../../ledger/transactionService.js';
 import { BankingEngine } from './transactionEngine.js';
 import { ProviderFactory } from '../payments/providers/ProviderFactory.js';
+import { resolveProviderCode } from '../payments/financialPartnerMetadata.js';
 import { SocketRegistry } from '../infrastructure/SocketRegistry.js';
 import { Messaging } from '../features/MessagingService.js';
 import { DataProtection } from '../security/DataProtection.js';
@@ -20,6 +21,40 @@ import { DataProtection } from '../security/DataProtection.js';
  * Now handles 'Stuck Transaction' reaping for staged settlements.
  */
 export class ReconciliationService {
+    private async resolvePartnerForVault(vault: any, partners: any[]): Promise<any | null> {
+        const metadata = vault?.metadata && typeof vault.metadata === 'object' ? vault.metadata : {};
+        const candidates = [
+            metadata.partner_id,
+            metadata.partnerId,
+            metadata.provider_id,
+            metadata.providerId,
+            metadata.partner_code,
+            metadata.partnerCode,
+            metadata.provider_code,
+            metadata.providerCode,
+        ]
+            .map((value) => String(value || '').trim())
+            .filter(Boolean);
+
+        if (!candidates.length) return null;
+
+        for (const candidate of candidates) {
+            const directMatch = partners.find((partner) => String(partner?.id || '').trim() === candidate);
+            if (directMatch) return directMatch;
+
+            const normalizedCandidate = candidate.toLowerCase();
+            const codeMatch = partners.find((partner) => {
+                const providerCode = resolveProviderCode(partner).trim().toLowerCase();
+                return providerCode && providerCode === normalizedCandidate;
+            });
+            if (codeMatch) return codeMatch;
+
+            const nameMatch = partners.find((partner) => String(partner?.name || '').trim().toLowerCase() === normalizedCandidate);
+            if (nameMatch) return nameMatch;
+        }
+
+        return null;
+    }
     
     /**
      * STUCK TRANSACTION REAPER
@@ -337,20 +372,38 @@ export class ReconciliationService {
         try {
             // Fetch active vaults
             const { data: vaults } = await sb.from('platform_vaults')
-                .select('id, user_id, name, balance')
+                .select('id, user_id, name, balance, metadata')
                 .limit(50);
 
             if (!vaults || vaults.length === 0) return { status: 'COMPLETED', discrepancies: 0 };
 
+            const { data: partners, error: partnersError } = await sb
+                .from('financial_partners')
+                .select('*')
+                .eq('status', 'ACTIVE');
+            if (partnersError) throw partnersError;
+            if (!partners || partners.length === 0) {
+                return { status: 'SKIPPED', reason: 'NO_ACTIVE_PARTNERS' };
+            }
+
             let discrepancies = 0;
             const auditLogs = [];
+            let totalChecked = 0;
 
             for (const vault of vaults) {
                 const internalBalance = Number(vault.balance);
                 
                 // 1. Resolve Partner
-                const { data: partner } = await sb.from('financial_partners').select('*').limit(1).single(); // Simplified for now
-                if (!partner) continue;
+                const partner = await this.resolvePartnerForVault(vault, partners);
+                if (!partner) {
+                    console.warn(`[ReconEngine] Skipping vault ${vault.id}: no configured partner mapping found in vault metadata.`);
+                    await Audit.log('SECURITY', 'recon-engine', 'PARTNER_RECON_SKIPPED_UNMAPPED_VAULT', {
+                        vaultId: vault.id,
+                        vaultName: vault.name,
+                    });
+                    continue;
+                }
+                totalChecked++;
 
                 // 2. Fetch External Balance
                 const provider = ProviderFactory.getProvider(partner);
@@ -430,13 +483,13 @@ export class ReconciliationService {
                 }
             }
 
-            await Audit.log('ADMIN', 'system-recon', 'PARTNER_RECON_CYCLE_COMPLETE', { discrepancies, totalChecked: vaults.length });
+            await Audit.log('ADMIN', 'system-recon', 'PARTNER_RECON_CYCLE_COMPLETE', { discrepancies, totalChecked });
 
             return {
                 status: 'SUCCESS',
                 timestamp: new Date().toISOString(),
                 discrepancies,
-                totalChecked: vaults.length
+                totalChecked
             };
 
         } catch (e: any) {

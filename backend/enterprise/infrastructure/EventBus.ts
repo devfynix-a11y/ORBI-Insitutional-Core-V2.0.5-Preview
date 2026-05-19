@@ -51,17 +51,5 @@ export class EventBus {
             }
         }
 
-        // 2. Preview-only local simulation remains for enterprise sidecar consumers.
-        this.simulateAsyncConsumers(event);
-    }
-
-    private static simulateAsyncConsumers(event: CloudEvent) {
-        setTimeout(() => {
-            if (event.type === 'fintech.transaction.settled') {
-                console.log(`[Consumer:Notifications] Sending receipt for TX: ${event.data.transactionId}`);
-                console.log(`[Consumer:FraudML] Updating behavioral baseline for wallets.`);
-                console.log(`[Consumer:Reconciliation] Logging entry for EOD settlement.`);
-            }
-        }, 100);
     }
 }

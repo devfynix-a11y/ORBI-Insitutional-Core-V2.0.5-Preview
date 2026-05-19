@@ -23,7 +23,6 @@ type Deps = {
   legacyApiGatewayEnabled: boolean;
   legacyBiometricAliasesEnabled: boolean;
   messagingTestRoutesEnabled: boolean;
-  sandboxRoutesEnabled: boolean;
   authenticate: RequestHandler;
   adminOnly: RequestHandler;
   validate: (schema: any) => RequestHandler;
@@ -46,7 +45,6 @@ type Deps = {
   KMS: any;
   DataProtection: any;
   TransactionSigning: any;
-  SandboxController: any;
   Webhooks: any;
   resolveWealthSourceWallet: any;
   assertBillPaymentSourceAllowed: any;
@@ -92,7 +90,6 @@ export const registerAppPublicRoutes = (deps: Deps) => {
     legacyApiGatewayEnabled,
     legacyBiometricAliasesEnabled,
     messagingTestRoutesEnabled,
-    sandboxRoutesEnabled,
     authenticate,
     adminOnly,
     validate,
@@ -115,7 +112,6 @@ export const registerAppPublicRoutes = (deps: Deps) => {
     KMS,
     DataProtection,
     TransactionSigning,
-    SandboxController,
     Webhooks,
     resolveWealthSourceWallet,
     assertBillPaymentSourceAllowed,
@@ -247,8 +243,6 @@ export const registerAppPublicRoutes = (deps: Deps) => {
     KMS,
     DataProtection,
     TransactionSigning,
-    SandboxController,
-    sandboxRoutesEnabled,
   });
 
   registerCommerceRoutes(v1, {

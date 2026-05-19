@@ -53,7 +53,7 @@ export const PaymentIntentSchema = z.object({
     ]),
     metadata: z.record(z.string(), z.any()).optional(),
     categoryId: z.union([z.string(), z.number()]).optional(),
-    dryRun: z.boolean().optional(),
+    category: z.string().trim().min(1).max(80).optional(),
     merchantPayNumber: z.string().optional(),
     merchantId: z.string().optional(),
     merchantName: z.string().optional(),

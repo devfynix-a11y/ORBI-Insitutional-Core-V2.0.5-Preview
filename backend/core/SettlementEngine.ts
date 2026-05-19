@@ -173,24 +173,8 @@ export class SettlementEngineService {
             throw new Error(`Failed to link transactions: ${updateError.message}`);
         }
 
-        // 7. Execute Payout (In a real system, this would call a Bank API)
-        // For this demo, we simulate success after 2 seconds.
-        setTimeout(async () => {
-            const { error: finalError } = await sb
-                .from('settlement_payouts')
-                .update({ 
-                    status: 'COMPLETED',
-                    processed_at: new Date().toISOString()
-                })
-                .eq('id', payout.id);
-
-            if (!finalError) {
-                await sb
-                    .from('transactions')
-                    .update({ settlement_status: 'SETTLED' })
-                    .eq('settlement_id', payout.id);
-            }
-        }, 2000);
+        // 7. External payout execution must be completed by a configured provider integration.
+        // The payout remains PROCESSING until a provider callback/reconciliation finalizes it.
 
         return payout;
     }

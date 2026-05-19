@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+import { createHash, randomBytes, randomUUID } from 'crypto';
 import { UserRole, Permission, Transaction, Goal } from '../types.js';
 import { PLATFORM_LOGO_LINK } from './platform_Logo.js';
 
@@ -57,16 +57,14 @@ export const CurrencyUtils = {
 
 export const UUID = {
     generate: (): string => {
-        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-            const r = Math.random() * 16 | 0;
-            return (c == 'x' ? r : (r & 0x3 | 0x8)).toString(16);
-        });
+        return randomUUID();
     },
     generateShortCode: (length: number = 12): string => {
         const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
         let result = '';
+        const bytes = randomBytes(length);
         for (let i = 0; i < length; i++) {
-            result += chars.charAt(Math.floor(Math.random() * chars.length));
+            result += chars.charAt(bytes[i] % chars.length);
         }
         return result;
     }
@@ -87,8 +85,8 @@ export const IdentityGenerator = {
         const fullYear = now.getFullYear().toString(); // e.g., "2026"
         const year = fullYear.substring(2, 4); // "26"
         
-        const rand1 = Math.floor(1000 + Math.random() * 9000).toString(); // 4 random digits
-        const rand2 = Math.floor(1000 + Math.random() * 9000).toString(); // 4 random digits
+        const rand1 = String(1000 + (randomBytes(2).readUInt16BE(0) % 9000));
+        const rand2 = String(1000 + (randomBytes(2).readUInt16BE(0) % 9000));
         return `${prefix}${year}-${rand1}-${rand2}`;
     },
     generateDeviceFingerprint: (ua: string): string => {
