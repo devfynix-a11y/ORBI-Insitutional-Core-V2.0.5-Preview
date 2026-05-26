@@ -31,30 +31,11 @@ test('normalizeFinancialAuthorityError maps SQL authority failures into stable d
     );
 });
 
-test('process exposes preview balances as non-authoritative UX hints during simulation', async () => {
+test('process rejects ledger simulation because previews are handled by quote services', async () => {
     const engine = new BankingEngineService();
 
-    const originalCalculateFees = RegulatoryService.calculateFees;
-    const originalTransition = TransactionStateMachine.transition;
-    const originalDeriveLegs = (BankingEngineService as any).prototype.deriveLegs;
-
-    RegulatoryService.calculateFees = async () => ({
-        vat: 0,
-        fee: 0,
-        gov_fee: 0,
-        rate: 0,
-        total: 0,
-    } as any);
-    TransactionStateMachine.transition = (() => undefined) as any;
-    (BankingEngineService as any).prototype.deriveLegs = async function () {
-        return {
-            legs: [],
-            balanceHint: 125.5,
-        };
-    };
-
-    try {
-        const result = await engine.process(
+    await assert.rejects(
+        () => engine.process(
             { id: 'user-1' } as any,
             {
                 amount: 50,
@@ -67,16 +48,9 @@ test('process exposes preview balances as non-authoritative UX hints during simu
                 isSimulation: true,
                 metadata: {},
             },
-        );
-
-        assert.equal(result.success, true);
-        assert.equal(result.transaction?.metadata?.available_balance, 125.5);
-        assert.equal(result.transaction?.metadata?.available_balance_authoritative, false);
-    } finally {
-        RegulatoryService.calculateFees = originalCalculateFees;
-        TransactionStateMachine.transition = originalTransition;
-        (BankingEngineService as any).prototype.deriveLegs = originalDeriveLegs;
-    }
+        ),
+        /LEDGER_SIMULATION_NOT_SUPPORTED/,
+    );
 });
 
 test('process normalizes locked-wallet failures instead of leaking raw lower-level errors', async () => {
