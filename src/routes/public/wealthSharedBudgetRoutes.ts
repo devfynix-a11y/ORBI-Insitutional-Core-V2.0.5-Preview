@@ -1,6 +1,6 @@
 import { type RequestHandler, type Router } from 'express';
 import { Messaging } from '../../../backend/features/MessagingService.js';
-import { requireIdempotencyKey } from '../../middleware/security/idempotency.js';
+import { requireIdempotencyKey, resolveIdempotencyHeader } from '../../middleware/security/idempotency.js';
 
 type Deps = {
   authenticate: RequestHandler;
@@ -603,7 +603,10 @@ export const registerSharedBudgetRoutes = (v1: Router, deps: Deps) => {
   v1.post('/wealth/shared-budgets/:id/spend/settle', authenticate as any, requireIdempotencyKey, async (req, res) => {
     const session = (req as any).session;
     try {
-      const payload = SharedBudgetSpendSchema.parse(req.body);
+      const payload = {
+        ...SharedBudgetSpendSchema.parse(req.body),
+        idempotencyKey: String(resolveIdempotencyHeader(req)).trim(),
+      };
       const sb = getAdminSupabase() || getSupabase();
       if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
       const budgetId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;

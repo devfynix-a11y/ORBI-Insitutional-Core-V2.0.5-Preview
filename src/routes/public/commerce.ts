@@ -14,6 +14,18 @@ function attachIdempotencyKey(req: any) {
   }
 }
 
+async function bindSettlementPayload(LogicCore: any, session: any, req: any, payload: Record<string, any>) {
+  const idempotencyKey = String(resolveIdempotencyHeader(req)).trim();
+  const binding = await LogicCore.bindSettlementQuote(session.sub, payload, idempotencyKey);
+  return {
+    binding,
+    payload: {
+      ...binding.payload,
+      idempotencyKey,
+    },
+  };
+}
+
 const quoteErrorStatus = (message: string) => {
   if (/DB_OFFLINE|UNAVAILABLE/i.test(message)) return 503;
   if (/NOT_CONFIGURED|NOT_FOUND|REQUIRED|ACCESS_DENIED|INSUFFICIENT|BLOCK/i.test(message)) return 400;
@@ -87,7 +99,7 @@ export const registerCommerceRoutes = (v1: Router, deps: Deps) => {
       const result = await LogicCore.getMerchantCategories();
       res.json({ success: true, data: result });
     } catch (e: any) {
-      res.status(500).json({ success: false, error: e.message });
+      res.status(quoteErrorStatus(e.message)).json({ success: false, error: e.message });
     }
   });
 
@@ -97,7 +109,7 @@ export const registerCommerceRoutes = (v1: Router, deps: Deps) => {
       const result = await LogicCore.getMerchants(category);
       res.json({ success: true, data: result });
     } catch (e: any) {
-      res.status(500).json({ success: false, error: e.message });
+      res.status(quoteErrorStatus(e.message)).json({ success: false, error: e.message });
     }
   });
 
@@ -230,8 +242,12 @@ export const registerCommerceRoutes = (v1: Router, deps: Deps) => {
       return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
     }
     try {
-      attachIdempotencyKey(req);
-      const result = await LogicCore.processMerchantPayment(req.body, session.user);
+      const { binding, payload } = await bindSettlementPayload(LogicCore, session, req, {
+        ...req.body,
+        metadata: { ...(req.body.metadata || {}), service_context: 'MERCHANT' },
+      });
+      const result = await LogicCore.processMerchantPayment(payload, session.user);
+      await LogicCore.markSettlementQuoteResult(session.sub, binding.quoteId, result);
       if (!result.success) return res.status(400).json(result);
       res.json({ success: true, data: result });
     } catch (e: any) {
@@ -259,8 +275,20 @@ export const registerCommerceRoutes = (v1: Router, deps: Deps) => {
       return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
     }
     try {
-      attachIdempotencyKey(req);
-      const result = await LogicCore.processOrbiPayPayment(req.body, session.user);
+      const { binding, payload } = await bindSettlementPayload(LogicCore, session, req, {
+        ...req.body,
+        type: req.body.type || 'MERCHANT_PAYMENT',
+        metadata: {
+          ...(req.body.metadata || {}),
+          service_context: 'MERCHANT',
+          payment_channel: req.body.channel || 'ORBI_PAY',
+          merchant_pay_number: req.body.merchantPayNumber,
+          merchant_reference: req.body.reference,
+          merchant_name: req.body.merchantName,
+        },
+      });
+      const result = await LogicCore.processOrbiPayPayment(payload, session.user);
+      await LogicCore.markSettlementQuoteResult(session.sub, binding.quoteId, result);
       if (!result.success) return res.status(400).json(result);
       res.json({ success: true, data: result });
     } catch (e: any) {
@@ -305,17 +333,28 @@ export const registerCommerceRoutes = (v1: Router, deps: Deps) => {
       return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
     }
     try {
-      attachIdempotencyKey(req);
+      const { binding, payload } = await bindSettlementPayload(LogicCore, session, req, {
+        ...req.body,
+        type: req.body.type || 'BILL_PAYMENT',
+        metadata: {
+          ...(req.body.metadata || {}),
+          service_context: 'BILL_PAYMENT',
+          bill_provider: req.body.provider,
+          bill_category: req.body.billCategory,
+          bill_reference: req.body.reference,
+        },
+      });
       const sb = getAdminSupabase() || getSupabase();
       if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
-      const sourceWalletId = String(req.body?.sourceWalletId || req.body?.source_wallet_id || '').trim();
+      const sourceWalletId = String(payload?.sourceWalletId || payload?.source_wallet_id || '').trim();
       const { sourceRecord } = await resolveWealthSourceWallet(sb, session.sub, sourceWalletId || undefined);
       assertBillPaymentSourceAllowed(sourceRecord);
-      const result = await LogicCore.processBillPayment(req.body, session.user);
+      const result = await LogicCore.processBillPayment(payload, session.user);
+      await LogicCore.markSettlementQuoteResult(session.sub, binding.quoteId, result);
       if (!result.success) return res.status(400).json(result);
       res.json({ success: true, data: result });
     } catch (e: any) {
-      res.status(e.message === 'GOAL_FUNDS_BILL_PAYMENT_NOT_ALLOWED' ? 400 : 500).json({ success: false, error: e.message });
+      res.status(e.message === 'GOAL_FUNDS_BILL_PAYMENT_NOT_ALLOWED' ? 400 : quoteErrorStatus(e.message)).json({ success: false, error: e.message });
     }
   });
 
@@ -417,7 +456,7 @@ export const registerCommerceRoutes = (v1: Router, deps: Deps) => {
       const result = await LogicCore.getAgentTransactions(session.sub, limit, offset);
       res.json({ success: true, data: result });
     } catch (e: any) {
-      res.status(500).json({ success: false, error: e.message });
+      res.status(quoteErrorStatus(e.message)).json({ success: false, error: e.message });
     }
   });
 
@@ -430,7 +469,7 @@ export const registerCommerceRoutes = (v1: Router, deps: Deps) => {
       const result = await LogicCore.getAgentWallets(session.sub);
       res.json({ success: true, data: result });
     } catch (e: any) {
-      res.status(500).json({ success: false, error: e.message });
+      res.status(quoteErrorStatus(e.message)).json({ success: false, error: e.message });
     }
   });
 
@@ -511,8 +550,13 @@ export const registerCommerceRoutes = (v1: Router, deps: Deps) => {
       return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
     }
     try {
-      attachIdempotencyKey(req);
-      const result = await LogicCore.processAgentCashOperation(req.body, session.user, 'deposit');
+      const { binding, payload } = await bindSettlementPayload(LogicCore, session, req, {
+        ...req.body,
+        type: 'DEPOSIT',
+        metadata: { ...(req.body.metadata || {}), service_context: 'AGENT_CASH', cash_direction: 'deposit' },
+      });
+      const result = await LogicCore.processAgentCashOperation(payload, session.user, 'deposit');
+      await LogicCore.markSettlementQuoteResult(session.sub, binding.quoteId, result);
       if (!result.success) return res.status(400).json(result);
       res.json({ success: true, data: result });
     } catch (e: any) {
@@ -544,8 +588,13 @@ export const registerCommerceRoutes = (v1: Router, deps: Deps) => {
       return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
     }
     try {
-      attachIdempotencyKey(req);
-      const result = await LogicCore.processAgentCashOperation(req.body, session.user, 'withdrawal');
+      const { binding, payload } = await bindSettlementPayload(LogicCore, session, req, {
+        ...req.body,
+        type: 'WITHDRAWAL',
+        metadata: { ...(req.body.metadata || {}), service_context: 'AGENT_CASH', cash_direction: 'withdrawal' },
+      });
+      const result = await LogicCore.processAgentCashOperation(payload, session.user, 'withdrawal');
+      await LogicCore.markSettlementQuoteResult(session.sub, binding.quoteId, result);
       if (!result.success) return res.status(400).json(result);
       res.json({ success: true, data: result });
     } catch (e: any) {

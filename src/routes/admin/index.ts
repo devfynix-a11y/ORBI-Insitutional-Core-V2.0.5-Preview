@@ -2,6 +2,7 @@ import type { Express, RequestHandler, Router } from 'express';
 import { z } from 'zod';
 import { getAdminSupabase, getSupabase } from '../../../backend/supabaseClient.js';
 import { PartnerRegistry } from '../../../backend/admin/partnerRegistry.js';
+import { AdminConfigBootstrapService } from '../../../backend/admin/AdminConfigBootstrapService.js';
 import { TransactionService } from '../../../ledger/transactionService.js';
 import { Server as LogicCore } from '../../../backend/server.js';
 import { requireSessionPermission } from '../../middleware/auth/sessionAuth.js';
@@ -167,6 +168,20 @@ export const registerAdminRoutes = (admin: Router, authenticate: RequestHandler)
     } catch (e: any) {
       console.error(`[Admin] Delete Partner Error:`, e);
       res.status(500).json({ success: false, error: 'INTERNAL_SERVER_ERROR', message: e.message });
+    }
+  });
+
+  admin.post('/config/bootstrap', requireSessionPermission(
+    ['provider.write', 'provider_routing.write', 'platform_fee.write', 'infra_config.write'],
+    ['ADMIN', 'SUPER_ADMIN', 'IT'],
+  ), async (req, res) => {
+    try {
+      const session = (req as any).session;
+      const data = await AdminConfigBootstrapService.apply(req.body, session.sub);
+      res.json({ success: true, data });
+    } catch (e: any) {
+      console.error('[Admin] Config Bootstrap Error:', e);
+      res.status(400).json({ success: false, error: e.message });
     }
   });
 

@@ -439,6 +439,8 @@ CEO, ORBI`
                 title: displaySubject,
                 body: displayBody,
                 data: {
+                    title: displaySubject,
+                    body: displayBody,
                     category,
                     messageId: id,
                     refId,

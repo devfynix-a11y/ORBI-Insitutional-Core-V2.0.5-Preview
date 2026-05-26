@@ -110,6 +110,10 @@ const SharedBudgetApprovalResponseSchema = z.object({
 });
 
 const SharedBudgetSpendSchema = z.object({
+    quoteId: z.string().optional(),
+    quote_id: z.string().optional(),
+    quoteHash: z.string().optional(),
+    quote_hash: z.string().optional(),
     source_wallet_id: z.string().uuid().optional(),
     amount: z.coerce.number().positive(),
     currency: z.string().min(3).max(8).optional(),

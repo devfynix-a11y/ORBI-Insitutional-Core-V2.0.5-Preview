@@ -1,6 +1,7 @@
 import admin from 'firebase-admin';
 
 import { logger } from './logger.js';
+import { getAdminSupabase } from '../../services/supabaseClient.js';
 
 const pushLogger = logger.child({ component: 'firebase_push_service' });
 
@@ -15,6 +16,27 @@ type PushPayload = {
 class FirebasePushService {
   private app: admin.app.App | null = null;
   private attemptedInit = false;
+
+  private async clearRejectedToken(token: string, requestId?: string) {
+    const sb = getAdminSupabase();
+    if (!sb) return;
+
+    try {
+      await Promise.all([
+        sb.from('users').update({ fcm_token: null }).eq('fcm_token', token),
+        sb.from('staff').update({ fcm_token: null }).eq('fcm_token', token),
+      ]);
+      pushLogger.warn('firebase_push.rejected_token_cleared', {
+        request_id: requestId,
+      });
+    } catch (error) {
+      pushLogger.error(
+        'firebase_push.rejected_token_clear_failed',
+        { request_id: requestId },
+        error,
+      );
+    }
+  }
 
   private loadServiceAccount(): admin.ServiceAccount | null {
     const rawJson =
@@ -128,6 +150,12 @@ class FirebasePushService {
         },
         error,
       );
+      if (
+        code === 'messaging/registration-token-not-registered' ||
+        code === 'messaging/invalid-registration-token'
+      ) {
+        await this.clearRejectedToken(token, requestId);
+      }
       return false;
     }
   }

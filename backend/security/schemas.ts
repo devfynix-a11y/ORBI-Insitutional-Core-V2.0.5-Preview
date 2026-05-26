@@ -35,6 +35,10 @@ export const SignUpSchema = z.object({
 });
 
 export const PaymentIntentSchema = z.object({
+    quoteId: z.string().optional(),
+    quote_id: z.string().optional(),
+    quoteHash: z.string().optional(),
+    quote_hash: z.string().optional(),
     sourceWalletId: z.string().uuid().optional(),
     targetWalletId: z.string().uuid().optional(),
     recipientId: z.string().optional(),

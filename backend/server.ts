@@ -291,6 +291,14 @@ class OrbiServer {
         return transactionQuoteService.quote({ userId, payload });
     }
 
+    async bindSettlementQuote(userId: string, payload: any, idempotencyKey: string) {
+        return transactionQuoteService.bindSettlementQuote({ userId, payload, idempotencyKey });
+    }
+
+    async markSettlementQuoteResult(userId: string, quoteId: string | null | undefined, result: any) {
+        return transactionQuoteService.markQuoteSettlementResult({ userId, quoteId, result });
+    }
+
     // --- WEALTH & SETTLEMENT ---
     async calculateSettlementBreakdown(payload: any) {
         throw new Error('SETTLEMENT_BREAKDOWN_PROVIDER_NOT_CONFIGURED');

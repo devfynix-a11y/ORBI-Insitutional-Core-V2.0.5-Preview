@@ -364,6 +364,45 @@ BEGIN
     END IF;
 END $$;
 
+CREATE TABLE IF NOT EXISTS public.transaction_quotes (
+    id TEXT PRIMARY KEY,
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    payload_hash TEXT NOT NULL,
+    quote_signature TEXT,
+    request_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    quote_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+    amount NUMERIC(20, 6) NOT NULL DEFAULT 0,
+    currency TEXT,
+    transaction_type TEXT,
+    source_wallet_id UUID,
+    target_wallet_id UUID,
+    total_debit NUMERIC(20, 6) NOT NULL DEFAULT 0,
+    total_fee NUMERIC(20, 6) NOT NULL DEFAULT 0,
+    provider_code TEXT,
+    fee_config_id TEXT,
+    can_submit BOOLEAN NOT NULL DEFAULT FALSE,
+    status TEXT NOT NULL DEFAULT 'QUOTED',
+    idempotency_key TEXT,
+    transaction_id UUID REFERENCES public.transactions(id) ON DELETE SET NULL,
+    settlement_result JSONB,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    confirmed_at TIMESTAMP WITH TIME ZONE,
+    settled_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT transaction_quotes_status_check CHECK (
+        status IN ('QUOTED', 'READY', 'BLOCKED', 'CONFIRMED', 'SETTLING', 'SETTLED', 'FAILED', 'EXPIRED', 'CANCELLED')
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_transaction_quotes_user_status
+    ON public.transaction_quotes(user_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_transaction_quotes_expires
+    ON public.transaction_quotes(expires_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_transaction_quotes_idempotency
+    ON public.transaction_quotes(user_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS public.financial_ledger (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     transaction_id UUID REFERENCES public.transactions(id) ON DELETE CASCADE,

@@ -295,31 +295,40 @@ export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
     const session = (req as any).session;
     const idempotencyKey = resolveIdempotencyHeader(req);
 
-    const kycStatus = session.user.user_metadata?.kyc_status || 'unverified';
-    const amount = req.body.amount || 0;
-    const currency = req.body.currency || 'TZS';
-
-    const policyResult = await PolicyEngine.evaluateTransaction(session.sub, amount, currency, 'settlement');
-    if (!policyResult.allowed) {
-      return res.status(403).json({
-        success: false,
-        error: 'POLICY_VIOLATION',
-        message: policyResult.reason,
-      });
-    }
-
-    if (kycStatus !== 'verified' && amount > 1000000) {
-      return res.status(403).json({
-        success: false,
-        error: 'KYC_LIMIT_EXCEEDED',
-        message: 'Unverified accounts are limited to 1,000,000 TZS per transaction. Please complete KYC.',
-      });
-    }
-
     try {
-      req.body.idempotencyKey = String(idempotencyKey).trim();
+      const binding = await LogicCore.bindSettlementQuote(
+        session.sub,
+        req.body,
+        String(idempotencyKey).trim(),
+      );
+      const settlementPayload = {
+        ...binding.payload,
+        idempotencyKey: String(idempotencyKey).trim(),
+      };
 
-      const result = await LogicCore.processSecurePayment(req.body, session.user);
+      const kycStatus = session.user.user_metadata?.kyc_status || 'unverified';
+      const amount = settlementPayload.amount || 0;
+      const currency = settlementPayload.currency || 'TZS';
+
+      const policyResult = await PolicyEngine.evaluateTransaction(session.sub, amount, currency, 'settlement');
+      if (!policyResult.allowed) {
+        return res.status(403).json({
+          success: false,
+          error: 'POLICY_VIOLATION',
+          message: policyResult.reason,
+        });
+      }
+
+      if (kycStatus !== 'verified' && amount > 1000000) {
+        return res.status(403).json({
+          success: false,
+          error: 'KYC_LIMIT_EXCEEDED',
+          message: 'Unverified accounts are limited to 1,000,000 TZS per transaction. Please complete KYC.',
+        });
+      }
+
+      const result = await LogicCore.processSecurePayment(settlementPayload, session.user);
+      await LogicCore.markSettlementQuoteResult(session.sub, binding.quoteId, result);
 
       if (!result.success) {
         if (result.error === 'SECURITY_CHALLENGE') {

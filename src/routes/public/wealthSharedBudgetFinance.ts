@@ -45,7 +45,7 @@ export const createSharedBudgetSpendExecutor = (LogicCore: any) => async (
     member_user_id: actorUserId,
   };
 
-  const result = await LogicCore.processSecurePayment({
+  const paymentPayload = {
     sourceWalletId: payload.source_wallet_id,
     recipientId: payload.provider,
     amount: payload.amount,
@@ -53,7 +53,17 @@ export const createSharedBudgetSpendExecutor = (LogicCore: any) => async (
     description: payload.description || `${budget.name} spend`,
     type: payload.type || 'EXTERNAL_PAYMENT',
     metadata: enrichedMetadata,
-  }, actorUser);
+    quoteId: payload.quoteId || payload.quote_id,
+    quoteHash: payload.quoteHash || payload.quote_hash,
+    idempotencyKey: payload.idempotencyKey,
+  };
+  const bound = paymentPayload.quoteId
+    ? await LogicCore.bindSettlementQuote(actorUserId, paymentPayload, String(payload.idempotencyKey || ''))
+    : null;
+  const result = await LogicCore.processSecurePayment(bound?.payload || paymentPayload, actorUser);
+  if (bound?.quoteId) {
+    await LogicCore.markSettlementQuoteResult(actorUserId, bound.quoteId, result);
+  }
   if (!result.success) throw new Error(result.error || 'SHARED_BUDGET_SPEND_FAILED');
 
   const tx = result.transaction || {};

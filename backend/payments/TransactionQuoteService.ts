@@ -7,6 +7,7 @@ import { platformFeeService } from './PlatformFeeService.js';
 import { providerRoutingService } from './ProviderRoutingService.js';
 import { FXEngine } from '../ledger/FXEngine.js';
 import { transactionFeeClassifier } from './TransactionFeeClassifier.js';
+import { createHash, createHmac } from 'crypto';
 
 type QuoteInput = {
   userId: string;
@@ -38,6 +39,12 @@ type WalletSnapshot = {
   lockReason?: string | null;
   lockedAt?: string | null;
   metadata?: Record<string, any> | null;
+};
+
+type QuoteBindingResult = {
+  quoteId: string;
+  payload: Record<string, any>;
+  quote: Record<string, any>;
 };
 
 const DEBIT_TYPES = new Set([
@@ -159,7 +166,7 @@ export class TransactionQuoteService {
     const quoteId = `qt_${UUID.generate()}`;
     const expiresAt = new Date(Date.now() + this.resolveQuoteTtlMs()).toISOString();
 
-    return {
+    const quote = {
       success: true,
       quoteId,
       expiresAt,
@@ -227,6 +234,324 @@ export class TransactionQuoteService {
       }),
       warnings: this.buildWarnings(type, balance, totalDebit, risk.decision, issues),
     };
+
+    const quoteHash = this.hashCanonicalIntent(this.buildCanonicalIntent(payload, quote));
+    const quoteSignature = this.signQuote(quoteId, quoteHash, expiresAt, userId);
+    await this.persistQuote({
+      sb,
+      userId,
+      payload,
+      quote: {
+        ...quote,
+        quoteHash,
+        quoteSignature,
+      },
+      quoteHash,
+      quoteSignature,
+    });
+
+    return {
+      ...quote,
+      quoteHash,
+      quoteSignature,
+    };
+  }
+
+  async bindSettlementQuote(args: {
+    userId: string;
+    payload: Record<string, any>;
+    idempotencyKey: string;
+  }): Promise<QuoteBindingResult> {
+    const sb = getAdminSupabase() || getSupabase();
+    if (!sb) throw new Error('DB_OFFLINE');
+
+    const quoteId = this.extractQuoteId(args.payload);
+    if (!quoteId) {
+      throw new Error('QUOTE_ID_REQUIRED: Confirming a transaction requires a server-issued preview quote.');
+    }
+
+    const { data: quoteRow, error } = await sb
+      .from('transaction_quotes')
+      .select('*')
+      .eq('id', quoteId)
+      .eq('user_id', args.userId)
+      .maybeSingle();
+
+    if (error) throw new Error(`QUOTE_LOOKUP_FAILED:${error.message}`);
+    if (!quoteRow) throw new Error('QUOTE_NOT_FOUND');
+
+    const status = String(quoteRow.status || '').toUpperCase();
+    const storedIdempotencyKey = String(quoteRow.idempotency_key || '').trim();
+    const incomingIdempotencyKey = String(args.idempotencyKey || '').trim();
+    const canRetryConfirmedQuote =
+      status === 'CONFIRMED' &&
+      storedIdempotencyKey &&
+      storedIdempotencyKey === incomingIdempotencyKey;
+
+    if (!['QUOTED', 'READY'].includes(status) && !canRetryConfirmedQuote) {
+      throw new Error(`QUOTE_NOT_SETTLEABLE:${status || 'UNKNOWN'}`);
+    }
+
+    const expiresAt = quoteRow.expires_at ? new Date(quoteRow.expires_at).getTime() : 0;
+    if (!expiresAt || expiresAt < Date.now()) {
+      await this.markQuoteStatus(sb, quoteId, 'EXPIRED');
+      throw new Error('QUOTE_EXPIRED: Please refresh the transaction preview before confirming.');
+    }
+
+    if (quoteRow.can_submit === false) {
+      throw new Error('QUOTE_BLOCKED: This preview had blocking validation issues and cannot be settled.');
+    }
+
+    const quote = this.objectFromJson(quoteRow.quote_snapshot);
+    const expectedHash = String(quoteRow.payload_hash || '');
+    const actualHash = this.hashCanonicalIntent(this.buildCanonicalIntent(args.payload, quote));
+    if (expectedHash && actualHash !== expectedHash) {
+      throw new Error('QUOTE_PAYLOAD_MISMATCH: Transaction details changed after preview. Refresh the preview before confirming.');
+    }
+
+    const storedSignature = String(quoteRow.quote_signature || '');
+    const expectedSignature = this.signQuote(quoteId, expectedHash, String(quoteRow.expires_at || ''), args.userId);
+    if (storedSignature && storedSignature !== expectedSignature) {
+      throw new Error('QUOTE_SIGNATURE_INVALID: Transaction preview integrity check failed.');
+    }
+
+    if (!canRetryConfirmedQuote) {
+      const { data: confirmed, error: updateError } = await sb
+        .from('transaction_quotes')
+        .update({
+          status: 'CONFIRMED',
+          idempotency_key: incomingIdempotencyKey,
+          confirmed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', quoteId)
+        .eq('user_id', args.userId)
+        .in('status', ['QUOTED', 'READY'])
+        .select('id')
+        .maybeSingle();
+
+      if (updateError) throw new Error(`QUOTE_CONFIRM_FAILED:${updateError.message}`);
+      if (!confirmed) {
+        const { data: current } = await sb
+          .from('transaction_quotes')
+          .select('status, idempotency_key')
+          .eq('id', quoteId)
+          .eq('user_id', args.userId)
+          .maybeSingle();
+        const currentStatus = String(current?.status || '').toUpperCase();
+        const currentIdempotencyKey = String(current?.idempotency_key || '').trim();
+        if (currentStatus === 'CONFIRMED' && currentIdempotencyKey === incomingIdempotencyKey) {
+          return {
+            quoteId,
+            payload: {
+              ...this.objectFromJson(quoteRow.request_payload),
+              quoteId,
+              quoteHash: expectedHash,
+              idempotencyKey: incomingIdempotencyKey,
+              metadata: {
+                ...(this.objectFromJson(quoteRow.request_payload).metadata || {}),
+                quote_id: quoteId,
+                quote_hash: expectedHash,
+                quote_bound: true,
+              },
+            },
+            quote,
+          };
+        }
+        throw new Error(`QUOTE_CONFIRM_CONFLICT:${currentStatus || 'UNKNOWN'}`);
+      }
+    }
+
+    const storedPayload = this.objectFromJson(quoteRow.request_payload);
+    return {
+      quoteId,
+      payload: {
+        ...storedPayload,
+        quoteId,
+        quoteHash: expectedHash,
+        idempotencyKey: incomingIdempotencyKey,
+        metadata: {
+          ...(storedPayload.metadata && typeof storedPayload.metadata === 'object' ? storedPayload.metadata : {}),
+          quote_id: quoteId,
+          quote_hash: expectedHash,
+          quote_bound: true,
+        },
+      },
+      quote,
+    };
+  }
+
+  async markQuoteSettlementResult(args: {
+    quoteId?: string | null;
+    userId: string;
+    result: any;
+  }) {
+    const quoteId = args.quoteId ? String(args.quoteId).trim() : '';
+    if (!quoteId) return;
+    const sb = getAdminSupabase() || getSupabase();
+    if (!sb) return;
+
+    const success = args.result?.success === true;
+    const transactionId = this.normalizeNullable(
+      args.result?.transaction?.internalId ||
+      args.result?.transaction?.id ||
+      args.result?.transactionId ||
+      args.result?.id,
+    );
+    const transactionStatus = String(args.result?.transaction?.status || args.result?.status || '').toLowerCase();
+    const settlementStatus = success
+      ? (['processing', 'pending', 'authorized', 'created'].includes(transactionStatus) ? 'SETTLING' : 'SETTLED')
+      : null;
+    const challenge = args.result?.error === 'SECURITY_CHALLENGE' || args.result?.challengeRequired === true;
+
+    await sb
+      .from('transaction_quotes')
+      .update({
+        status: success ? (settlementStatus || (transactionId ? 'SETTLED' : 'SETTLING')) : (challenge ? 'CONFIRMED' : 'FAILED'),
+        transaction_id: transactionId,
+        settlement_result: args.result || null,
+        settled_at: success ? new Date().toISOString() : null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', quoteId)
+      .eq('user_id', args.userId);
+  }
+
+  private async persistQuote(args: {
+    sb: any;
+    userId: string;
+    payload: Record<string, any>;
+    quote: Record<string, any>;
+    quoteHash: string;
+    quoteSignature: string;
+  }) {
+    const { error } = await args.sb.from('transaction_quotes').insert({
+      id: args.quote.quoteId,
+      user_id: args.userId,
+      payload_hash: args.quoteHash,
+      quote_signature: args.quoteSignature,
+      request_payload: args.payload,
+      quote_snapshot: args.quote,
+      amount: Number(args.quote.amount || 0),
+      currency: args.quote.currency || null,
+      transaction_type: args.quote.type || null,
+      source_wallet_id: args.quote.debit?.sourceWalletId || args.quote.sourceWallet?.id || null,
+      target_wallet_id: args.quote.targetWallet?.id || null,
+      total_debit: Number(args.quote.debit?.total || args.quote.amount || 0),
+      total_fee: Number(args.quote.fees?.totalFee || 0),
+      provider_code: args.quote.provider?.providerCode || null,
+      fee_config_id: args.quote.fees?.configId || null,
+      can_submit: args.quote.canSubmit === true,
+      status: args.quote.canSubmit === true ? 'QUOTED' : 'BLOCKED',
+      expires_at: args.quote.expiresAt,
+    });
+    if (error) throw new Error(`QUOTE_STORAGE_FAILED:${error.message}`);
+  }
+
+  private buildCanonicalIntent(payload: Record<string, any>, quote: Record<string, any>) {
+    const metadata = payload.metadata && typeof payload.metadata === 'object' ? payload.metadata : {};
+    return this.sortDeep({
+      amount: this.parseAmount(payload.amount ?? quote.amount),
+      currency: this.normalizeCurrency(payload.currency ?? quote.currency),
+      type: this.normalizeType(payload.type || quote.type || 'INTERNAL_TRANSFER'),
+      description: String(payload.description || '').trim(),
+      category: this.normalizeNullable(payload.category),
+      categoryId: this.normalizeNullable(payload.categoryId ?? payload.category_id ?? metadata.categoryId ?? metadata.category_id),
+      sourceWalletId: this.normalizeNullable(
+        payload.sourceWalletId ||
+        payload.source_wallet_id ||
+        payload.walletId ||
+        payload.wallet_id ||
+        metadata.sourceWalletId ||
+        metadata.source_wallet_id ||
+        quote.debit?.sourceWalletId ||
+        quote.sourceWallet?.id,
+      ),
+      targetWalletId: this.normalizeNullable(
+        payload.targetWalletId ||
+        payload.target_wallet_id ||
+        metadata.targetWalletId ||
+        metadata.target_wallet_id ||
+        quote.targetWallet?.id,
+      ),
+      recipientId: this.normalizeNullable(payload.recipientId || payload.recipient_id || metadata.recipientId || metadata.recipient_id),
+      recipientCustomerId: this.normalizeNullable(
+        payload.recipient_customer_id ||
+        payload.recipientCustomerId ||
+        metadata.recipient_customer_id ||
+        metadata.recipientCustomerId,
+      ),
+      merchantId: this.normalizeNullable(payload.merchantId || payload.merchant_id || metadata.merchantId || metadata.merchant_id),
+      merchantPayNumber: this.normalizeNullable(payload.merchantPayNumber || payload.merchant_pay_number || metadata.merchantPayNumber || metadata.merchant_pay_number),
+      channel: this.normalizeNullable(payload.channel || metadata.channel),
+      providerCode: this.normalizeNullable(
+        metadata.providerCode ||
+        metadata.provider_code ||
+        metadata.provider ||
+        payload.providerInput ||
+        quote.provider?.providerCode,
+      ),
+      feeConfigId: this.normalizeNullable(quote.fees?.configId),
+      flowCode: this.normalizeNullable(quote.fees?.flowCode),
+      totalDebit: this.round(Number(quote.debit?.total || payload.totalDebit || payload.total_debit || payload.amount || 0)),
+      totalFee: this.round(Number(quote.fees?.totalFee || 0)),
+    });
+  }
+
+  private hashCanonicalIntent(intent: Record<string, any>) {
+    return createHash('sha256').update(JSON.stringify(intent)).digest('hex');
+  }
+
+  private signQuote(quoteId: string, quoteHash: string, expiresAt: string, userId: string) {
+    const secret = process.env.ORBI_TRANSACTION_QUOTE_SIGNING_SECRET || process.env.JWT_SECRET || process.env.SESSION_SECRET;
+    if (!secret) return '';
+    return createHmac('sha256', secret)
+      .update([quoteId, userId, quoteHash, expiresAt].join('|'))
+      .digest('hex');
+  }
+
+  private extractQuoteId(payload: Record<string, any>) {
+    return this.normalizeNullable(
+      payload.quoteId ||
+      payload.quote_id ||
+      payload.preview?.quoteId ||
+      payload.preview?.quote_id ||
+      payload.preview_snapshot?.quoteId ||
+      payload.preview_snapshot?.quote_id ||
+      payload.metadata?.quoteId ||
+      payload.metadata?.quote_id,
+    );
+  }
+
+  private objectFromJson(value: any): Record<string, any> {
+    if (!value) return {};
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+      } catch {
+        return {};
+      }
+    }
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  }
+
+  private sortDeep(value: any): any {
+    if (Array.isArray(value)) return value.map((item) => this.sortDeep(item));
+    if (!value || typeof value !== 'object') return value;
+    return Object.keys(value)
+      .sort()
+      .reduce((acc: Record<string, any>, key) => {
+        acc[key] = this.sortDeep(value[key]);
+        return acc;
+      }, {});
+  }
+
+  private async markQuoteStatus(sb: any, quoteId: string, status: string) {
+    await sb
+      .from('transaction_quotes')
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq('id', quoteId);
   }
 
   private async resolveUser(sb: any, userId: string): Promise<User> {
