@@ -1,0 +1,33 @@
+name: Deploy Google VM
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to Google VM
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: |
+            set -e
+            cd ~/apps/orbi-core
+            git fetch origin
+            git reset --hard origin/main
+            docker build -t orbi-core:latest .
+            docker rm -f orbi-core-api 2>/dev/null || true
+            docker run -d \
+              --name orbi-core-api \
+              --restart unless-stopped \
+              --env-file .env \
+              -p 3000:3000 \
+              orbi-core:latest
+            curl -i -H "X-Forwarded-Proto: https" http://127.0.0.1:3000/health
