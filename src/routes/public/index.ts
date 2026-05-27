@@ -4,6 +4,8 @@ import {
   extractBearerToken,
   getInternalAuditMetadata,
 } from '../../middleware/auth/authorization.js';
+import { createAdminActivityAudit } from '../../middleware/audit/adminActivityAudit.js';
+import { createCriticalActionLimiter } from '../../middleware/security/criticalActionLimiter.js';
 import { isHttpShuttingDown } from '../../bootstrap/http.js';
 
 let lastBrokerHeartbeat: any = null;
@@ -39,6 +41,9 @@ type LegacyGatewayDeps = {
 
 export const registerMonitoringRoutes = (app: Express, deps: MonitoringDeps) => {
   const { authenticateMonitorApiKey, ReconEngine, OperationalHealthService } = deps;
+
+  app.use('/api/admin/monitor', createCriticalActionLimiter());
+  app.use('/api/admin/monitor', createAdminActivityAudit());
 
   app.get('/api/admin/monitor/ledger-health', authenticateMonitorApiKey, async (_req, res) => {
     try {

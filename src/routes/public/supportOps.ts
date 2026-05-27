@@ -1,4 +1,5 @@
 import express, { type RequestHandler, type Router } from 'express';
+import { Audit } from '../../../backend/security/audit.js';
 import { sessionHasAnyRole } from '../../middleware/auth/authorization.js';
 
 type Deps = {
@@ -150,6 +151,12 @@ export const registerSupportOpsRoutes = (v1: Router, deps: Deps) => {
 
     try {
       const result = await LogicCore.updateDeviceStatus(req.params.id as string, req.body);
+      await Audit.log('ADMIN', session.sub, 'DEVICE_TRUST_STATUS_UPDATED', {
+        deviceId: req.params.id,
+        targetUserId: result?.user_id,
+        status: result?.status,
+        isTrusted: result?.is_trusted,
+      });
       res.json({ success: true, data: result });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });

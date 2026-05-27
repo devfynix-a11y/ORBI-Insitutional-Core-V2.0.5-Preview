@@ -11,6 +11,8 @@ import { registerStrategyRoutes } from '../routes/public/strategy.js';
 import { registerOperationsRoutes } from '../routes/public/operations.js';
 import { registerWealthRoutes } from '../routes/public/wealth.js';
 import { registerProviderRoutes, mountProviderRoutes } from '../routes/providers/index.js';
+import { createAdminActivityAudit } from '../middleware/audit/adminActivityAudit.js';
+import { createCriticalActionLimiter } from '../middleware/security/criticalActionLimiter.js';
 import gatewayRoutes from '../../backend/payments/gatewayRoutes.js';
 import { DataProtection } from '../../backend/security/DataProtection.js';
 import { WAF } from '../../backend/security/waf.js';
@@ -147,7 +149,9 @@ export const registerAppPublicRoutes = (deps: Deps) => {
 
   const v1 = express.Router();
   const gatewayV1 = express.Router();
+  const criticalActionLimiter = createCriticalActionLimiter();
 
+  v1.use(criticalActionLimiter);
   mountProviderRoutes(v1, gatewayV1, gatewayRoutes, authenticate as any);
   registerProviderRoutes(v1, authenticate as any);
 
@@ -167,6 +171,8 @@ export const registerAppPublicRoutes = (deps: Deps) => {
     mapServiceRoleToRegistryType,
     legacyBiometricAliasesEnabled,
   });
+
+  v1.use('/admin', createAdminActivityAudit());
 
   registerSupportOpsRoutes(v1, {
     authenticate: authenticate as any,

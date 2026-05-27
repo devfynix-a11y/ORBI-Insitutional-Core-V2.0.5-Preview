@@ -723,6 +723,12 @@ export const registerAdminOpsRoutes = (v1: Router, deps: Deps) => {
 
       const { data, error } = await sb.from('staff_messages').insert(insertPayload).select('*').single();
       if (error) return res.status(500).json({ success: false, error: error.message });
+      await Audit.log('ADMIN', session.sub, 'STAFF_DIRECT_MESSAGE_SENT', {
+        messageId: data?.id,
+        recipientId: payload.recipientId || null,
+        targetRole: payload.targetRole || null,
+        contentLength: payload.content.length,
+      });
       res.json({ success: true, data });
     } catch (e: any) {
       res.status(400).json({ success: false, error: e.message });
@@ -745,6 +751,11 @@ export const registerAdminOpsRoutes = (v1: Router, deps: Deps) => {
         .select('*')
         .single();
       if (error) return res.status(500).json({ success: false, error: error.message });
+      await Audit.log('ADMIN', session.sub, 'STAFF_MESSAGE_FLAGGED', {
+        messageId: req.params.id,
+        originalSenderId: data?.sender_id,
+        recipientId: data?.recipient_id || null,
+      });
       res.json({ success: true, data });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });
@@ -810,6 +821,14 @@ export const registerAdminOpsRoutes = (v1: Router, deps: Deps) => {
         .select('*')
         .single();
       if (error) return res.status(500).json({ success: false, error: error.message });
+      await Audit.log('ADMIN', session.sub, 'SUPPORT_TICKET_CREATED', {
+        ticketId: data?.id,
+        customerId: resolvedCustomerId,
+        category: payload.category,
+        priority: payload.priority || 'normal',
+        assignedTo: payload.assignedTo || null,
+        hasCustomerQuery: Boolean(payload.customerQuery),
+      });
       res.json({ success: true, data: { id: data.id, created_at: data.created_at, ...(data.data || {}) } });
     } catch (e: any) {
       res.status(400).json({ success: false, error: e.message });
@@ -849,6 +868,14 @@ export const registerAdminOpsRoutes = (v1: Router, deps: Deps) => {
         .select('*')
         .single();
       if (error) return res.status(500).json({ success: false, error: error.message });
+      await Audit.log('ADMIN', session.sub, payload.status === 'resolved' || payload.status === 'closed' ? 'SUPPORT_TICKET_RESOLVED' : 'SUPPORT_TICKET_UPDATED', {
+        ticketId: req.params.id,
+        customerId: next.customer_id || null,
+        status: next.status,
+        assignedTo: next.assigned_to || null,
+        hasInternalNote: Boolean(payload.internalNote),
+        hasResolution: Boolean(payload.resolution),
+      });
       res.json({ success: true, data: { id: data.id, created_at: data.created_at, ...(data.data || {}) } });
     } catch (e: any) {
       res.status(400).json({ success: false, error: e.message });

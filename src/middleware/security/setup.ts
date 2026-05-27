@@ -93,6 +93,8 @@ export const configureCoreSecurityMiddleware = (app: Express, options: SecurityS
       'x-orbi-app-origin',
       'x-orbi-user-role',
       'x-orbi-registry-type',
+      'x-orbi-device-id',
+      'x-orbi-monitor-key',
       'x-orbi-bootstrap-secret',
       'x-orbi-trace',
       'Idempotency-Key',

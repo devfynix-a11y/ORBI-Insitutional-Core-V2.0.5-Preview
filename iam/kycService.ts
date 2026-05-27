@@ -3,6 +3,7 @@ import { Storage, STORAGE_KEYS } from '../backend/storage.js';
 import { KYCRequest } from '../types.js';
 import { UUID } from '../services/utils.js';
 import { Messaging } from '../backend/features/MessagingService.js';
+import { Audit } from '../backend/security/audit.js';
 import { GoogleGenAI, Type } from "@google/genai";
 
 export class KYCService {
@@ -261,6 +262,13 @@ export class KYCService {
 
         // Send Notification
         if (userId) {
+            await Audit.log('ADMIN', adminId, decision === 'APPROVED' ? 'KYC_REVIEW_APPROVED' : 'KYC_REVIEW_REJECTED', {
+                requestId,
+                targetUserId: userId,
+                decision,
+                reason: reason || null,
+            });
+
             const sb = getAdminSupabase();
             let language = 'en';
             if (sb) {

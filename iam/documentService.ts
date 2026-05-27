@@ -1,5 +1,6 @@
 import { getAdminSupabase } from '../services/supabaseClient.js';
 import { UUID } from '../services/utils.js';
+import { Audit } from '../backend/security/audit.js';
 
 export class DocumentService {
     /**
@@ -94,6 +95,13 @@ export class DocumentService {
             .single();
 
         if (error) throw new Error(error.message);
+        await Audit.log('ADMIN', adminId, data.status === 'verified' ? 'DOCUMENT_VERIFIED' : 'DOCUMENT_REVIEW_UPDATED', {
+            documentId,
+            targetUserId: updated?.user_id,
+            documentType: updated?.document_type,
+            status: data.status,
+            rejected: Boolean(data.rejection_reason),
+        });
         return updated;
     }
 }

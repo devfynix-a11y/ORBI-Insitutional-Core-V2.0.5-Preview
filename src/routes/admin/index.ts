@@ -5,6 +5,8 @@ import { PartnerRegistry } from '../../../backend/admin/partnerRegistry.js';
 import { AdminConfigBootstrapService } from '../../../backend/admin/AdminConfigBootstrapService.js';
 import { TransactionService } from '../../../ledger/transactionService.js';
 import { Server as LogicCore } from '../../../backend/server.js';
+import { createAdminActivityAudit } from '../../middleware/audit/adminActivityAudit.js';
+import { createCriticalActionLimiter } from '../../middleware/security/criticalActionLimiter.js';
 import { requireSessionPermission } from '../../middleware/auth/sessionAuth.js';
 
 const InstitutionalAccountSchema = z.object({
@@ -99,6 +101,8 @@ const queryStringValue = (value: unknown) => {
 };
 
 export const registerAdminRoutes = (admin: Router, authenticate: RequestHandler) => {
+  admin.use(createCriticalActionLimiter());
+  admin.use(createAdminActivityAudit());
   admin.use(authenticate);
 
   admin.get('/partners', requireSessionPermission(['provider.read', 'provider.write'], ['ADMIN', 'SUPER_ADMIN', 'IT']), async (_req, res) => {
