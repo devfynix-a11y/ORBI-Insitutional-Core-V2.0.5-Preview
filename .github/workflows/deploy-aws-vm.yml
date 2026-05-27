@@ -8,69 +8,64 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 35
 
+    env:
+      APP_DIR: /home/ubuntu/apps/orbi-core
+      ORBI_REPOSITORY_URL: https://github.com/devfynix-a11y/ORBI-Insitutional-Core-V3.0.0-Stable-Preview.git
+      ORBI_BRANCH: main
+      ORBI_IMAGE: orbi-core:aws
+      HOST_PORT: 3000
+
     steps:
-      - name: Deploy to AWS VM
-        uses: appleboy/ssh-action@v1.2.0
-        env:
-          APP_DIR: ${{ secrets.AWS_APP_DIR || '/home/ubuntu/apps/orbi-core' }}
-          ORBI_REPOSITORY_URL: https://github.com/devfynix-a11y/ORBI-Insitutional-Core-V3.0.0-Stable-Preview.git
-          ORBI_BRANCH: main
-          ORBI_IMAGE: orbi-core:aws
-          HOST_PORT: ${{ secrets.AWS_HOST_PORT || '3000' }}
-        with:
-          host: ${{ secrets.AWS_SSH_HOST }}
-          username: ${{ secrets.AWS_SSH_USER || 'ubuntu' }}
-          key: ${{ secrets.AWS_SSH_PRIVATE_KEY }}
-          port: 22
-          envs: APP_DIR,ORBI_REPOSITORY_URL,ORBI_BRANCH,ORBI_IMAGE,HOST_PORT
-          script: |
-            set -euo pipefail
+      - name: Deploy locally on AWS VM
+        shell: bash
+        run: |
+          set -euo pipefail
 
-            if [[ ! -d "${APP_DIR}/.git" ]]; then
-              mkdir -p "$(dirname "${APP_DIR}")"
-              git clone "${ORBI_REPOSITORY_URL}" "${APP_DIR}"
-            fi
+          if [[ ! -d "${APP_DIR}/.git" ]]; then
+            mkdir -p "$(dirname "${APP_DIR}")"
+            git clone "${ORBI_REPOSITORY_URL}" "${APP_DIR}"
+          fi
 
-            cd "${APP_DIR}"
-            git remote set-url origin "${ORBI_REPOSITORY_URL}"
-            git fetch origin "${ORBI_BRANCH}"
-            git reset --hard "origin/${ORBI_BRANCH}"
+          cd "${APP_DIR}"
+          git remote set-url origin "${ORBI_REPOSITORY_URL}"
+          git fetch origin "${ORBI_BRANCH}"
+          git reset --hard "origin/${ORBI_BRANCH}"
 
-            if [[ ! -f .env ]]; then
-              echo "Missing ${APP_DIR}/.env. Upload the AWS production env file before deploy." >&2
-              exit 2
-            fi
+          if [[ ! -f .env ]]; then
+            echo "Missing ${APP_DIR}/.env. Upload the AWS production env file before deploy." >&2
+            exit 2
+          fi
 
-            chmod 600 .env
-            docker build -t "${ORBI_IMAGE}" .
+          chmod 600 .env
+          docker build -t "${ORBI_IMAGE}" .
 
-            mkdir -p ops/aws
-            cat > ops/aws/docker-compose.aws.yml <<'EOF'
-            services:
-              api:
-                image: ${ORBI_IMAGE:?ORBI_IMAGE is required}
-                restart: unless-stopped
-                env_file:
-                  - ../../.env
-                ports:
-                  - "${HOST_PORT:-3000}:3000"
-            EOF
+          mkdir -p ops/aws
+          cat > ops/aws/docker-compose.aws.yml <<'EOF'
+          services:
+            api:
+              image: ${ORBI_IMAGE:?ORBI_IMAGE is required}
+              restart: unless-stopped
+              env_file:
+                - ../../.env
+              ports:
+                - "${HOST_PORT:-3000}:3000"
+          EOF
 
-            printf 'ORBI_IMAGE=%s\nHOST_PORT=%s\n' "${ORBI_IMAGE}" "${HOST_PORT}" > ops/aws/.env.deploy
+          printf 'ORBI_IMAGE=%s\nHOST_PORT=%s\n' "${ORBI_IMAGE}" "${HOST_PORT}" > ops/aws/.env.deploy
 
-            if docker compose version >/dev/null 2>&1; then
-              docker compose --env-file ops/aws/.env.deploy -f ops/aws/docker-compose.aws.yml up -d --force-recreate --remove-orphans api
-            elif command -v docker-compose >/dev/null 2>&1; then
-              docker-compose --env-file ops/aws/.env.deploy -f ops/aws/docker-compose.aws.yml up -d --force-recreate --remove-orphans api
-            else
-              echo "docker compose is required on the AWS VM" >&2
-              exit 3
-            fi
+          if docker compose version >/dev/null 2>&1; then
+            docker compose --env-file ops/aws/.env.deploy -f ops/aws/docker-compose.aws.yml up -d --force-recreate --remove-orphans api
+          elif command -v docker-compose >/dev/null 2>&1; then
+            docker-compose --env-file ops/aws/.env.deploy -f ops/aws/docker-compose.aws.yml up -d --force-recreate --remove-orphans api
+          else
+            echo "docker compose is required on the AWS VM" >&2
+            exit 3
+          fi
 
-            sleep 8
-            curl --fail --show-error --silent \
-              -H "X-Forwarded-Proto: https" \
-              http://127.0.0.1:${HOST_PORT}/health
+          sleep 8
+          curl --fail --show-error --silent \
+            -H "X-Forwarded-Proto: https" \
+            "http://127.0.0.1:${HOST_PORT}/health"
