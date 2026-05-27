@@ -24,7 +24,7 @@ jobs:
           host: ${{ secrets.AWS_SSH_HOST }}
           username: ${{ secrets.AWS_SSH_USER || 'ubuntu' }}
           key: ${{ secrets.AWS_SSH_PRIVATE_KEY }}
-          port: ${{ secrets.AWS_SSH_PORT || 22 }}
+          port: 22
           envs: APP_DIR,ORBI_REPOSITORY_URL,ORBI_BRANCH,ORBI_IMAGE,HOST_PORT
           script: |
             set -euo pipefail
