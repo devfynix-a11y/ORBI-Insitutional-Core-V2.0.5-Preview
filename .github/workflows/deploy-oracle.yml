@@ -1,10 +1,6 @@
 name: Deploy Oracle Cloud
 
 on:
-  push:
-    branches:
-      - main
-      - master
   workflow_dispatch:
     inputs:
       base_url:
