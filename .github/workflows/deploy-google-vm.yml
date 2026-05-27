@@ -8,26 +8,48 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, google]
+    timeout-minutes: 35
+
+    env:
+      APP_DIR: /home/auth_fynix/apps/orbi-core
+      ORBI_REPOSITORY_URL: https://github.com/devfynix-a11y/ORBI-Insitutional-Core-V3.0.0-Stable-Preview.git
+      ORBI_BRANCH: main
+      ORBI_IMAGE: orbi-core:latest
+      HOST_PORT: 3000
 
     steps:
-      - name: Deploy to Google VM
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.VM_HOST }}
-          username: ${{ secrets.VM_USER }}
-          key: ${{ secrets.VM_SSH_KEY }}
-          script: |
-            set -e
-            cd ~/apps/orbi-core
-            git fetch origin
-            git reset --hard origin/main
-            docker build -t orbi-core:latest .
-            docker rm -f orbi-core-api 2>/dev/null || true
-            docker run -d \
-              --name orbi-core-api \
-              --restart unless-stopped \
-              --env-file .env \
-              -p 3000:3000 \
-              orbi-core:latest
-            curl -i -H "X-Forwarded-Proto: https" http://127.0.0.1:3000/health
+      - name: Deploy locally on Google VM
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! -d "${APP_DIR}/.git" ]]; then
+            mkdir -p "$(dirname "${APP_DIR}")"
+            git clone "${ORBI_REPOSITORY_URL}" "${APP_DIR}"
+          fi
+
+          cd "${APP_DIR}"
+          git remote set-url origin "${ORBI_REPOSITORY_URL}"
+          git fetch origin "${ORBI_BRANCH}"
+          git reset --hard "origin/${ORBI_BRANCH}"
+
+          if [[ ! -f .env ]]; then
+            echo "Missing ${APP_DIR}/.env. Upload the Google production env file before deploy." >&2
+            exit 2
+          fi
+
+          chmod 600 .env
+          docker build -t "${ORBI_IMAGE}" .
+          docker rm -f orbi-core-api 2>/dev/null || true
+          docker run -d \
+            --name orbi-core-api \
+            --restart unless-stopped \
+            --env-file .env \
+            -p "${HOST_PORT}:3000" \
+            "${ORBI_IMAGE}"
+
+          sleep 8
+          curl --fail --show-error --silent \
+            -H "X-Forwarded-Proto: https" \
+            "http://127.0.0.1:${HOST_PORT}/health"
