@@ -5035,12 +5035,16 @@ CREATE TABLE IF NOT EXISTS public.outbox_events (
 CREATE TABLE IF NOT EXISTS public.fraud_checks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    transaction_id UUID REFERENCES public.transactions(id) ON DELETE SET NULL,
     payload JSONB NOT NULL,
     risk_score NUMERIC NOT NULL,
     decision TEXT NOT NULL,
     flags TEXT[] NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_fraud_checks_transaction_id ON public.fraud_checks(transaction_id);
+CREATE INDEX IF NOT EXISTS idx_fraud_checks_user_created ON public.fraud_checks(user_id, created_at DESC);
 
 -- PAYMENT CARD PROCESSING (PCI-DSS Compliant)
 CREATE TABLE IF NOT EXISTS public.card_tokens (

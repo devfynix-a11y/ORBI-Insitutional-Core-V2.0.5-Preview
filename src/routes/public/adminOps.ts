@@ -1226,7 +1226,7 @@ export const registerAdminOpsRoutes = (v1: Router, deps: Deps) => {
           .limit(5000),
         sb
           .from('fraud_checks')
-          .select('id, transaction_id, risk_score, decision, flags, payload, created_at')
+          .select('id, user_id, risk_score, decision, flags, payload, created_at')
           .gte('created_at', since)
           .order('created_at', { ascending: false })
           .limit(5000),
@@ -1425,7 +1425,7 @@ export const registerAdminOpsRoutes = (v1: Router, deps: Deps) => {
         txQuery,
         sb
           .from('fraud_checks')
-          .select('id, user_id, transaction_id, risk_score, decision, flags, payload, created_at')
+          .select('id, user_id, risk_score, decision, flags, payload, created_at')
           .gte('created_at', since)
           .order('created_at', { ascending: false })
           .limit(limit),
