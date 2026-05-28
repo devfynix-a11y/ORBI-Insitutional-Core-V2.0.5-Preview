@@ -219,25 +219,25 @@ Authorized staff can access fee transaction data via the Admin API:
 
 ## 9. Messaging & Notifications Configuration
 
-ORBI uses a dual-provider architecture for notifications: the custom ORBI Gateway for SMS and Brevo for Email.
+ORBI uses a dual-provider architecture for notifications: the custom ORBI Communications Gateway for SMS/push/templates and Brevo for email where configured.
 
-### 9.1 ORBI Gateway Setup (SMS)
-The ORBI Gateway handles automated SMS messages (OTP, transaction confirmations, security alerts) using predefined templates. It supports language preferences (English `en` and Swahili `sw`).
+### 9.1 ORBI Communications Gateway Setup (SMS / Push / Templates)
+The ORBI Communications Gateway handles automated SMS, push, and template messages (OTP, transaction confirmations, security alerts). It supports language preferences (English `en` and Swahili `sw`).
 
 > **Note:** For a complete list of all message templates and their required variables, please refer to the [ORBI Gateway Message Templates](./GATEWAY_TEMPLATES.md) documentation.
 
 **Environment Variables:**
 ```env
-ORBI_API_KEY=your_orbi_gateway_api_key_here
-ORBI_GATEWAY_URL=https://your-orbi-gateway-url.com
+ORBI_COMMUNICATIONS_GATEWAY_API_KEY=your_orbi_communications_gateway_api_key_here
+ORBI_COMMUNICATIONS_GATEWAY_URL=https://your-orbi-communications-gateway-url.com
 ```
 
 **Usage:**
 ```typescript
-import { orbiGatewayService } from './backend/infrastructure/orbiGatewayService.js';
+import { orbiCommunicationsGatewayService } from './backend/infrastructure/orbiGatewayService.js';
 
 // Send a template message
-await orbiGatewayService.sendTemplate(
+await orbiCommunicationsGatewayService.sendTemplate(
     'Transfer_Received', 
     '+255700000000', 
     { amount: '50,000', currency: 'TZS', sender: 'John Doe' },

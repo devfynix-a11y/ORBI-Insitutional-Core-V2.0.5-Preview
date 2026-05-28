@@ -2,23 +2,38 @@ import { logger } from './logger.js';
 import parsePhoneNumber from 'libphonenumber-js';
 import { MessageType, TemplateChannel, TemplateLanguage, TemplateName, TemplatePayloads } from '../templates/template_types.js';
 
-export const gatewayInfraLogger = logger.child({ component: 'orbi_gateway_service' });
+export const communicationsGatewayLogger = logger.child({ component: 'orbi_communications_gateway_service' });
 
-class OrbiGatewayService {
+const envFirst = (...keys: string[]) => {
+    for (const key of keys) {
+        const value = process.env[key]?.trim();
+        if (value) return value;
+    }
+    return undefined;
+};
+
+class OrbiCommunicationsGatewayService {
     private apiKey: string | undefined;
     private baseUrl: string | undefined;
 
     constructor() {
-        this.apiKey = process.env.ORBI_GATEWAY_API_KEY;
+        this.apiKey = envFirst(
+            'ORBI_COMMUNICATIONS_GATEWAY_API_KEY',
+            'ORBI_GATEWAY_API_KEY'
+        );
         this.baseUrl = this.normalizeBaseUrl(
-            process.env.ORBI_GATEWAY_URL || process.env.ORBI_GATEWAY_BASE_URL
+            envFirst(
+                'ORBI_COMMUNICATIONS_GATEWAY_URL',
+                'ORBI_COMMUNICATIONS_GATEWAY_BASE_URL',
+                'ORBI_GATEWAY_URL'
+            ) || (process.env.ORBI_GATEWAY_API_KEY ? envFirst('ORBI_GATEWAY_BASE_URL') : undefined)
         );
         
         if (!this.apiKey) {
-            gatewayInfraLogger.warn('gateway_service.api_key_missing');
+            communicationsGatewayLogger.warn('communications_gateway.api_key_missing');
         }
         if (!this.baseUrl) {
-            gatewayInfraLogger.warn('gateway_service.url_missing');
+            communicationsGatewayLogger.warn('communications_gateway.url_missing');
         }
     }
 
@@ -38,6 +53,22 @@ class OrbiGatewayService {
         } catch (e) {
             return phone.startsWith('+') ? phone : '+' + phone.replace(/\s/g, '');
         }
+    }
+
+    private ownerUid(ownerUid?: string): string | undefined {
+        return ownerUid || envFirst(
+            'ORBI_COMMUNICATIONS_GATEWAY_USER_ID',
+            'ORBI_GATEWAY_USER_ID',
+            'OBI_GATEWAY_USER_ID'
+        );
+    }
+
+    private ownerEmail(ownerEmail?: string): string | undefined {
+        return ownerEmail || envFirst(
+            'ORBI_COMMUNICATIONS_GATEWAY_USER_EMAIL',
+            'ORBI_GATEWAY_USER_EMAIL',
+            'OBI_GATEWAY_USER_EMAIL'
+        );
     }
 
     private normalizeTemplateData<T extends TemplateName>(templateName: T, data: TemplatePayloads[T]): TemplatePayloads[T] {
@@ -82,7 +113,7 @@ class OrbiGatewayService {
 
     async sendSms(recipient: string, body: string, language: string = 'en', ownerUid?: string, ownerEmail?: string, requestId?: string): Promise<boolean> {
         if (!this.apiKey || !this.baseUrl) {
-            gatewayInfraLogger.error('gateway_service.sms_missing_configuration', { channel: 'sms' });
+            communicationsGatewayLogger.error('communications_gateway.sms_missing_configuration', { channel: 'sms' });
             return false;
         }
 
@@ -102,29 +133,29 @@ class OrbiGatewayService {
                     channel: 'sms',
                     messageType: 'transactional',
                     language,
-                    ownerUid: process.env.OBI_GATEWAY_USER_ID,
-                    ownerEmail: process.env.OBI_GATEWAY_USER_EMAIL,
+                    ownerUid: this.ownerUid(ownerUid),
+                    ownerEmail: this.ownerEmail(ownerEmail),
                     requestId
                 })
             });
 
             if (!response.ok) {
                 const errorText = await response.text();
-                gatewayInfraLogger.error('gateway_service.sms_failed', { endpoint, status_code: response.status, channel: 'sms', recipient: normalizedRecipient, error_text: errorText });
+                communicationsGatewayLogger.error('communications_gateway.sms_failed', { endpoint, status_code: response.status, channel: 'sms', recipient: normalizedRecipient, error_text: errorText });
                 return false;
             }
 
-            gatewayInfraLogger.info('gateway_service.sms_sent', { channel: 'sms', recipient: normalizedRecipient });
+            communicationsGatewayLogger.info('communications_gateway.sms_sent', { channel: 'sms', recipient: normalizedRecipient });
             return true;
         } catch (error) {
-            gatewayInfraLogger.error('gateway_service.sms_exception', { channel: 'sms', recipient: normalizedRecipient }, error);
+            communicationsGatewayLogger.error('communications_gateway.sms_exception', { channel: 'sms', recipient: normalizedRecipient }, error);
             return false;
         }
     }
 
     async sendEmail(recipient: string, subject: string, body: string, html?: string, language: string = 'en', ownerUid?: string, ownerEmail?: string, requestId?: string): Promise<boolean> {
         if (!this.apiKey || !this.baseUrl) {
-            gatewayInfraLogger.error('gateway_service.email_missing_configuration', { channel: 'email', recipient });
+            communicationsGatewayLogger.error('communications_gateway.email_missing_configuration', { channel: 'email', recipient });
             return false;
         }
 
@@ -143,29 +174,29 @@ class OrbiGatewayService {
                     html,
                     messageType: 'transactional',
                     language,
-                    ownerUid: process.env.OBI_GATEWAY_USER_ID,
-                    ownerEmail: process.env.OBI_GATEWAY_USER_EMAIL,
+                    ownerUid: this.ownerUid(ownerUid),
+                    ownerEmail: this.ownerEmail(ownerEmail),
                     requestId
                 })
             });
 
             if (!response.ok) {
                 const errorText = await response.text();
-                gatewayInfraLogger.error('gateway_service.email_failed', { endpoint, status_code: response.status, channel: 'email', recipient, error_text: errorText });
+                communicationsGatewayLogger.error('communications_gateway.email_failed', { endpoint, status_code: response.status, channel: 'email', recipient, error_text: errorText });
                 return false;
             }
 
-            gatewayInfraLogger.info('gateway_service.email_sent', { channel: 'email', recipient });
+            communicationsGatewayLogger.info('communications_gateway.email_sent', { channel: 'email', recipient });
             return true;
         } catch (error) {
-            gatewayInfraLogger.error('gateway_service.email_exception', { channel: 'email', recipient }, error);
+            communicationsGatewayLogger.error('communications_gateway.email_exception', { channel: 'email', recipient }, error);
             return false;
         }
     }
 
     async sendPush(fcmToken: string, title: string, body: string, data: Record<string, any> = {}, language: string = 'en', ownerUid?: string, ownerEmail?: string, requestId?: string): Promise<boolean> {
         if (!this.apiKey || !this.baseUrl) {
-            gatewayInfraLogger.error('gateway_service.push_missing_configuration', { channel: 'push' });
+            communicationsGatewayLogger.error('communications_gateway.push_missing_configuration', { channel: 'push' });
             return false;
         }
 
@@ -176,12 +207,12 @@ class OrbiGatewayService {
                 body,
                 data,
                 language,
-                ownerUid: process.env.OBI_GATEWAY_USER_ID,
-                ownerEmail: process.env.OBI_GATEWAY_USER_EMAIL,
+                ownerUid: this.ownerUid(ownerUid),
+                ownerEmail: this.ownerEmail(ownerEmail),
                 requestId
             };
 
-            gatewayInfraLogger.debug('gateway_service.push_payload_prepared', { channel: 'push', payload });
+            communicationsGatewayLogger.debug('communications_gateway.push_payload_prepared', { channel: 'push', payload });
 
             const endpoint = `${this.baseUrl}/api/send-push`;
             const response = await fetch(endpoint, {
@@ -195,14 +226,14 @@ class OrbiGatewayService {
 
             if (!response.ok) {
                 const errorText = await response.text();
-                gatewayInfraLogger.error('gateway_service.push_failed', { endpoint, status_code: response.status, channel: 'push', error_text: errorText });
+                communicationsGatewayLogger.error('communications_gateway.push_failed', { endpoint, status_code: response.status, channel: 'push', error_text: errorText });
                 return false;
             }
 
-            gatewayInfraLogger.info('gateway_service.push_sent', { channel: 'push' });
+            communicationsGatewayLogger.info('communications_gateway.push_sent', { channel: 'push' });
             return true;
         } catch (error) {
-            gatewayInfraLogger.error('gateway_service.push_exception', { channel: 'push' }, error);
+            communicationsGatewayLogger.error('communications_gateway.push_exception', { channel: 'push' }, error);
             return false;
         }
     }
@@ -216,7 +247,7 @@ class OrbiGatewayService {
         const { channel = 'sms', language = 'en', messageType = 'transactional', fcmToken, ownerUid, ownerEmail, requestId } = options;
 
         if (!this.apiKey || !this.baseUrl) {
-            gatewayInfraLogger.error('gateway_service.template_missing_configuration', { channel, recipient, template_name: templateName });
+            communicationsGatewayLogger.error('communications_gateway.template_missing_configuration', { channel, recipient, template_name: templateName });
             return false;
         }
 
@@ -231,13 +262,13 @@ class OrbiGatewayService {
                 channel,
                 language,
                 messageType,
-                ownerUid: ownerUid || process.env.OBI_GATEWAY_USER_ID,
-                ownerEmail: ownerEmail || process.env.OBI_GATEWAY_USER_EMAIL,
+                ownerUid: this.ownerUid(ownerUid),
+                ownerEmail: this.ownerEmail(ownerEmail),
                 requestId,
                 ...(fcmToken && channel !== 'push' ? { fcmToken } : {})
             };
 
-            gatewayInfraLogger.debug('gateway_service.template_payload_prepared', { channel, recipient, template_name: templateName, payload });
+            communicationsGatewayLogger.debug('communications_gateway.template_payload_prepared', { channel, recipient, template_name: templateName, payload });
 
             const endpoint = `${this.baseUrl}/api/send-template`;
             const response = await fetch(endpoint, {
@@ -251,14 +282,14 @@ class OrbiGatewayService {
 
             if (!response.ok) {
                 const errorText = await response.text();
-                gatewayInfraLogger.error('gateway_service.template_failed', { endpoint, status_code: response.status, channel, recipient, template_name: templateName, error_text: errorText });
+                communicationsGatewayLogger.error('communications_gateway.template_failed', { endpoint, status_code: response.status, channel, recipient, template_name: templateName, error_text: errorText });
                 return false;
             }
 
-            gatewayInfraLogger.info('gateway_service.template_sent', { channel, recipient, template_name: templateName });
+            communicationsGatewayLogger.info('communications_gateway.template_sent', { channel, recipient, template_name: templateName });
             return true;
         } catch (error) {
-            gatewayInfraLogger.error('gateway_service.template_exception', { channel, recipient, template_name: templateName }, error);
+            communicationsGatewayLogger.error('communications_gateway.template_exception', { channel, recipient, template_name: templateName }, error);
             return false;
         }
     }
@@ -279,7 +310,7 @@ class OrbiGatewayService {
         variables: string[];
     }>> {
         if (!this.apiKey || !this.baseUrl) {
-            gatewayInfraLogger.error('gateway_service.template_catalog_missing_configuration');
+            communicationsGatewayLogger.error('communications_gateway.template_catalog_missing_configuration');
             return [];
         }
 
@@ -303,17 +334,21 @@ class OrbiGatewayService {
 
             if (!response.ok) {
                 const errorText = await response.text();
-                gatewayInfraLogger.error('gateway_service.template_catalog_failed', { endpoint, status_code: response.status, error_text: errorText });
+                communicationsGatewayLogger.error('communications_gateway.template_catalog_failed', { endpoint, status_code: response.status, error_text: errorText });
                 return [];
             }
 
             const payload = await response.json().catch(() => ({}));
             return Array.isArray(payload?.data) ? payload.data : [];
         } catch (error) {
-            gatewayInfraLogger.error('gateway_service.template_catalog_exception', { endpoint }, error);
+            communicationsGatewayLogger.error('communications_gateway.template_catalog_exception', { endpoint }, error);
             return [];
         }
     }
 }
 
-export const orbiGatewayService = new OrbiGatewayService();
+export const orbiCommunicationsGatewayService = new OrbiCommunicationsGatewayService();
+
+// Backward compatibility for older imports. New code should use
+// orbiCommunicationsGatewayService to avoid confusion with payment gateway APIs.
+export const orbiGatewayService = orbiCommunicationsGatewayService;

@@ -796,7 +796,7 @@ CREATE TABLE users (
   phone TEXT ENCRYPTED WITH (COLUMN_ENCRYPTION_KEY = cek_phone)
 );
 
--- Use KMS (AWS KMS or HashiCorp Vault) for key management
+-- Use a managed KMS or HashiCorp Vault for key management
 🧪 8. Chaos Engineering & Testing
 8.1 Chaos Mesh Experiments
 yaml
@@ -845,7 +845,7 @@ export default function () {
 Requirement	Implementation	Verification
 PCI DSS 3.2		
 Encrypt cardholder data	AES-256 at rest, TLS 1.3 in transit	Pen test
-Protect encryption keys	AWS KMS / HashiCorp Vault	Audit log
+Protect encryption keys	Managed KMS / HashiCorp Vault	Audit log
 Log access to cardholder data	Audit logs with tamper protection	Compliance scan
 Regular vulnerability scans	Weekly Qualys scan	Report
 SOC2 Type II		
@@ -862,7 +862,7 @@ Incident management	PagerDuty + runbooks	Tabletop exercise
 Business continuity	DR plan with RTO 4h, RPO 15min	Annual test
 🛠️ 10. Migration Roadmap
 Phase 0: Foundation (Week 1-2)
-Set up Kubernetes cluster (EKS/AKS/GKE)
+Set up Kubernetes cluster or VM runtime
 
 Deploy Citus database cluster (3+ nodes)
 

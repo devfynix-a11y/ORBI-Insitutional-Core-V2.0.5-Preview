@@ -1,7 +1,7 @@
 import { TemplateChannel, TemplateLanguage, MessageType, TemplateName } from '../templates/template_types.js';
-import { orbiGatewayService } from '../infrastructure/orbiGatewayService.js';
+import { orbiCommunicationsGatewayService } from '../infrastructure/orbiGatewayService.js';
 
-export type GatewayTemplateCatalogItem = {
+export type CommunicationsTemplateCatalogItem = {
   name: TemplateName | string;
   channel: TemplateChannel;
   language: TemplateLanguage | string;
@@ -11,7 +11,7 @@ export type GatewayTemplateCatalogItem = {
   variables: string[];
 };
 
-export type GatewayTemplateSearchInput = {
+export type CommunicationsTemplateSearchInput = {
   search?: string;
   channel?: TemplateChannel;
   language?: TemplateLanguage;
@@ -19,9 +19,9 @@ export type GatewayTemplateSearchInput = {
   limit?: number;
 };
 
-class GatewayTemplateCatalogService {
-  async listTemplates(input: GatewayTemplateSearchInput = {}): Promise<GatewayTemplateCatalogItem[]> {
-    const items = await orbiGatewayService.getTemplateCatalog(input);
+class CommunicationsTemplateCatalogService {
+  async listTemplates(input: CommunicationsTemplateSearchInput = {}): Promise<CommunicationsTemplateCatalogItem[]> {
+    const items = await orbiCommunicationsGatewayService.getTemplateCatalog(input);
     return (items || []).sort((a, b) => {
       const byName = String(a.name).localeCompare(String(b.name));
       if (byName !== 0) return byName;
@@ -31,7 +31,7 @@ class GatewayTemplateCatalogService {
     });
   }
 
-  async getTemplate(name: string, preferred: Omit<GatewayTemplateSearchInput, 'search' | 'limit'> = {}): Promise<GatewayTemplateCatalogItem | null> {
+  async getTemplate(name: string, preferred: Omit<CommunicationsTemplateSearchInput, 'search' | 'limit'> = {}): Promise<CommunicationsTemplateCatalogItem | null> {
     const items = await this.listTemplates({
       search: name,
       channel: preferred.channel,
@@ -49,7 +49,7 @@ class GatewayTemplateCatalogService {
     return items.find((item) => item.name === name) || null;
   }
 
-  renderTemplate(template: GatewayTemplateCatalogItem, variables: Record<string, any> = {}) {
+  renderTemplate(template: CommunicationsTemplateCatalogItem, variables: Record<string, any> = {}) {
     const replace = (input?: string) => {
       if (!input) return '';
       return input.replace(/\{\{(.*?)\}\}/g, (_match, key) => {
@@ -69,4 +69,10 @@ class GatewayTemplateCatalogService {
   }
 }
 
-export const gatewayTemplateCatalog = new GatewayTemplateCatalogService();
+export const communicationsTemplateCatalog = new CommunicationsTemplateCatalogService();
+
+export type GatewayTemplateCatalogItem = CommunicationsTemplateCatalogItem;
+export type GatewayTemplateSearchInput = CommunicationsTemplateSearchInput;
+
+// Backward compatibility for older admin messaging code.
+export const gatewayTemplateCatalog = communicationsTemplateCatalog;

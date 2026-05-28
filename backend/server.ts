@@ -27,7 +27,7 @@ import { CONFIG } from '../services/config.js';
 import { FinancialLogic } from '../services/financialLogic.js';
 import { VaultAuditor } from './security/vaultAuditor.js';
 import { Messaging } from './features/MessagingService.js';
-import { orbiGatewayService } from './infrastructure/orbiGatewayService.js';
+import { orbiCommunicationsGatewayService } from './infrastructure/orbiGatewayService.js';
 import { ReconEngine } from './ledger/reconciliationService.js';
 import { OTPService } from './security/otpService.js';
 import { InternalBroker } from '../BROKER/index.js';
@@ -172,7 +172,7 @@ class OrbiServer {
     // --- DIAGNOSTICS ---
     async testEmail(to: string) {
         console.info(`[OrbiServer] Email test requested for ${to} via ORBI Gateway.`);
-        const success = await orbiGatewayService.sendEmail(
+        const success = await orbiCommunicationsGatewayService.sendEmail(
             to,
             'ORBI Gateway Test',
             'This is a test email from the ORBI Sovereign Node via the internal ORBI Gateway.',
@@ -187,7 +187,16 @@ class OrbiServer {
 
     async verifyEmailConfig() {
         console.info(`[OrbiServer] Email config verification via ORBI Gateway.`);
-        const isConfigured = Boolean(process.env.ORBI_GATEWAY_API_KEY && (process.env.ORBI_GATEWAY_URL || process.env.ORBI_GATEWAY_BASE_URL));
+        const hasLegacyMessagingGatewayKey = Boolean(process.env.ORBI_GATEWAY_API_KEY);
+        const isConfigured = Boolean(
+            (process.env.ORBI_COMMUNICATIONS_GATEWAY_API_KEY || hasLegacyMessagingGatewayKey) &&
+            (
+                process.env.ORBI_COMMUNICATIONS_GATEWAY_URL ||
+                process.env.ORBI_COMMUNICATIONS_GATEWAY_BASE_URL ||
+                process.env.ORBI_GATEWAY_URL ||
+                (hasLegacyMessagingGatewayKey && process.env.ORBI_GATEWAY_BASE_URL)
+            )
+        );
         return { status: isConfigured ? 'ACTIVE' : 'MISSING_CONFIG' };
     }
 

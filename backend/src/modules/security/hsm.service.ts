@@ -11,7 +11,7 @@ type SecureAccessTokenClaims = {
 export class HSMService {
     /**
      * Simulates signing a payload using a Hardware Security Module (HSM) 
-     * like AWS CloudHSM or Google Cloud KMS.
+     * like a managed CloudHSM or Cloud KMS.
      */
     async signWithHSM(payload: string): Promise<string> {
         if (process.env.NODE_ENV === 'production') {

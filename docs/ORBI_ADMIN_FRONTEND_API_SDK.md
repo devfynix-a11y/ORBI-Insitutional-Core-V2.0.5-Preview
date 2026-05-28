@@ -287,7 +287,7 @@ GET /v1/admin/compliance/node-zones/risk-density
 
 Use this for the Risk/IT Ops dashboard timeline that shows operational compliance pressure across real ORBI infrastructure zones. These zones are logical boundaries mapped to live infrastructure, not fictional regions:
 
-- `ORBI-AWS-CORE-PRIMARY`: `https://api.orbifinancial.com`, primary core API.
+- `ORBI-PRIMARY-CORE`: `https://api.orbifinancial.com`, primary core API. This can run on Oracle or another primary VM provider.
 - `ORBI-GCP-CORE-FALLBACK`: `https://go-api.orbifinancial.com`, fallback core API.
 - `ORBI-GATEWAY-EDGE`: `https://gateway.orbifinancial.com`, gateway/provider edge.
 - `ORBI-LEDGER-AUTHORITY`: ledger/audit/balance authority.

@@ -4,7 +4,7 @@ import { Storage } from '../storage.js';
 
 /**
  * ORBI SOVEREIGN INFRASTRUCTURE CORE (V6.0)
- * Persistent Orchestration for EKS, Istio, and IRSA nodes.
+ * Persistent orchestration model for ORBI runtime nodes.
  */
 
 export interface IAMPolicy {
@@ -29,7 +29,7 @@ export interface PodMetrics {
     cpu: string;
     memory: string;
     mtls: boolean;
-    iamRole: string;
+    serviceIdentity: string;
     permissions: IAMPolicy[];
     sidecar: 'READY' | 'STARTING' | 'NONE';
     trafficShare: number;
@@ -53,14 +53,14 @@ class ClusterService {
             const initialPods: PodMetrics[] = [
                 { 
                     id: UUID.generate(), name: 'dps-session-node-v1', status: 'RUNNING', 
-                    cpu: '120m', memory: '256Mi', mtls: true, iamRole: 'arn:aws:iam::dps:role/session-irsa',
+                    cpu: '120m', memory: '256Mi', mtls: true, serviceIdentity: 'orbi-session-node',
                     permissions: [{ name: 'KMS-Decrypt', action: 'kms:Decrypt', resource: '*' }],
                     sidecar: 'READY', trafficShare: 100, rps: 450, latency: '4ms', errorRate: '0.01%',
                     logs: [{ timestamp: new Date().toISOString(), level: 'INFO', message: 'Registry Initialized.' }]
                 },
                 { 
                     id: UUID.generate(), name: 'dps-fraud-sentinel-v2', status: 'CANARY', 
-                    cpu: '450m', memory: '1Gi', mtls: true, iamRole: 'arn:aws:iam::dps:role/fraud-irsa',
+                    cpu: '450m', memory: '1Gi', mtls: true, serviceIdentity: 'orbi-fraud-sentinel',
                     permissions: [{ name: 'SageMaker-Invoke', action: 'sagemaker:Invoke', resource: '*' }],
                     sidecar: 'READY', trafficShare: 10, rps: 42, latency: '18ms', errorRate: '0.00%',
                     logs: [{ timestamp: new Date().toISOString(), level: 'INFO', message: 'Canary sync active.' }]
@@ -117,8 +117,8 @@ class ClusterService {
 
     public getClusterHealth() {
         return {
-            eks: { status: 'ACTIVE', version: '1.29', managedNodes: 6 },
-            mesh: { engine: 'ISTIO v1.21', mtlsMode: 'STRICT', canaryStrategy: 'WEIGHTED' },
+            runtime: { status: 'ACTIVE', version: 'orbi-node-runtime', managedNodes: 6 },
+            mesh: { engine: 'ORBI_SERVICE_MESH', mtlsMode: 'STRICT', canaryStrategy: 'WEIGHTED' },
             compliance: { score: 98, status: 'PASSED' }
         };
     }

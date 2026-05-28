@@ -5,6 +5,7 @@ import { getAdminSupabase, getSupabase } from '../../../backend/supabaseClient.j
 import { ServiceActorOps } from '../../../backend/features/ServiceActorOps.js';
 import { Messaging } from '../../../backend/features/MessagingService.js';
 import { staffMessagingAdminService } from '../../../backend/features/StaffMessagingAdminService.js';
+import { SocketRegistry } from '../../../backend/infrastructure/SocketRegistry.js';
 import { AuthService } from '../../../iam/authService.js';
 import { sessionHasAnyRole } from '../../middleware/auth/authorization.js';
 import {
@@ -192,7 +193,7 @@ type RiskGeoBucket = {
 type ComplianceNodeZone = {
   id: string;
   name: string;
-  provider: 'aws' | 'gcp' | 'gateway' | 'supabase' | 'admin' | 'external';
+  provider: 'oracle' | 'gcp' | 'gateway' | 'supabase' | 'admin' | 'external';
   role: 'core_api_primary' | 'core_api_fallback' | 'gateway_edge' | 'ledger_authority' | 'admin_ops' | 'provider_rails';
   baseUrl?: string;
   healthEndpoint?: string;
@@ -428,26 +429,26 @@ const envNumber = (key: string, fallback: number): number => {
 };
 
 const complianceNodeZones = (): ComplianceNodeZone[] => {
-  const awsUrl = envString('ORBI_AWS_CORE_BASE_URL', envString('ORBI_PRIMARY_CORE_BASE_URL', 'https://api.orbifinancial.com'));
+  const primaryUrl = envString('ORBI_ORACLE_CORE_BASE_URL', envString('ORBI_PRIMARY_CORE_BASE_URL', 'https://api.orbifinancial.com'));
   const googleUrl = envString('ORBI_GOOGLE_CORE_BASE_URL', envString('ORBI_FALLBACK_CORE_BASE_URL', 'https://go-api.orbifinancial.com'));
   const gatewayUrl = envString('ORBI_GATEWAY_BASE_URL', 'https://gateway.orbifinancial.com');
 
   return [
     {
-      id: 'ORBI-AWS-CORE-PRIMARY',
-      name: 'AWS Core Primary',
-      provider: 'aws',
+      id: 'ORBI-PRIMARY-CORE',
+      name: 'ORBI Core Primary',
+      provider: 'oracle',
       role: 'core_api_primary',
-      baseUrl: awsUrl,
-      healthEndpoint: `${awsUrl}/health`,
-      regionCode: envString('ORBI_AWS_CORE_REGION', 'us-east-1'),
-      jurisdiction: envString('ORBI_AWS_CORE_JURISDICTION', 'US'),
+      baseUrl: primaryUrl,
+      healthEndpoint: `${primaryUrl}/health`,
+      regionCode: envString('ORBI_ORACLE_CORE_REGION', envString('ORBI_PRIMARY_CORE_REGION', 'primary')),
+      jurisdiction: envString('ORBI_ORACLE_CORE_JURISDICTION', envString('ORBI_PRIMARY_CORE_JURISDICTION', 'GLOBAL')),
       coordinates: {
-        lat: envNumber('ORBI_AWS_CORE_LAT', 39.0438),
-        lng: envNumber('ORBI_AWS_CORE_LNG', -77.4874),
+        lat: envNumber('ORBI_ORACLE_CORE_LAT', envNumber('ORBI_PRIMARY_CORE_LAT', 0)),
+        lng: envNumber('ORBI_ORACLE_CORE_LNG', envNumber('ORBI_PRIMARY_CORE_LNG', 0)),
       },
       competencies: ['transaction_preview', 'transaction_settlement', 'wallet_governance', 'admin_api', 'risk_enforcement'],
-      baseRisk: envNumber('ORBI_AWS_CORE_BASE_RISK', 25),
+      baseRisk: envNumber('ORBI_ORACLE_CORE_BASE_RISK', envNumber('ORBI_PRIMARY_CORE_BASE_RISK', 25)),
       active: true,
     },
     {
@@ -1210,7 +1211,7 @@ export const registerAdminOpsRoutes = (v1: Router, deps: Deps) => {
       const zones = complianceNodeZones().filter((zone) => query.includeInactive || zone.active);
       const timelines = createComplianceTimeline(zones, windowHours, bucketHours);
       const since = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString();
-      const awsBuckets = timelines.get('ORBI-AWS-CORE-PRIMARY');
+      const primaryBuckets = timelines.get('ORBI-PRIMARY-CORE');
       const gatewayBuckets = timelines.get('ORBI-GATEWAY-EDGE');
       const ledgerBuckets = timelines.get('ORBI-LEDGER-AUTHORITY');
       const adminBuckets = timelines.get('ORBI-ADMIN-OPS');
@@ -1248,7 +1249,7 @@ export const registerAdminOpsRoutes = (v1: Router, deps: Deps) => {
         const metadata = objectValue(row.metadata);
         const status = firstString(row.status)?.toUpperCase() || '';
         const type = firstString(row.type)?.toUpperCase() || '';
-        const coreBucket = bucketForTime(awsBuckets, row.created_at);
+        const coreBucket = bucketForTime(primaryBuckets, row.created_at);
 
         if (coreBucket) coreBucket.counts.transactions += 1;
         if (['FAILED', 'ERROR', 'REJECTED', 'DECLINED', 'CANCELLED'].includes(status)) {
@@ -1274,7 +1275,7 @@ export const registerAdminOpsRoutes = (v1: Router, deps: Deps) => {
       for (const check of Array.isArray(fraudChecksResult.data) ? fraudChecksResult.data : []) {
         const row = objectValue(check);
         const riskScore = numberValue(row.risk_score) || 0;
-        const bucket = bucketForTime(awsBuckets, row.created_at);
+        const bucket = bucketForTime(primaryBuckets, row.created_at);
         if (riskScore >= 80) {
           addComplianceDriver(bucket, 'CRITICAL_RISK_SIGNAL', 25, 'criticalRiskSignals');
           addComplianceDriver(bucketForTime(adminBuckets, row.created_at), 'CRITICAL_RISK_REVIEW', 14, 'criticalRiskSignals');
@@ -1696,6 +1697,17 @@ export const registerAdminOpsRoutes = (v1: Router, deps: Deps) => {
         targetRole: payload.targetRole || null,
         contentLength: payload.content.length,
       });
+      SocketRegistry.broadcast({
+        type: 'STAFF_MESSAGE_CREATED',
+        payload: {
+          message: data,
+          messageId: data?.id,
+          recipientId: payload.recipientId || null,
+          targetRole: payload.targetRole || null,
+          senderId: session.sub,
+          timestamp: new Date().toISOString(),
+        },
+      });
       res.json({ success: true, data });
     } catch (e: any) {
       res.status(400).json({ success: false, error: e.message });
@@ -1796,6 +1808,18 @@ export const registerAdminOpsRoutes = (v1: Router, deps: Deps) => {
         assignedTo: payload.assignedTo || null,
         hasCustomerQuery: Boolean(payload.customerQuery),
       });
+      SocketRegistry.broadcast({
+        type: 'SUPPORT_TICKET_CREATED',
+        payload: {
+          ticket: { id: data.id, created_at: data.created_at, ...(data.data || {}) },
+          ticketId: data?.id,
+          category: payload.category,
+          priority: payload.priority || 'normal',
+          assignedTo: payload.assignedTo || null,
+          createdBy: session.sub,
+          timestamp: new Date().toISOString(),
+        },
+      });
       res.json({ success: true, data: { id: data.id, created_at: data.created_at, ...(data.data || {}) } });
     } catch (e: any) {
       res.status(400).json({ success: false, error: e.message });
@@ -1842,6 +1866,17 @@ export const registerAdminOpsRoutes = (v1: Router, deps: Deps) => {
         assignedTo: next.assigned_to || null,
         hasInternalNote: Boolean(payload.internalNote),
         hasResolution: Boolean(payload.resolution),
+      });
+      SocketRegistry.broadcast({
+        type: 'SUPPORT_TICKET_UPDATED',
+        payload: {
+          ticket: { id: data.id, created_at: data.created_at, ...(data.data || {}) },
+          ticketId: req.params.id,
+          status: next.status,
+          assignedTo: next.assigned_to || null,
+          updatedBy: session.sub,
+          timestamp: new Date().toISOString(),
+        },
       });
       res.json({ success: true, data: { id: data.id, created_at: data.created_at, ...(data.data || {}) } });
     } catch (e: any) {

@@ -25,11 +25,18 @@ const OPTIONAL_ENV = [
   'ORBI_PROVIDER_TIMEOUT_MS',
   'ORBI_PROVIDER_MAX_ATTEMPTS',
   'ORBI_PROVIDER_RETRY_DELAY_MS',
+  'ORBI_COMMUNICATIONS_GATEWAY_URL',
+  'ORBI_COMMUNICATIONS_GATEWAY_BASE_URL',
+  'ORBI_COMMUNICATIONS_GATEWAY_API_KEY',
+  'ORBI_COMMUNICATIONS_GATEWAY_USER_ID',
+  'ORBI_COMMUNICATIONS_GATEWAY_USER_EMAIL',
   'ORBI_GATEWAY_URL',
   'ORBI_GATEWAY_BASE_URL',
   'ORBI_GATEWAY_API_KEY',
   'ORBI_GATEWAY_USER_ID',
   'ORBI_GATEWAY_USER_EMAIL',
+  'OBI_GATEWAY_USER_ID',
+  'OBI_GATEWAY_USER_EMAIL',
   'REDIS_CLUSTER_NODES',
   'REDIS_URL',
   'REDIS_HOST',
@@ -216,19 +223,28 @@ export const validateStartupEnvironment = () => {
 };
 
 const validateProviderSecretDependencies = (isProd: boolean) => {
-  const hasGatewayKey = Boolean(process.env.ORBI_GATEWAY_API_KEY);
-  const hasGatewayUrl = Boolean(process.env.ORBI_GATEWAY_URL || process.env.ORBI_GATEWAY_BASE_URL);
+  const hasLegacyMessagingGatewayKey = Boolean(process.env.ORBI_GATEWAY_API_KEY);
+  const hasCommunicationsGatewayKey = Boolean(
+    process.env.ORBI_COMMUNICATIONS_GATEWAY_API_KEY ||
+    hasLegacyMessagingGatewayKey
+  );
+  const hasCommunicationsGatewayUrl = Boolean(
+    process.env.ORBI_COMMUNICATIONS_GATEWAY_URL ||
+    process.env.ORBI_COMMUNICATIONS_GATEWAY_BASE_URL ||
+    process.env.ORBI_GATEWAY_URL ||
+    (hasLegacyMessagingGatewayKey && process.env.ORBI_GATEWAY_BASE_URL)
+  );
 
-  if (hasGatewayKey !== hasGatewayUrl) {
+  if (hasCommunicationsGatewayKey !== hasCommunicationsGatewayUrl) {
     const payload = {
-      has_gateway_key: hasGatewayKey,
-      has_gateway_url: hasGatewayUrl,
+      has_communications_gateway_key: hasCommunicationsGatewayKey,
+      has_communications_gateway_url: hasCommunicationsGatewayUrl,
     };
     if (isProd) {
-      logger.fatal('startup.invalid_gateway_config', payload);
+      logger.fatal('startup.invalid_communications_gateway_config', payload);
       process.exit(1);
     } else {
-      logger.warn('startup.invalid_gateway_config', payload);
+      logger.warn('startup.invalid_communications_gateway_config', payload);
     }
   }
 

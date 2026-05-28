@@ -8,7 +8,7 @@ export type OfficialMessageTemplateResolution = {
   systemCustomBypass: boolean;
 };
 
-class OfficialGatewayTemplatePolicy {
+class OfficialCommunicationsTemplatePolicy {
   resolve(input: {
     category: OfficialMessageCategory;
     subject: string;
@@ -71,4 +71,7 @@ class OfficialGatewayTemplatePolicy {
   }
 }
 
-export const officialGatewayTemplatePolicy = new OfficialGatewayTemplatePolicy();
+export const officialCommunicationsTemplatePolicy = new OfficialCommunicationsTemplatePolicy();
+
+// Backward compatibility for older imports.
+export const officialGatewayTemplatePolicy = officialCommunicationsTemplatePolicy;
