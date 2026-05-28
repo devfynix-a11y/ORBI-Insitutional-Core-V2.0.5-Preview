@@ -101,6 +101,9 @@ const criticalRules: LimitRule[] = [
       /^\/admin\/users\/.*\/(?:status|profile)$/.test(path) ||
       /^\/admin\/service-access\/requests\/.*\/review$/.test(path) ||
       /^\/api\/admin\/(?:transactions\/.*\/(?:lock|audit|approve|reverse)|staff\/.*\/reset-password|kyc\/review|documents\/.*\/verify|devices\/.*\/status|users\/.*\/(?:status|profile)|service-access\/requests\/.*\/review)$/.test(path) ||
+      /^\/admin\/platform-operational-accounts(?:\/[^/]+)?(?:\/(?:fund|payout|refund))?$/.test(path) ||
+      /^\/api\/admin\/platform-operational-accounts(?:\/[^/]+)?(?:\/(?:fund|payout|refund))?$/.test(path) ||
+      /^\/platform-operational-accounts(?:\/[^/]+)?(?:\/(?:fund|payout|refund))?$/.test(path) ||
       path === '/admin/reconciliation/run' ||
       path === '/api/admin/reconciliation/run' ||
       /^\/(?:transactions\/.*\/(?:lock|audit|approve|reverse)|staff\/.*\/reset-password|kyc\/review|documents\/.*\/verify|devices\/.*\/status)$/.test(path)

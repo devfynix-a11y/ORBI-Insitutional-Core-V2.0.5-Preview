@@ -40,6 +40,54 @@ const quoteErrorPayload = (error: any, context: string) => {
   };
 };
 
+const firstHeaderValue = (value: unknown): string | undefined => {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  return trimmed || undefined;
+};
+
+const ipGeoFromRequest = (req: any) => {
+  const countryCode = firstHeaderValue(req.headers['cf-ipcountry']) ||
+    firstHeaderValue(req.headers['x-vercel-ip-country']) ||
+    firstHeaderValue(req.headers['x-orbi-ip-country']);
+  const region = firstHeaderValue(req.headers['x-vercel-ip-country-region']) ||
+    firstHeaderValue(req.headers['x-orbi-ip-region']);
+  const city = firstHeaderValue(req.headers['x-vercel-ip-city']) ||
+    firstHeaderValue(req.headers['x-orbi-ip-city']);
+  const latitude = firstHeaderValue(req.headers['x-vercel-ip-latitude']) ||
+    firstHeaderValue(req.headers['x-orbi-ip-latitude']);
+  const longitude = firstHeaderValue(req.headers['x-vercel-ip-longitude']) ||
+    firstHeaderValue(req.headers['x-orbi-ip-longitude']);
+
+  if (!countryCode && !region && !city && !latitude && !longitude) return null;
+  return {
+    countryCode: countryCode?.toUpperCase(),
+    region,
+    city,
+    latitude: latitude ? Number(latitude) : undefined,
+    longitude: longitude ? Number(longitude) : undefined,
+    source: 'ip_geo',
+    capturedAt: new Date().toISOString(),
+    ipHashAvailable: Boolean(req.ip || req.headers['x-forwarded-for']),
+  };
+};
+
+const enrichTransactionGeoMetadata = (req: any) => {
+  const payload = req.body && typeof req.body === 'object' ? req.body : {};
+  const metadata = payload.metadata && typeof payload.metadata === 'object' ? payload.metadata : {};
+  const ipGeo = ipGeoFromRequest(req);
+  if (!ipGeo || metadata.ipGeo || metadata.ip_geo) return payload;
+  req.body = {
+    ...payload,
+    metadata: {
+      ...metadata,
+      ipGeo,
+    },
+  };
+  return req.body;
+};
+
 export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
   const {
     authenticate,
@@ -296,6 +344,7 @@ export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
     const idempotencyKey = resolveIdempotencyHeader(req);
 
     try {
+      enrichTransactionGeoMetadata(req);
       const binding = await LogicCore.bindSettlementQuote(
         session.sub,
         req.body,
@@ -357,6 +406,7 @@ export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
   v1.post('/transactions/preview', authenticate as any, validate(PaymentIntentSchema), async (req, res) => {
     const session = (req as any).session;
     try {
+      enrichTransactionGeoMetadata(req);
       const result = await LogicCore.getTransactionPreview(session.sub, req.body);
       if (!result.success) {
         return res.status(400).json(result);

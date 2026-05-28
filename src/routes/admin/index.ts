@@ -5,6 +5,10 @@ import { PartnerRegistry } from '../../../backend/admin/partnerRegistry.js';
 import { AdminConfigBootstrapService } from '../../../backend/admin/AdminConfigBootstrapService.js';
 import { TransactionService } from '../../../ledger/transactionService.js';
 import { Server as LogicCore } from '../../../backend/server.js';
+import {
+  PLATFORM_OPERATIONAL_ACCOUNT_ROLES,
+  platformOperationalAccountService,
+} from '../../../backend/payments/PlatformOperationalAccountService.js';
 import { createAdminActivityAudit } from '../../middleware/audit/adminActivityAudit.js';
 import { createCriticalActionLimiter } from '../../middleware/security/criticalActionLimiter.js';
 import { requireSessionPermission } from '../../middleware/auth/sessionAuth.js';
@@ -19,6 +23,28 @@ const InstitutionalAccountSchema = z.object({
   countryCode: z.string().min(2).max(3).optional(),
   status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
   isPrimary: z.boolean().optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
+const PlatformOperationalAccountSchema = z.object({
+  role: z.enum(PLATFORM_OPERATIONAL_ACCOUNT_ROLES),
+  name: z.string().trim().min(2).max(120),
+  currency: z.string().trim().length(3).optional(),
+  status: z.enum(['active', 'inactive', 'locked']).optional(),
+  color: z.string().trim().max(32).optional(),
+  icon: z.string().trim().max(64).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
+const PlatformOperationalTransferSchema = z.object({
+  sourceWalletId: z.string().uuid().optional(),
+  targetWalletId: z.string().uuid().optional(),
+  amount: z.coerce.number().positive(),
+  currency: z.string().trim().length(3),
+  reason: z.string().trim().min(5).max(500),
+  originalTransactionId: z.string().uuid().optional(),
+  originalReferenceId: z.string().trim().min(3).max(120).optional(),
+  idempotencyKey: z.string().trim().min(8).max(160).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -248,6 +274,99 @@ export const registerAdminRoutes = (admin: Router, authenticate: RequestHandler)
       res.json({ success: true, data });
     } catch (e: any) {
       console.error('[Admin] Update Institutional Account Error:', e);
+      res.status(400).json({ success: false, error: e.message });
+    }
+  });
+
+  admin.get('/platform-operational-accounts', requireSessionPermission(['institutional_account.read', 'institutional_account.write'], ['ADMIN', 'SUPER_ADMIN', 'IT', 'ACCOUNTANT', 'AUDIT']), async (req, res) => {
+    try {
+      const data = await platformOperationalAccountService.list({
+        role: queryStringValue(req.query.role),
+        status: queryStringValue(req.query.status),
+        currency: queryStringValue(req.query.currency),
+      });
+      res.json({ success: true, data });
+    } catch (e: any) {
+      console.error('[Admin] List Platform Operational Accounts Error:', e);
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  admin.post('/platform-operational-accounts', requireSessionPermission(['institutional_account.write'], ['ADMIN', 'SUPER_ADMIN', 'IT']), async (req, res) => {
+    try {
+      const payload = PlatformOperationalAccountSchema.parse(req.body);
+      const session = (req as any).session;
+      const data = await platformOperationalAccountService.upsert(payload, session.sub);
+      res.json({ success: true, data });
+    } catch (e: any) {
+      console.error('[Admin] Create Platform Operational Account Error:', e);
+      res.status(400).json({ success: false, error: e.message });
+    }
+  });
+
+  admin.patch('/platform-operational-accounts/:id', requireSessionPermission(['institutional_account.write'], ['ADMIN', 'SUPER_ADMIN', 'IT']), async (req, res) => {
+    try {
+      const payload = PlatformOperationalAccountSchema.partial().parse(req.body);
+      const session = (req as any).session;
+      const accountId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const data = await platformOperationalAccountService.upsert(payload as any, session.sub, accountId);
+      res.json({ success: true, data });
+    } catch (e: any) {
+      console.error('[Admin] Update Platform Operational Account Error:', e);
+      res.status(400).json({ success: false, error: e.message });
+    }
+  });
+
+  admin.get('/platform-operational-accounts/:id/ledger', requireSessionPermission(['institutional_account.read', 'ledger.read'], ['ADMIN', 'SUPER_ADMIN', 'IT', 'ACCOUNTANT', 'AUDIT']), async (req, res) => {
+    try {
+      const accountId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const data = await platformOperationalAccountService.history(
+        accountId,
+        Number(req.query.limit || 100),
+        Number(req.query.offset || 0),
+      );
+      res.json({ success: true, data });
+    } catch (e: any) {
+      console.error('[Admin] Platform Operational Account Ledger Error:', e);
+      res.status(400).json({ success: false, error: e.message });
+    }
+  });
+
+  admin.post('/platform-operational-accounts/:id/fund', requireSessionPermission(['ledger.write', 'institutional_account.write'], ['ADMIN', 'SUPER_ADMIN']), async (req, res) => {
+    try {
+      const payload = PlatformOperationalTransferSchema.required({ sourceWalletId: true }).parse(req.body);
+      const session = (req as any).session;
+      const accountId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const data = await platformOperationalAccountService.fund(accountId, payload, session.sub);
+      res.json({ success: true, data });
+    } catch (e: any) {
+      console.error('[Admin] Platform Operational Account Fund Error:', e);
+      res.status(400).json({ success: false, error: e.message });
+    }
+  });
+
+  admin.post('/platform-operational-accounts/:id/payout', requireSessionPermission(['ledger.write', 'institutional_account.write'], ['ADMIN', 'SUPER_ADMIN']), async (req, res) => {
+    try {
+      const payload = PlatformOperationalTransferSchema.required({ targetWalletId: true }).parse(req.body);
+      const session = (req as any).session;
+      const accountId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const data = await platformOperationalAccountService.payout(accountId, payload, session.sub);
+      res.json({ success: true, data });
+    } catch (e: any) {
+      console.error('[Admin] Platform Operational Account Payout Error:', e);
+      res.status(400).json({ success: false, error: e.message });
+    }
+  });
+
+  admin.post('/platform-operational-accounts/:id/refund', requireSessionPermission(['ledger.write', 'transaction.reverse', 'institutional_account.write'], ['ADMIN', 'SUPER_ADMIN']), async (req, res) => {
+    try {
+      const payload = PlatformOperationalTransferSchema.required({ targetWalletId: true }).parse(req.body);
+      const session = (req as any).session;
+      const accountId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const data = await platformOperationalAccountService.refund(accountId, payload, session.sub);
+      res.json({ success: true, data });
+    } catch (e: any) {
+      console.error('[Admin] Platform Operational Account Refund Error:', e);
       res.status(400).json({ success: false, error: e.message });
     }
   });

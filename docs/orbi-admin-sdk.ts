@@ -351,6 +351,9 @@ export class OrbiAdminSdk {
     audit: {
       trail: (query?: Record<string, unknown>) => this.get<OrbiApiResult<unknown[]>>('/v1/admin/audit-trail', query),
       riskAlerts: (query?: Record<string, unknown>) => this.get<OrbiApiResult<unknown[]>>('/v1/admin/risk/alerts', query),
+      geoHeatmap: (query?: Record<string, unknown>) => this.get<OrbiApiResult<unknown>>('/v1/admin/risk/geo-heatmap', query),
+      liveGeo: (query?: Record<string, unknown>) => this.get<OrbiApiResult<unknown>>('/v1/admin/risk/live-geo', query),
+      complianceNodeRiskDensity: (query?: Record<string, unknown>) => this.get<OrbiApiResult<unknown>>('/v1/admin/compliance/node-zones/risk-density', query),
     },
     support: {
       tickets: (query?: Record<string, unknown>) => this.get<OrbiApiResult<unknown[]>>('/v1/admin/support-tickets', query),
@@ -396,6 +399,15 @@ export class OrbiAdminSdk {
       institutionalAccounts: (query?: Record<string, unknown>) => this.get<OrbiApiResult<unknown[]>>('/api/admin/institutional-payment-accounts', query),
       createInstitutionalAccount: (body: unknown) => this.post<OrbiApiResult<unknown>>('/api/admin/institutional-payment-accounts', body),
       updateInstitutionalAccount: (id: string, body: unknown) => this.patch<OrbiApiResult<unknown>>(`/api/admin/institutional-payment-accounts/${id}`, body),
+    },
+    operationalAccounts: {
+      list: (query?: Record<string, unknown>) => this.get<OrbiApiResult<unknown[]>>('/api/admin/platform-operational-accounts', query),
+      create: (body: unknown) => this.post<OrbiApiResult<unknown>>('/api/admin/platform-operational-accounts', body),
+      update: (id: string, body: unknown) => this.patch<OrbiApiResult<unknown>>(`/api/admin/platform-operational-accounts/${id}`, body),
+      ledger: (id: string) => this.get<OrbiApiResult<unknown[]>>(`/api/admin/platform-operational-accounts/${id}/ledger`),
+      fund: (id: string, body: unknown) => this.post<OrbiApiResult<unknown>>(`/api/admin/platform-operational-accounts/${id}/fund`, body),
+      payout: (id: string, body: unknown) => this.post<OrbiApiResult<unknown>>(`/api/admin/platform-operational-accounts/${id}/payout`, body),
+      refund: (id: string, body: unknown) => this.post<OrbiApiResult<unknown>>(`/api/admin/platform-operational-accounts/${id}/refund`, body),
     },
     kms: {
       health: () => this.get<OrbiApiResult<unknown>>('/v1/admin/kms/health'),

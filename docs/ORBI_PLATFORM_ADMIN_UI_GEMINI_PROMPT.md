@@ -597,6 +597,9 @@ The backend exposes operator-facing endpoints for audit, staff activity, and ris
 - GET /v1/admin/audit-trail
 - GET /v1/admin/staff/:id/activity
 - GET /v1/admin/risk/alerts
+- GET /v1/admin/risk/geo-heatmap
+- GET /v1/admin/risk/live-geo
+- GET /v1/admin/compliance/node-zones/risk-density
 
 Audit trail filters may include:
 - limit
@@ -617,6 +620,35 @@ Audit records include:
 - signature
 
 Risk alerts combine AML alerts and provider anomaly details.
+
+Risk geo heatmap:
+- Use GET /v1/admin/risk/geo-heatmap for the Risk dashboard geographic heatmap.
+- Query filters: days, countryCode, currency, minRiskScore, limit.
+- The endpoint returns aggregated country/region buckets with transactionCount, riskSignalCount, alertCount, avgRiskScore, maxRiskScore, totalAmount, currencies, sources, intensity, and severity.
+- It intentionally does not return raw coordinates. If mobile or admin clients collect location, send it only as consented transaction metadata under metadata.geo and treat it as a risk signal, not final truth.
+- Recommended metadata.geo fields: countryCode, regionCode, region, city, source, accuracyMeters, capturedAt.
+- Backend risk logic should compare client-provided geo against provider country, routing country, phone country, IP-derived country where available, KYC/profile country, and device history.
+- Transaction preview enforces geo compliance. Missing location blocks preview with TRANSACTION_GEO_REQUIRED, denied consent blocks with TRANSACTION_GEO_CONSENT_REQUIRED, and impossible travel blocks with IMPOSSIBLE_GEO_TRAVEL.
+- Impossible travel compares rounded current transaction coordinates against recent transaction metadata and estimates travel speed. Example: Tanga to Dar es Salaam within five minutes should be treated as a high-risk/impossible travel signal.
+
+Compliance Node Zone risk density:
+- Use GET /v1/admin/compliance/node-zones/risk-density for the infrastructure/control-plane risk-density heatmap.
+- Query filters: windowHours, bucketHours, includeInactive.
+- Compliance Node Zones are logical ORBI boundaries mapped to real infrastructure: ORBI-AWS-CORE-PRIMARY, ORBI-GCP-CORE-FALLBACK, ORBI-GATEWAY-EDGE, ORBI-LEDGER-AUTHORITY, ORBI-ADMIN-OPS, and ORBI-PROVIDER-RAILS.
+- The endpoint returns zone metadata, currentRiskDensity, currentStatus, maxRiskDensity, topDrivers, and a timeline keyed by zone ID.
+- The default view should be a 24-hour timeline split into 12 two-hour buckets.
+- Risk density is calculated from real signals: failed/held transactions, impossible geo travel, missing geo compliance, fraud checks, AML alerts, provider anomalies, sensitive admin activity, gateway/provider activity, and ledger governance activity.
+- Status thresholds are HEALTHY 0-34, WATCH 35-59, DEGRADED 60-74, and CRITICAL_OVERLOAD 75-100.
+- Keep this separate from transaction geo heatmaps: transaction geo shows user/location risk; Compliance Node Zones show infrastructure and control-plane pressure.
+
+Live Google Maps risk operations:
+- Use GET /v1/admin/risk/live-geo only for restricted live risk maps and investigation screens.
+- Query filters: minutes, countryCode, currency, status, minRiskScore, precision, limit.
+- precision values: region, city, approximate.
+- The endpoint returns recent transaction markers with rounded latitude/longitude only when consented metadata exists.
+- Every call is audited as RISK_LIVE_GEO_VIEWED.
+- The frontend must not store marker coordinates in localStorage/sessionStorage.
+- Normal dashboard heatmaps should use geo-heatmap; live-geo should be an explicit restricted workflow.
 
 Monitoring and operations:
 Protected monitor endpoints include:

@@ -188,11 +188,21 @@ export class EscrowService {
         const { data: tx } = await sb.from('transactions').select('*').eq('reference_id', referenceId).single();
         if (!tx || tx.status === 'completed' || tx.status === 'reversed') throw new Error("INVALID_ESCROW_STATE");
 
-        // Logic to reverse the ledger legs...
-        // For now, we update status
-        await sb.from('transactions').update({ 
-            status: 'reversed',
-            metadata: { ...tx.metadata, escrow_status: 'REFUNDED', refunded_by: adminId }
+        await this.txService.reverseTransactionWithReason(
+            tx.id,
+            adminId,
+            `ESCROW_REFUND: Escrow ${referenceId} returned to sender from original ledger transaction.`,
+            adminId === 'system' ? 'SYSTEM' : 'STAFF'
+        );
+
+        await sb.from('transactions').update({
+            metadata: {
+                ...tx.metadata,
+                escrow_status: 'REFUNDED',
+                refunded_by: adminId,
+                refunded_at: new Date().toISOString(),
+                refund_source_transaction_id: tx.id,
+            }
         }).eq('id', tx.id);
 
         const { data: senderUser } = await sb.from('users').select('language').eq('id', tx.user_id).maybeSingle();

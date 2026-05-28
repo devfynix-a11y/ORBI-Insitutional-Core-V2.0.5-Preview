@@ -41,6 +41,17 @@ type WalletSnapshot = {
   metadata?: Record<string, any> | null;
 };
 
+type TransactionGeoSignal = {
+  countryCode: string | null;
+  region: string | null;
+  city: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  source: string | null;
+  consented: boolean | null;
+  capturedAt: string | null;
+};
+
 type QuoteBindingResult = {
   quoteId: string;
   payload: Record<string, any>;
@@ -139,6 +150,7 @@ export class TransactionQuoteService {
     const totalDebit = this.round(amount + fee.totalFee);
     const balance = await this.resolveBalanceForPreview(userId, sourceWallet, type, issues);
     const history = await this.fetchRuleHistory(sb, userId);
+    const geoIssues = this.buildGeoComplianceIssues(metadata, history);
     const risk = await this.evaluateRulesForPreview(user as any, {
       ...payload,
       type,
@@ -158,6 +170,7 @@ export class TransactionQuoteService {
     issues.push(...this.buildWalletIssues('target_wallet', targetWallet, type));
     issues.push(...this.buildSelfTransferIssues(sourceWallet, targetWallet));
     issues.push(...this.buildBalanceIssues(type, balance, totalDebit, sourceWallet));
+    issues.push(...geoIssues);
     issues.push(...this.buildRiskIssues(risk));
 
     const state = this.resolvePreflightState(issues, risk.decision);
@@ -218,6 +231,7 @@ export class TransactionQuoteService {
         challengeRequired: risk.decision === 'CHALLENGE',
         blocked: risk.decision === 'BLOCK',
       },
+      geoCompliance: this.buildGeoComplianceSummary(metadata, history, geoIssues),
       checks: this.buildChecks({
         user,
         type,
@@ -1107,7 +1121,247 @@ export class TransactionQuoteService {
     return [];
   }
 
+  private buildGeoComplianceIssues(
+    metadata: Record<string, any>,
+    history: any[],
+  ): PreflightIssue[] {
+    const current = this.extractTransactionGeo(metadata);
+    const issues: PreflightIssue[] = [];
+
+    if (!this.hasSufficientGeo(current)) {
+      issues.push({
+        code: 'TRANSACTION_GEO_REQUIRED',
+        severity: 'blocking',
+        subject: 'geo_compliance',
+        message: 'Transaction location is required before this preview can continue.',
+        metadata: {
+          required: ['metadata.geo.countryCode', 'metadata.geo.region or rounded coordinates'],
+          source: current.source,
+          consented: current.consented,
+        },
+      });
+      return issues;
+    }
+
+    if (current.consented === false) {
+      issues.push({
+        code: 'TRANSACTION_GEO_CONSENT_REQUIRED',
+        severity: 'blocking',
+        subject: 'geo_compliance',
+        message: 'Location consent is required for transaction risk checks.',
+        metadata: { source: current.source },
+      });
+      return issues;
+    }
+
+    if (!this.hasCoordinates(current)) {
+      issues.push({
+        code: 'TRANSACTION_GEO_APPROXIMATE',
+        severity: 'warning',
+        subject: 'geo_compliance',
+        message: 'Only approximate transaction location was provided; live travel-risk checks are limited.',
+        metadata: {
+          countryCode: current.countryCode,
+          region: current.region,
+          source: current.source,
+        },
+      });
+      return issues;
+    }
+
+    const previous = this.findPreviousGeoTransaction(history);
+    if (!previous || !this.hasCoordinates(previous)) return issues;
+
+    const currentTime = this.geoTimestampMs(current) || Date.now();
+    const previousTime = this.geoTimestampMs(previous);
+    if (!previousTime || currentTime <= previousTime) return issues;
+
+    const minutes = (currentTime - previousTime) / 60000;
+    const distanceKm = this.distanceKm(
+      previous.latitude!,
+      previous.longitude!,
+      current.latitude!,
+      current.longitude!,
+    );
+    const speedKmh = minutes > 0 ? distanceKm / (minutes / 60) : 0;
+    const maxKmh = Number(process.env.ORBI_GEO_MAX_TRAVEL_KMH || 900);
+    const minDistanceKm = Number(process.env.ORBI_GEO_MIN_TRAVEL_DISTANCE_KM || 25);
+
+    if (distanceKm >= minDistanceKm && speedKmh > maxKmh) {
+      issues.push({
+        code: 'IMPOSSIBLE_GEO_TRAVEL',
+        severity: 'blocking',
+        subject: 'geo_compliance',
+        message: 'Transaction location changed too quickly compared with the previous transaction. Please verify the account before continuing.',
+        metadata: {
+          distanceKm: this.round(distanceKm),
+          elapsedMinutes: this.round(minutes),
+          estimatedSpeedKmh: this.round(speedKmh),
+          maxAllowedKmh: maxKmh,
+          previous: {
+            countryCode: previous.countryCode,
+            region: previous.region,
+            city: previous.city,
+            capturedAt: previous.capturedAt,
+            source: previous.source,
+          },
+          current: {
+            countryCode: current.countryCode,
+            region: current.region,
+            city: current.city,
+            capturedAt: current.capturedAt,
+            source: current.source,
+          },
+        },
+      });
+    }
+
+    return issues;
+  }
+
+  private buildGeoComplianceSummary(
+    metadata: Record<string, any>,
+    history: any[],
+    issues: PreflightIssue[],
+  ) {
+    const current = this.extractTransactionGeo(metadata);
+    const previous = this.findPreviousGeoTransaction(history);
+    return {
+      required: true,
+      passed: !issues.some((issue) => issue.subject === 'geo_compliance' && issue.severity === 'blocking'),
+      warning: issues.some((issue) => issue.subject === 'geo_compliance' && issue.severity === 'warning'),
+      current: {
+        countryCode: current.countryCode,
+        region: current.region,
+        city: current.city,
+        hasCoordinates: this.hasCoordinates(current),
+        source: current.source,
+        consented: current.consented,
+        capturedAt: current.capturedAt,
+      },
+      previous: previous ? {
+        countryCode: previous.countryCode,
+        region: previous.region,
+        city: previous.city,
+        hasCoordinates: this.hasCoordinates(previous),
+        source: previous.source,
+        capturedAt: previous.capturedAt,
+      } : null,
+      issueCodes: issues.filter((issue) => issue.subject === 'geo_compliance').map((issue) => issue.code),
+    };
+  }
+
+  private extractTransactionGeo(metadata: Record<string, any>): TransactionGeoSignal {
+    const geo = this.objectValue(metadata.geo);
+    const riskContext = this.objectValue(metadata.riskContext);
+    const ipGeo = this.objectValue(metadata.ipGeo || metadata.ip_geo);
+    const fallback = Object.keys(geo).length > 0 ? geo : ipGeo;
+
+    return {
+      countryCode: this.normalizeNullable(
+        geo.countryCode ||
+        geo.country_code ||
+        riskContext.countryCode ||
+        riskContext.country_code ||
+        metadata.countryCode ||
+        metadata.country_code ||
+        ipGeo.countryCode ||
+        ipGeo.country_code,
+      )?.toUpperCase() || null,
+      region: this.normalizeNullable(
+        geo.region ||
+        geo.regionCode ||
+        geo.region_code ||
+        riskContext.region ||
+        metadata.region ||
+        metadata.regionCode ||
+        metadata.region_code ||
+        ipGeo.region ||
+        ipGeo.regionCode ||
+        ipGeo.region_code,
+      ),
+      city: this.normalizeNullable(geo.city || riskContext.city || metadata.city || ipGeo.city),
+      latitude: this.numberOrNull(
+        fallback.latitudeRounded ??
+        fallback.latRounded ??
+        fallback.latitude ??
+        fallback.lat,
+      ),
+      longitude: this.numberOrNull(
+        fallback.longitudeRounded ??
+        fallback.lngRounded ??
+        fallback.longitude ??
+        fallback.lng,
+      ),
+      source: this.normalizeNullable(geo.source || riskContext.source || metadata.geoSource || ipGeo.source) || null,
+      consented: this.booleanOrNull(geo.consented ?? geo.locationConsent ?? riskContext.locationConsent ?? metadata.locationConsent),
+      capturedAt: this.normalizeNullable(geo.capturedAt || geo.captured_at || metadata.geoCapturedAt || ipGeo.capturedAt || ipGeo.captured_at),
+    };
+  }
+
+  private findPreviousGeoTransaction(history: any[]): TransactionGeoSignal | null {
+    for (const tx of history) {
+      const metadata = tx?.metadata && typeof tx.metadata === 'object' ? tx.metadata : {};
+      const geo = this.extractTransactionGeo({
+        ...metadata,
+        geo: metadata.geo || metadata.ipGeo || metadata.ip_geo,
+        geoCapturedAt: metadata.geoCapturedAt || metadata.geo_captured_at || tx.date,
+      });
+      if (this.hasSufficientGeo(geo)) return geo;
+    }
+    return null;
+  }
+
+  private hasSufficientGeo(geo: TransactionGeoSignal) {
+    return Boolean(
+      this.hasCoordinates(geo) ||
+      (geo.countryCode && (geo.region || geo.city))
+    );
+  }
+
+  private hasCoordinates(geo: TransactionGeoSignal) {
+    return geo.latitude !== null && geo.longitude !== null;
+  }
+
+  private geoTimestampMs(geo: TransactionGeoSignal) {
+    if (!geo.capturedAt) return null;
+    const time = new Date(geo.capturedAt).getTime();
+    return Number.isFinite(time) ? time : null;
+  }
+
+  private distanceKm(lat1: number, lon1: number, lat2: number, lon2: number) {
+    const radiusKm = 6371;
+    const toRad = (value: number) => (value * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return radiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  private objectValue(value: any): Record<string, any> {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  }
+
+  private numberOrNull(value: any): number | null {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  private booleanOrNull(value: any): boolean | null {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (['true', 'yes', '1'].includes(normalized)) return true;
+      if (['false', 'no', '0'].includes(normalized)) return false;
+    }
+    return null;
+  }
+
   private resolvePreflightState(issues: PreflightIssue[], decision: string) {
+    if (issues.some((issue) => issue.subject === 'geo_compliance' && issue.severity === 'blocking')) return 'GEO_COMPLIANCE_REQUIRED';
     if (issues.some((issue) => issue.code === 'SELF_TRANSFER_WALLET_NOT_ALLOWED')) return 'SELF_TRANSFER_NOT_ALLOWED';
     if (issues.some((issue) => issue.code === 'INSUFFICIENT_FUNDS')) return 'INSUFFICIENT_FUNDS';
     if (issues.some((issue) => issue.code.includes('WALLET_LOCKED'))) return 'WALLET_LOCKED';

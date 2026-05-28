@@ -211,9 +211,133 @@ orbi.admin.audit.riskAlerts({
   days,
   status,
 })
+
+orbi.admin.audit.geoHeatmap({
+  days,
+  countryCode,
+  currency,
+  minRiskScore,
+  limit,
+})
+
+orbi.admin.audit.liveGeo({
+  minutes,
+  countryCode,
+  currency,
+  status,
+  minRiskScore,
+  precision,
+  limit,
+})
+
+orbi.admin.audit.complianceNodeRiskDensity({
+  windowHours,
+  bucketHours,
+  includeInactive,
+})
 ```
 
 The backend now records platform control UI access through admin activity accounting middleware. Activity rows include actor, role, route, method, status, target, trace, device/app identity, IP, and user agent. Explicit sensitive action audits are also emitted for KYC, document review, device trust, staff messages, support tickets, service access, transaction review, reconciliation, and configuration changes.
+
+Risk geo heatmap endpoint:
+
+```http
+GET /v1/admin/risk/geo-heatmap
+```
+
+Use this below the Risk dashboard KPI cards to display transaction risk intensity by geographic region. The endpoint aggregates `transactions.metadata` and `fraud_checks.payload` into country/region buckets and never returns raw coordinates.
+
+Recommended transaction metadata from mobile/admin clients:
+
+```json
+{
+  "geo": {
+    "countryCode": "TZ",
+    "regionCode": "TZ-02",
+    "region": "Dar es Salaam",
+    "city": "Dar es Salaam",
+    "source": "device_gps",
+    "accuracyMeters": 500,
+    "capturedAt": "2026-05-27T13:00:00.000Z"
+  },
+  "riskContext": {
+    "locationConsent": true,
+    "deviceTrust": "trusted"
+  }
+}
+```
+
+Treat client location as a risk signal, not truth. The backend should compare it with provider country, route country, phone country, IP-derived country where available, KYC/profile country, and device history. The UI should render only aggregated intensity buckets.
+
+Transaction geo compliance:
+
+- Transaction preview requires usable location metadata before settlement can continue.
+- Missing location returns blocking issue code `TRANSACTION_GEO_REQUIRED`.
+- Denied consent returns blocking issue code `TRANSACTION_GEO_CONSENT_REQUIRED`.
+- Impossible travel, for example a jump from Tanga to Dar es Salaam within minutes, returns blocking issue code `IMPOSSIBLE_GEO_TRAVEL`.
+- Backend compares current `metadata.geo` with recent transaction metadata and estimates travel speed using rounded coordinates.
+- Runtime thresholds are controlled by `ORBI_GEO_MAX_TRAVEL_KMH` and `ORBI_GEO_MIN_TRAVEL_DISTANCE_KM`.
+- Backend may also attach `metadata.ipGeo` from trusted proxy/CDN headers as a fallback signal, but device GPS remains the preferred signal.
+
+Compliance Node Zone risk density endpoint:
+
+```http
+GET /v1/admin/compliance/node-zones/risk-density
+```
+
+Use this for the Risk/IT Ops dashboard timeline that shows operational compliance pressure across real ORBI infrastructure zones. These zones are logical boundaries mapped to live infrastructure, not fictional regions:
+
+- `ORBI-AWS-CORE-PRIMARY`: `https://api.orbifinancial.com`, primary core API.
+- `ORBI-GCP-CORE-FALLBACK`: `https://go-api.orbifinancial.com`, fallback core API.
+- `ORBI-GATEWAY-EDGE`: `https://gateway.orbifinancial.com`, gateway/provider edge.
+- `ORBI-LEDGER-AUTHORITY`: ledger/audit/balance authority.
+- `ORBI-ADMIN-OPS`: staff/admin control plane.
+- `ORBI-PROVIDER-RAILS`: external provider rails and callback network.
+
+Query options:
+
+```txt
+windowHours=24
+bucketHours=2
+includeInactive=false
+```
+
+The backend returns zone metadata, 2-hour timeline buckets, current risk density, status, top drivers, and counts. Risk density is calculated from real platform signals such as failed/held transactions, impossible geo travel, missing geo compliance, AML alerts, provider anomalies, sensitive admin activity, gateway/provider activity, and fraud check risk scores.
+
+Risk status thresholds:
+
+- `HEALTHY`: 0-34
+- `WATCH`: 35-59
+- `DEGRADED`: 60-74
+- `CRITICAL_OVERLOAD`: 75-100
+
+Live Google Maps endpoint:
+
+```http
+GET /v1/admin/risk/live-geo
+```
+
+Use this only for restricted live risk operations. It returns recent consented transaction geo points for Google Maps markers. Every access is audited as `RISK_LIVE_GEO_VIEWED`.
+
+Query options:
+
+```txt
+minutes=60
+countryCode=TZ
+currency=TZS
+status=PROCESSING
+minRiskScore=50
+precision=region|city|approximate
+limit=250
+```
+
+Privacy behavior:
+
+- Points without coordinates are omitted.
+- Points with `metadata.geo.consented === false` are omitted.
+- Coordinates are rounded by backend before response.
+- Use `precision=region` for broad ops maps, `precision=city` for normal risk review, and `precision=approximate` only for restricted investigations.
+- The UI should not persist map marker coordinates in browser storage.
 
 ### Support and Messaging
 
@@ -287,6 +411,38 @@ orbi.admin.providers.institutionalAccounts(query)
 orbi.admin.providers.createInstitutionalAccount(body)
 orbi.admin.providers.updateInstitutionalAccount(accountId, body)
 ```
+
+### Platform Operational Accounts
+
+Operational accounts are ORBI-owned ledger accounts for platform collections, salary, funding, refund reserves, chargeback reserves, provider settlement, escrow reserves, and operating reserves. The UI must never expose direct balance editing. Every movement must be double-entry and must use source/target wallets.
+
+```ts
+orbi.admin.operationalAccounts.list(query)
+orbi.admin.operationalAccounts.create(body)
+orbi.admin.operationalAccounts.update(accountId, body)
+orbi.admin.operationalAccounts.ledger(accountId)
+orbi.admin.operationalAccounts.fund(accountId, {
+  sourceWalletId,
+  amount,
+  currency,
+  reason,
+})
+orbi.admin.operationalAccounts.payout(accountId, {
+  targetWalletId,
+  amount,
+  currency,
+  reason,
+})
+orbi.admin.operationalAccounts.refund(accountId, {
+  targetWalletId,
+  amount,
+  currency,
+  reason,
+  originalTransactionId,
+})
+```
+
+Refunds must include `originalTransactionId` or `originalReferenceId`. The backend rejects refund creation without one.
 
 ### Reconciliation and KMS
 
@@ -529,4 +685,7 @@ Explicit domain events are also emitted for sensitive workflows. The frontend sh
 orbi.admin.audit.trail(query)
 orbi.admin.staff.activity(staffId)
 orbi.admin.audit.riskAlerts(query)
+orbi.admin.audit.geoHeatmap(query)
+orbi.admin.audit.liveGeo(query)
+orbi.admin.audit.complianceNodeRiskDensity(query)
 ```

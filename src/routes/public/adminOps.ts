@@ -112,6 +112,30 @@ const AdminRiskAlertsQuerySchema = z.object({
   days: z.coerce.number().int().min(1).max(90).optional(),
 });
 
+const AdminRiskGeoHeatmapQuerySchema = z.object({
+  days: z.coerce.number().int().min(1).max(90).optional(),
+  countryCode: z.string().trim().min(2).max(3).optional(),
+  currency: z.string().trim().length(3).optional(),
+  minRiskScore: z.coerce.number().min(0).max(100).optional(),
+  limit: z.coerce.number().int().min(1).max(5000).optional(),
+});
+
+const AdminRiskLiveGeoQuerySchema = z.object({
+  minutes: z.coerce.number().int().min(1).max(1440).optional(),
+  countryCode: z.string().trim().min(2).max(3).optional(),
+  currency: z.string().trim().length(3).optional(),
+  status: z.string().trim().optional(),
+  minRiskScore: z.coerce.number().min(0).max(100).optional(),
+  precision: z.enum(['region', 'city', 'approximate']).optional(),
+  limit: z.coerce.number().int().min(1).max(1000).optional(),
+});
+
+const AdminComplianceNodeRiskQuerySchema = z.object({
+  windowHours: z.coerce.number().int().min(2).max(168).optional(),
+  bucketHours: z.coerce.number().int().min(1).max(12).optional(),
+  includeInactive: z.coerce.boolean().optional(),
+});
+
 const StaffDirectMessageSchema = z.object({
   recipientId: z.string().uuid().optional(),
   targetRole: z.string().trim().optional(),
@@ -135,6 +159,493 @@ const SupportTicketUpdateSchema = z.object({
   resolution: z.string().trim().max(4000).optional(),
   internalNote: z.string().trim().max(4000).optional(),
 });
+
+type GeoSignal = {
+  countryCode: string;
+  region: string;
+  regionCode?: string | null;
+  city?: string | null;
+  source: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  consented?: boolean;
+  capturedAt?: string | null;
+};
+
+type RiskGeoBucket = {
+  key: string;
+  countryCode: string;
+  region: string;
+  regionCode: string | null;
+  city: string | null;
+  transactionCount: number;
+  riskSignalCount: number;
+  alertCount: number;
+  totalAmount: number;
+  currencies: Set<string>;
+  sources: Set<string>;
+  riskScoreTotal: number;
+  riskScoreSamples: number;
+  maxRiskScore: number;
+};
+
+type ComplianceNodeZone = {
+  id: string;
+  name: string;
+  provider: 'aws' | 'gcp' | 'gateway' | 'supabase' | 'admin' | 'external';
+  role: 'core_api_primary' | 'core_api_fallback' | 'gateway_edge' | 'ledger_authority' | 'admin_ops' | 'provider_rails';
+  baseUrl?: string;
+  healthEndpoint?: string;
+  regionCode: string;
+  jurisdiction: string;
+  coordinates: { lat: number; lng: number };
+  competencies: string[];
+  baseRisk: number;
+  active: boolean;
+};
+
+type ComplianceNodeBucket = {
+  zoneId: string;
+  bucketIndex: number;
+  bucketStart: string;
+  bucketEnd: string;
+  riskDensity: number;
+  status: 'HEALTHY' | 'WATCH' | 'DEGRADED' | 'CRITICAL_OVERLOAD';
+  drivers: Array<{ code: string; count: number; weight: number; score: number }>;
+  counts: {
+    transactions: number;
+    failedTransactions: number;
+    heldTransactions: number;
+    impossibleTravel: number;
+    geoComplianceBlocks: number;
+    highRiskSignals: number;
+    criticalRiskSignals: number;
+    auditSensitiveActions: number;
+    providerAnomalies: number;
+    amlAlerts: number;
+  };
+};
+
+const objectValue = (value: unknown): Record<string, any> => (
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {}
+);
+
+const firstString = (...values: unknown[]): string | undefined => {
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return undefined;
+};
+
+const numberValue = (value: unknown): number | undefined => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+};
+
+const normalizeCountryCode = (value: unknown): string | undefined => {
+  const normalized = firstString(value)?.toUpperCase();
+  return normalized && /^[A-Z]{2,3}$/.test(normalized) ? normalized : undefined;
+};
+
+const booleanValue = (value: unknown): boolean | undefined => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', 'yes', '1'].includes(normalized)) return true;
+    if (['false', 'no', '0'].includes(normalized)) return false;
+  }
+  return undefined;
+};
+
+const roundCoordinate = (value: number | null | undefined, precision: 'region' | 'city' | 'approximate'): number | null => {
+  if (value === null || value === undefined || !Number.isFinite(value)) return null;
+  const digits = precision === 'approximate' ? 3 : precision === 'city' ? 2 : 1;
+  return Number(value.toFixed(digits));
+};
+
+const geoSeverity = (score: number): 'low' | 'medium' | 'high' | 'critical' => {
+  if (score >= 80) return 'critical';
+  if (score >= 60) return 'high';
+  if (score >= 35) return 'medium';
+  return 'low';
+};
+
+const extractGeoSignal = (record: Record<string, any>, fallbackSource: string): GeoSignal => {
+  const metadata = objectValue(record.metadata);
+  const payload = objectValue(record.payload);
+  const payloadMetadata = objectValue(payload.metadata);
+  const geo = objectValue(metadata.geo);
+  const payloadGeo = objectValue(payload.geo);
+  const payloadMetadataGeo = objectValue(payloadMetadata.geo);
+  const riskContextGeo = objectValue(objectValue(metadata.riskContext).geo);
+  const riskContext = objectValue(metadata.riskContext);
+
+  const countryCode = normalizeCountryCode(
+    firstString(
+      geo.countryCode,
+      geo.country_code,
+      payloadGeo.countryCode,
+      payloadGeo.country_code,
+      payloadMetadataGeo.countryCode,
+      payloadMetadataGeo.country_code,
+      riskContextGeo.countryCode,
+      riskContextGeo.country_code,
+      metadata.countryCode,
+      metadata.country_code,
+      payload.countryCode,
+      payload.country_code,
+      payloadMetadata.countryCode,
+      payloadMetadata.country_code,
+      record.countryCode,
+      record.country_code,
+    ),
+  ) || 'UNKNOWN';
+
+  const regionCode = firstString(
+    geo.regionCode,
+    geo.region_code,
+    payloadGeo.regionCode,
+    payloadGeo.region_code,
+    payloadMetadataGeo.regionCode,
+    payloadMetadataGeo.region_code,
+    riskContextGeo.regionCode,
+    riskContextGeo.region_code,
+    metadata.regionCode,
+    metadata.region_code,
+    payload.regionCode,
+    payload.region_code,
+    payloadMetadata.regionCode,
+    payloadMetadata.region_code,
+  ) || null;
+
+  const region = firstString(
+    geo.region,
+    payloadGeo.region,
+    payloadMetadataGeo.region,
+    riskContextGeo.region,
+    metadata.region,
+    payload.region,
+    payloadMetadata.region,
+    regionCode,
+    geo.city,
+    payloadGeo.city,
+    payloadMetadataGeo.city,
+  ) || 'Unknown';
+
+  const city = firstString(
+    geo.city,
+    payloadGeo.city,
+    payloadMetadataGeo.city,
+    riskContextGeo.city,
+    metadata.city,
+    payload.city,
+    payloadMetadata.city,
+  ) || null;
+
+  const source = firstString(
+    geo.source,
+    payloadGeo.source,
+    payloadMetadataGeo.source,
+    riskContextGeo.source,
+    metadata.geoSource,
+    payload.geoSource,
+  ) || fallbackSource;
+
+  const latitude = numberValue(
+    geo.latitudeRounded ?? geo.latRounded ?? geo.latitude ?? geo.lat ??
+    payloadGeo.latitudeRounded ?? payloadGeo.latRounded ?? payloadGeo.latitude ?? payloadGeo.lat ??
+    payloadMetadataGeo.latitudeRounded ?? payloadMetadataGeo.latRounded ?? payloadMetadataGeo.latitude ?? payloadMetadataGeo.lat,
+  ) ?? null;
+  const longitude = numberValue(
+    geo.longitudeRounded ?? geo.lngRounded ?? geo.longitude ?? geo.lng ??
+    payloadGeo.longitudeRounded ?? payloadGeo.lngRounded ?? payloadGeo.longitude ?? payloadGeo.lng ??
+    payloadMetadataGeo.longitudeRounded ?? payloadMetadataGeo.lngRounded ?? payloadMetadataGeo.longitude ?? payloadMetadataGeo.lng,
+  ) ?? null;
+  const consented = booleanValue(
+    geo.consented ??
+    geo.locationConsent ??
+    payloadGeo.consented ??
+    payloadGeo.locationConsent ??
+    payloadMetadataGeo.consented ??
+    payloadMetadataGeo.locationConsent ??
+    riskContext.locationConsent ??
+    metadata.locationConsent,
+  );
+  const capturedAt = firstString(
+    geo.capturedAt,
+    geo.captured_at,
+    payloadGeo.capturedAt,
+    payloadGeo.captured_at,
+    payloadMetadataGeo.capturedAt,
+    payloadMetadataGeo.captured_at,
+    metadata.geoCapturedAt,
+  ) || null;
+
+  return { countryCode, region, regionCode, city, source, latitude, longitude, consented, capturedAt };
+};
+
+const getRiskGeoBucket = (buckets: Map<string, RiskGeoBucket>, geo: GeoSignal): RiskGeoBucket => {
+  const key = `${geo.countryCode}|${geo.regionCode || geo.region}`;
+  const existing = buckets.get(key);
+  if (existing) return existing;
+
+  const created: RiskGeoBucket = {
+    key,
+    countryCode: geo.countryCode,
+    region: geo.region,
+    regionCode: geo.regionCode || null,
+    city: geo.city || null,
+    transactionCount: 0,
+    riskSignalCount: 0,
+    alertCount: 0,
+    totalAmount: 0,
+    currencies: new Set<string>(),
+    sources: new Set<string>(),
+    riskScoreTotal: 0,
+    riskScoreSamples: 0,
+    maxRiskScore: 0,
+  };
+  buckets.set(key, created);
+  return created;
+};
+
+const envString = (key: string, fallback: string): string => {
+  const value = process.env[key]?.trim();
+  return value || fallback;
+};
+
+const envNumber = (key: string, fallback: number): number => {
+  const value = process.env[key]?.trim();
+  if (!value) return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const complianceNodeZones = (): ComplianceNodeZone[] => {
+  const awsUrl = envString('ORBI_AWS_CORE_BASE_URL', envString('ORBI_PRIMARY_CORE_BASE_URL', 'https://api.orbifinancial.com'));
+  const googleUrl = envString('ORBI_GOOGLE_CORE_BASE_URL', envString('ORBI_FALLBACK_CORE_BASE_URL', 'https://go-api.orbifinancial.com'));
+  const gatewayUrl = envString('ORBI_GATEWAY_BASE_URL', 'https://gateway.orbifinancial.com');
+
+  return [
+    {
+      id: 'ORBI-AWS-CORE-PRIMARY',
+      name: 'AWS Core Primary',
+      provider: 'aws',
+      role: 'core_api_primary',
+      baseUrl: awsUrl,
+      healthEndpoint: `${awsUrl}/health`,
+      regionCode: envString('ORBI_AWS_CORE_REGION', 'us-east-1'),
+      jurisdiction: envString('ORBI_AWS_CORE_JURISDICTION', 'US'),
+      coordinates: {
+        lat: envNumber('ORBI_AWS_CORE_LAT', 39.0438),
+        lng: envNumber('ORBI_AWS_CORE_LNG', -77.4874),
+      },
+      competencies: ['transaction_preview', 'transaction_settlement', 'wallet_governance', 'admin_api', 'risk_enforcement'],
+      baseRisk: envNumber('ORBI_AWS_CORE_BASE_RISK', 25),
+      active: true,
+    },
+    {
+      id: 'ORBI-GCP-CORE-FALLBACK',
+      name: 'Google Core Fallback',
+      provider: 'gcp',
+      role: 'core_api_fallback',
+      baseUrl: googleUrl,
+      healthEndpoint: `${googleUrl}/health`,
+      regionCode: envString('ORBI_GOOGLE_CORE_REGION', 'us-central1'),
+      jurisdiction: envString('ORBI_GOOGLE_CORE_JURISDICTION', 'US'),
+      coordinates: {
+        lat: envNumber('ORBI_GOOGLE_CORE_LAT', 41.2619),
+        lng: envNumber('ORBI_GOOGLE_CORE_LNG', -95.8608),
+      },
+      competencies: ['fallback_core_api', 'safe_read_failover', 'deployment_redundancy', 'disaster_recovery'],
+      baseRisk: envNumber('ORBI_GOOGLE_CORE_BASE_RISK', 15),
+      active: true,
+    },
+    {
+      id: 'ORBI-GATEWAY-EDGE',
+      name: 'Gateway Edge',
+      provider: 'gateway',
+      role: 'gateway_edge',
+      baseUrl: gatewayUrl,
+      healthEndpoint: `${gatewayUrl}/health`,
+      regionCode: envString('ORBI_GATEWAY_REGION', 'edge-global'),
+      jurisdiction: envString('ORBI_GATEWAY_JURISDICTION', 'GLOBAL'),
+      coordinates: {
+        lat: envNumber('ORBI_GATEWAY_LAT', 40.7128),
+        lng: envNumber('ORBI_GATEWAY_LNG', -74.0060),
+      },
+      competencies: ['payment_gateway', 'provider_webhooks', 'external_settlement', 'provider_callback_monitoring'],
+      baseRisk: envNumber('ORBI_GATEWAY_BASE_RISK', 35),
+      active: Boolean(gatewayUrl),
+    },
+    {
+      id: 'ORBI-LEDGER-AUTHORITY',
+      name: 'Ledger Authority',
+      provider: 'supabase',
+      role: 'ledger_authority',
+      regionCode: envString('ORBI_LEDGER_REGION', 'managed-postgres'),
+      jurisdiction: envString('ORBI_LEDGER_JURISDICTION', 'DATA_AUTHORITY'),
+      coordinates: {
+        lat: envNumber('ORBI_LEDGER_LAT', 51.5072),
+        lng: envNumber('ORBI_LEDGER_LNG', -0.1276),
+      },
+      competencies: ['ledger_truth', 'audit_trail', 'wallet_balances', 'reconciliation', 'forensics'],
+      baseRisk: envNumber('ORBI_LEDGER_BASE_RISK', 30),
+      active: true,
+    },
+    {
+      id: 'ORBI-ADMIN-OPS',
+      name: 'Admin Operations',
+      provider: 'admin',
+      role: 'admin_ops',
+      regionCode: envString('ORBI_ADMIN_OPS_REGION', 'operator-control'),
+      jurisdiction: envString('ORBI_ADMIN_OPS_JURISDICTION', 'CONTROL_PLANE'),
+      coordinates: {
+        lat: envNumber('ORBI_ADMIN_OPS_LAT', -6.7924),
+        lng: envNumber('ORBI_ADMIN_OPS_LNG', 39.2083),
+      },
+      competencies: ['staff_activity', 'kyc_review', 'support_controls', 'configuration_changes', 'audit_review'],
+      baseRisk: envNumber('ORBI_ADMIN_OPS_BASE_RISK', 20),
+      active: true,
+    },
+    {
+      id: 'ORBI-PROVIDER-RAILS',
+      name: 'Provider Rails',
+      provider: 'external',
+      role: 'provider_rails',
+      regionCode: envString('ORBI_PROVIDER_RAILS_REGION', 'provider-network'),
+      jurisdiction: envString('ORBI_PROVIDER_RAILS_JURISDICTION', 'EXTERNAL'),
+      coordinates: {
+        lat: envNumber('ORBI_PROVIDER_RAILS_LAT', -6.3690),
+        lng: envNumber('ORBI_PROVIDER_RAILS_LNG', 34.8888),
+      },
+      competencies: ['mobile_money', 'bank_rails', 'card_rails', 'provider_routing', 'provider_anomalies'],
+      baseRisk: envNumber('ORBI_PROVIDER_RAILS_BASE_RISK', 32),
+      active: true,
+    },
+  ];
+};
+
+const complianceNodeStatus = (score: number): ComplianceNodeBucket['status'] => {
+  if (score >= 75) return 'CRITICAL_OVERLOAD';
+  if (score >= 60) return 'DEGRADED';
+  if (score >= 35) return 'WATCH';
+  return 'HEALTHY';
+};
+
+const createComplianceBucket = (
+  zoneId: string,
+  bucketIndex: number,
+  bucketStart: Date,
+  bucketEnd: Date,
+): ComplianceNodeBucket => ({
+  zoneId,
+  bucketIndex,
+  bucketStart: bucketStart.toISOString(),
+  bucketEnd: bucketEnd.toISOString(),
+  riskDensity: 0,
+  status: 'HEALTHY',
+  drivers: [],
+  counts: {
+    transactions: 0,
+    failedTransactions: 0,
+    heldTransactions: 0,
+    impossibleTravel: 0,
+    geoComplianceBlocks: 0,
+    highRiskSignals: 0,
+    criticalRiskSignals: 0,
+    auditSensitiveActions: 0,
+    providerAnomalies: 0,
+    amlAlerts: 0,
+  },
+});
+
+const createComplianceTimeline = (
+  zones: ComplianceNodeZone[],
+  windowHours: number,
+  bucketHours: number,
+): Map<string, ComplianceNodeBucket[]> => {
+  const bucketCount = Math.ceil(windowHours / bucketHours);
+  const now = Date.now();
+  const windowMs = windowHours * 60 * 60 * 1000;
+  const bucketMs = bucketHours * 60 * 60 * 1000;
+  const windowStart = now - windowMs;
+  const timelines = new Map<string, ComplianceNodeBucket[]>();
+
+  for (const zone of zones) {
+    const buckets: ComplianceNodeBucket[] = [];
+    for (let index = 0; index < bucketCount; index += 1) {
+      const start = new Date(windowStart + index * bucketMs);
+      const end = new Date(Math.min(windowStart + (index + 1) * bucketMs, now));
+      buckets.push(createComplianceBucket(zone.id, index, start, end));
+    }
+    timelines.set(zone.id, buckets);
+  }
+
+  return timelines;
+};
+
+const bucketForTime = (
+  buckets: ComplianceNodeBucket[] | undefined,
+  createdAt: unknown,
+): ComplianceNodeBucket | undefined => {
+  if (!buckets?.length) return undefined;
+  const time = Date.parse(firstString(createdAt) || '');
+  if (!Number.isFinite(time)) return undefined;
+  return buckets.find((bucket) => {
+    const start = Date.parse(bucket.bucketStart);
+    const end = Date.parse(bucket.bucketEnd);
+    return time >= start && time < end;
+  }) || buckets[buckets.length - 1];
+};
+
+const addComplianceDriver = (
+  bucket: ComplianceNodeBucket | undefined,
+  code: string,
+  weight: number,
+  countKey?: keyof ComplianceNodeBucket['counts'],
+) => {
+  if (!bucket) return;
+  const existing = bucket.drivers.find((driver) => driver.code === code && driver.weight === weight);
+  if (existing) {
+    existing.count += 1;
+    existing.score += weight;
+  } else {
+    bucket.drivers.push({ code, count: 1, weight, score: weight });
+  }
+  if (countKey) bucket.counts[countKey] += 1;
+};
+
+const jsonIncludes = (value: unknown, needle: string): boolean => {
+  try {
+    return JSON.stringify(value || {}).toUpperCase().includes(needle.toUpperCase());
+  } catch {
+    return false;
+  }
+};
+
+const finalizeComplianceTimeline = (
+  zones: ComplianceNodeZone[],
+  timelines: Map<string, ComplianceNodeBucket[]>,
+) => {
+  for (const zone of zones) {
+    const buckets = timelines.get(zone.id) || [];
+    for (const bucket of buckets) {
+      const driverScore = bucket.drivers.reduce((sum, driver) => sum + driver.score, 0);
+      const volumePressure = Math.min(18, Math.log10(bucket.counts.transactions + 1) * 8);
+      const rawScore = zone.baseRisk + driverScore + volumePressure;
+      bucket.riskDensity = Math.round(Math.min(100, rawScore));
+      bucket.status = complianceNodeStatus(bucket.riskDensity);
+      bucket.drivers.sort((a, b) => b.score - a.score || b.count - a.count);
+    }
+  }
+};
 
 type Deps = {
   authenticate: RequestHandler;
@@ -678,6 +1189,462 @@ export const registerAdminOpsRoutes = (v1: Router, deps: Deps) => {
         : records;
 
       res.json({ success: true, data: filtered });
+    } catch (e: any) {
+      res.status(400).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.get('/admin/compliance/node-zones/risk-density', authenticate, async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, [...RISK_REVIEW_ROLES])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const query = AdminComplianceNodeRiskQuerySchema.parse(req.query);
+      const sb = getAdminSupabase() || getSupabase();
+      if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+
+      const windowHours = query.windowHours || 24;
+      const bucketHours = query.bucketHours || 2;
+      const zones = complianceNodeZones().filter((zone) => query.includeInactive || zone.active);
+      const timelines = createComplianceTimeline(zones, windowHours, bucketHours);
+      const since = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString();
+      const awsBuckets = timelines.get('ORBI-AWS-CORE-PRIMARY');
+      const gatewayBuckets = timelines.get('ORBI-GATEWAY-EDGE');
+      const ledgerBuckets = timelines.get('ORBI-LEDGER-AUTHORITY');
+      const adminBuckets = timelines.get('ORBI-ADMIN-OPS');
+      const providerBuckets = timelines.get('ORBI-PROVIDER-RAILS');
+
+      const [transactionsResult, fraudChecksResult, auditResult, amlAlerts, anomalyReport] = await Promise.all([
+        sb
+          .from('transactions')
+          .select('id, amount, currency, status, type, created_at, metadata')
+          .gte('created_at', since)
+          .order('created_at', { ascending: false })
+          .limit(5000),
+        sb
+          .from('fraud_checks')
+          .select('id, transaction_id, risk_score, decision, flags, payload, created_at')
+          .gte('created_at', since)
+          .order('created_at', { ascending: false })
+          .limit(5000),
+        sb
+          .from('audit_trail')
+          .select('id, timestamp, event_type, action, metadata')
+          .gte('timestamp', since)
+          .order('timestamp', { ascending: false })
+          .limit(5000),
+        LogicCore.getPendingAMLAlerts().catch(() => []),
+        LogicCore.getAnomalyReport(Math.max(1, Math.ceil(windowHours / 24))).catch(() => ({ details: [] })),
+      ]);
+
+      if (transactionsResult.error) return res.status(500).json({ success: false, error: transactionsResult.error.message });
+      if (fraudChecksResult.error) return res.status(500).json({ success: false, error: fraudChecksResult.error.message });
+      if (auditResult.error) return res.status(500).json({ success: false, error: auditResult.error.message });
+
+      for (const tx of Array.isArray(transactionsResult.data) ? transactionsResult.data : []) {
+        const row = objectValue(tx);
+        const metadata = objectValue(row.metadata);
+        const status = firstString(row.status)?.toUpperCase() || '';
+        const type = firstString(row.type)?.toUpperCase() || '';
+        const coreBucket = bucketForTime(awsBuckets, row.created_at);
+
+        if (coreBucket) coreBucket.counts.transactions += 1;
+        if (['FAILED', 'ERROR', 'REJECTED', 'DECLINED', 'CANCELLED'].includes(status)) {
+          addComplianceDriver(coreBucket, 'FAILED_TRANSACTION', 3, 'failedTransactions');
+        }
+        if (['HELD', 'HOLD', 'REVIEW', 'PENDING_REVIEW', 'HELD_FOR_REVIEW', 'LOCKED'].includes(status)) {
+          addComplianceDriver(coreBucket, 'HELD_FOR_REVIEW', 8, 'heldTransactions');
+        }
+        if (jsonIncludes(metadata, 'IMPOSSIBLE_GEO_TRAVEL')) {
+          addComplianceDriver(coreBucket, 'IMPOSSIBLE_GEO_TRAVEL', 20, 'impossibleTravel');
+          addComplianceDriver(bucketForTime(adminBuckets, row.created_at), 'IMPOSSIBLE_GEO_TRAVEL_REVIEW', 12, 'impossibleTravel');
+        }
+        if (jsonIncludes(metadata, 'TRANSACTION_GEO_REQUIRED') || jsonIncludes(metadata, 'GEO_COMPLIANCE_REQUIRED')) {
+          addComplianceDriver(coreBucket, 'GEO_COMPLIANCE_BLOCK', 10, 'geoComplianceBlocks');
+          addComplianceDriver(bucketForTime(adminBuckets, row.created_at), 'GEO_COMPLIANCE_REVIEW', 8, 'geoComplianceBlocks');
+        }
+        if (['EXTERNAL_FUNDS', 'PROVIDER', 'GATEWAY', 'COLLECTION', 'DISBURSEMENT', 'PAYOUT'].some((marker) => type.includes(marker) || jsonIncludes(metadata, marker))) {
+          addComplianceDriver(bucketForTime(gatewayBuckets, row.created_at), 'EXTERNAL_RAIL_TRAFFIC', 2);
+          addComplianceDriver(bucketForTime(providerBuckets, row.created_at), 'PROVIDER_RAIL_TRAFFIC', 2);
+        }
+      }
+
+      for (const check of Array.isArray(fraudChecksResult.data) ? fraudChecksResult.data : []) {
+        const row = objectValue(check);
+        const riskScore = numberValue(row.risk_score) || 0;
+        const bucket = bucketForTime(awsBuckets, row.created_at);
+        if (riskScore >= 80) {
+          addComplianceDriver(bucket, 'CRITICAL_RISK_SIGNAL', 25, 'criticalRiskSignals');
+          addComplianceDriver(bucketForTime(adminBuckets, row.created_at), 'CRITICAL_RISK_REVIEW', 14, 'criticalRiskSignals');
+        } else if (riskScore >= 60) {
+          addComplianceDriver(bucket, 'HIGH_RISK_SIGNAL', 12, 'highRiskSignals');
+        }
+        if (jsonIncludes(row.flags, 'PROVIDER') || jsonIncludes(row.payload, 'PROVIDER')) {
+          addComplianceDriver(bucketForTime(providerBuckets, row.created_at), 'PROVIDER_RISK_SIGNAL', 12, 'providerAnomalies');
+        }
+      }
+
+      for (const event of Array.isArray(auditResult.data) ? auditResult.data : []) {
+        const row = objectValue(event);
+        const action = firstString(row.action, row.event_type)?.toUpperCase() || '';
+        const eventBucket = bucketForTime(adminBuckets, row.timestamp);
+        const ledgerBucket = bucketForTime(ledgerBuckets, row.timestamp);
+
+        if (
+          action.includes('CONFIG') ||
+          action.includes('KYC') ||
+          action.includes('DOCUMENT') ||
+          action.includes('STAFF') ||
+          action.includes('SUPPORT') ||
+          action.includes('DEVICE') ||
+          action.includes('REVERSE') ||
+          action.includes('APPROVE') ||
+          action.includes('AUDIT')
+        ) {
+          addComplianceDriver(eventBucket, 'SENSITIVE_ADMIN_ACTIVITY', 4, 'auditSensitiveActions');
+        }
+        if (action.includes('LEDGER') || action.includes('RECONCILIATION') || action.includes('WALLET')) {
+          addComplianceDriver(ledgerBucket, 'LEDGER_GOVERNANCE_ACTIVITY', 6);
+        }
+        if (action.includes('WEBHOOK') || action.includes('PROVIDER') || action.includes('GATEWAY')) {
+          addComplianceDriver(bucketForTime(gatewayBuckets, row.timestamp), 'GATEWAY_OR_PROVIDER_ACTIVITY', 6);
+          addComplianceDriver(bucketForTime(providerBuckets, row.timestamp), 'PROVIDER_ACTIVITY', 6);
+        }
+        if (action.includes('WAF') || action.includes('ATTACK') || action.includes('BRUTE') || action.includes('RATE_LIMIT')) {
+          addComplianceDriver(eventBucket, 'SECURITY_CONTROL_EVENT', 18);
+        }
+      }
+
+      const nowBucketTime = new Date().toISOString();
+      for (const alert of Array.isArray(amlAlerts) ? amlAlerts : []) {
+        const row = objectValue(alert);
+        const bucket = bucketForTime(adminBuckets, row.created_at || nowBucketTime);
+        const riskScore = numberValue(row.risk_score) || 0;
+        addComplianceDriver(bucket, riskScore >= 80 ? 'CRITICAL_AML_ALERT' : 'HIGH_AML_ALERT', riskScore >= 80 ? 25 : 12, 'amlAlerts');
+      }
+
+      const anomalyDetails = Array.isArray(anomalyReport?.details) ? anomalyReport.details : [];
+      for (const alert of anomalyDetails) {
+        const row = objectValue(alert);
+        const bucket = bucketForTime(providerBuckets, row.created_at || nowBucketTime);
+        const riskScore = numberValue(row.risk_score) || 0;
+        addComplianceDriver(bucket, riskScore >= 80 ? 'CRITICAL_PROVIDER_ANOMALY' : 'PROVIDER_ANOMALY', riskScore >= 80 ? 24 : 15, 'providerAnomalies');
+        addComplianceDriver(bucketForTime(gatewayBuckets, row.created_at || nowBucketTime), 'GATEWAY_PROVIDER_ANOMALY', riskScore >= 80 ? 20 : 10);
+      }
+
+      finalizeComplianceTimeline(zones, timelines);
+
+      const zoneSummaries = zones.map((zone) => {
+        const buckets = timelines.get(zone.id) || [];
+        const current = buckets[buckets.length - 1] || null;
+        const maxRiskDensity = buckets.reduce((max, bucket) => Math.max(max, bucket.riskDensity), 0);
+        const criticalBucketCount = buckets.filter((bucket) => bucket.status === 'CRITICAL_OVERLOAD').length;
+        const topDrivers = buckets
+          .flatMap((bucket) => bucket.drivers)
+          .reduce((map, driver) => {
+            const existing = map.get(driver.code) || { code: driver.code, count: 0, score: 0 };
+            existing.count += driver.count;
+            existing.score += driver.score;
+            map.set(driver.code, existing);
+            return map;
+          }, new Map<string, { code: string; count: number; score: number }>());
+
+        return {
+          ...zone,
+          currentRiskDensity: current?.riskDensity || zone.baseRisk,
+          currentStatus: current?.status || complianceNodeStatus(zone.baseRisk),
+          maxRiskDensity,
+          criticalBucketCount,
+          topDrivers: Array.from(topDrivers.values()).sort((a, b) => b.score - a.score).slice(0, 6),
+        };
+      });
+
+      await Audit.log('ADMIN', session.sub, 'COMPLIANCE_NODE_RISK_DENSITY_VIEWED', {
+        windowHours,
+        bucketHours,
+        zoneCount: zones.length,
+      });
+
+      res.json({
+        success: true,
+        data: {
+          generatedAt: new Date().toISOString(),
+          windowHours,
+          bucketHours,
+          bucketCount: Math.ceil(windowHours / bucketHours),
+          model: {
+            description: 'Compliance Node Zones are logical ORBI infrastructure and control-plane boundaries mapped to real deployment domains and operational responsibilities.',
+            thresholds: {
+              healthy: '0-34',
+              watch: '35-59',
+              degraded: '60-74',
+              criticalOverload: '75-100',
+            },
+            privacy: 'This endpoint returns infrastructure/control-plane risk density only. It does not expose raw user GPS coordinates.',
+          },
+          zones: zoneSummaries,
+          timeline: Object.fromEntries(Array.from(timelines.entries())),
+        },
+      });
+    } catch (e: any) {
+      res.status(400).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.get('/admin/risk/geo-heatmap', authenticate, async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, [...RISK_REVIEW_ROLES])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const query = AdminRiskGeoHeatmapQuerySchema.parse(req.query);
+      const sb = getAdminSupabase() || getSupabase();
+      if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+
+      const days = query.days || 7;
+      const limit = query.limit || 2000;
+      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+      const countryFilter = query.countryCode?.trim().toUpperCase();
+      const currencyFilter = query.currency?.trim().toUpperCase();
+      const minRiskScore = query.minRiskScore ?? 0;
+
+      let txQuery = sb
+        .from('transactions')
+        .select('id, user_id, amount, currency, status, type, created_at, metadata')
+        .gte('created_at', since)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (currencyFilter) txQuery = txQuery.eq('currency', currencyFilter);
+
+      const [transactionsResult, fraudChecksResult] = await Promise.all([
+        txQuery,
+        sb
+          .from('fraud_checks')
+          .select('id, user_id, transaction_id, risk_score, decision, flags, payload, created_at')
+          .gte('created_at', since)
+          .order('created_at', { ascending: false })
+          .limit(limit),
+      ]);
+
+      const transactionsError = transactionsResult.error;
+      const fraudChecksError = fraudChecksResult.error;
+      if (transactionsError) return res.status(500).json({ success: false, error: transactionsError.message });
+      if (fraudChecksError) return res.status(500).json({ success: false, error: fraudChecksError.message });
+
+      const buckets = new Map<string, RiskGeoBucket>();
+      const transactions = Array.isArray(transactionsResult.data) ? transactionsResult.data : [];
+      const fraudChecks = Array.isArray(fraudChecksResult.data) ? fraudChecksResult.data : [];
+
+      for (const tx of transactions) {
+        const row = objectValue(tx);
+        const geo = extractGeoSignal(row, 'transaction_metadata');
+        if (countryFilter && geo.countryCode !== countryFilter) continue;
+
+        const bucket = getRiskGeoBucket(buckets, geo);
+        bucket.transactionCount += 1;
+        bucket.totalAmount += numberValue(row.amount) || 0;
+        bucket.sources.add(geo.source);
+
+        const currency = firstString(row.currency)?.toUpperCase();
+        if (currency) bucket.currencies.add(currency);
+
+        const metadata = objectValue(row.metadata);
+        const riskScore = numberValue(metadata.riskScore ?? metadata.risk_score ?? objectValue(metadata.riskContext).riskScore);
+        if (riskScore !== undefined && riskScore >= minRiskScore) {
+          bucket.riskSignalCount += 1;
+          bucket.riskScoreTotal += riskScore;
+          bucket.riskScoreSamples += 1;
+          bucket.maxRiskScore = Math.max(bucket.maxRiskScore, riskScore);
+        }
+      }
+
+      for (const check of fraudChecks) {
+        const row = objectValue(check);
+        const riskScore = numberValue(row.risk_score) || 0;
+        if (riskScore < minRiskScore) continue;
+
+        const geo = extractGeoSignal(row, 'fraud_check_payload');
+        if (countryFilter && geo.countryCode !== countryFilter) continue;
+
+        const bucket = getRiskGeoBucket(buckets, geo);
+        bucket.riskSignalCount += 1;
+        bucket.riskScoreTotal += riskScore;
+        bucket.riskScoreSamples += 1;
+        bucket.maxRiskScore = Math.max(bucket.maxRiskScore, riskScore);
+        bucket.sources.add(geo.source);
+
+        const decision = firstString(row.decision)?.toUpperCase();
+        if (decision && decision !== 'ALLOW' && decision !== 'APPROVED' && decision !== 'PASS') {
+          bucket.alertCount += 1;
+        }
+      }
+
+      const regions = Array.from(buckets.values()).map((bucket) => {
+        const avgRiskScore = bucket.riskScoreSamples > 0 ? bucket.riskScoreTotal / bucket.riskScoreSamples : 0;
+        const volumePressure = Math.min(100, bucket.transactionCount * 2);
+        const signalPressure = Math.min(100, bucket.riskSignalCount * 15 + bucket.alertCount * 20);
+        const intensity = Math.round(Math.min(100, (bucket.maxRiskScore * 0.5) + (avgRiskScore * 0.25) + (signalPressure * 0.2) + (volumePressure * 0.05)));
+
+        return {
+          key: bucket.key,
+          countryCode: bucket.countryCode,
+          region: bucket.region,
+          regionCode: bucket.regionCode,
+          city: bucket.city,
+          transactionCount: bucket.transactionCount,
+          riskSignalCount: bucket.riskSignalCount,
+          alertCount: bucket.alertCount,
+          avgRiskScore: Math.round(avgRiskScore * 100) / 100,
+          maxRiskScore: bucket.maxRiskScore,
+          totalAmount: Math.round(bucket.totalAmount * 100) / 100,
+          currencies: Array.from(bucket.currencies).sort(),
+          sources: Array.from(bucket.sources).sort(),
+          intensity,
+          severity: geoSeverity(intensity),
+        };
+      }).sort((a, b) => b.intensity - a.intensity || b.riskSignalCount - a.riskSignalCount || b.transactionCount - a.transactionCount);
+
+      res.json({
+        success: true,
+        data: {
+          windowDays: days,
+          generatedAt: new Date().toISOString(),
+          sourceTables: ['transactions.metadata', 'fraud_checks.payload'],
+          privacy: {
+            granularity: 'country_region',
+            rawCoordinatesReturned: false,
+            note: 'Heatmap data is aggregated for admin risk operations; raw client location should never be exposed in this response.',
+          },
+          summary: {
+            totalTransactions: transactions.length,
+            totalRiskSignals: fraudChecks.length,
+            returnedRegions: regions.length,
+            filters: {
+              countryCode: countryFilter || null,
+              currency: currencyFilter || null,
+              minRiskScore,
+              limit,
+            },
+          },
+          regions,
+        },
+      });
+    } catch (e: any) {
+      res.status(400).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.get('/admin/risk/live-geo', authenticate, async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, [...RISK_REVIEW_ROLES])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const query = AdminRiskLiveGeoQuerySchema.parse(req.query);
+      const sb = getAdminSupabase() || getSupabase();
+      if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+
+      const minutes = query.minutes || 60;
+      const limit = query.limit || 250;
+      const precision = query.precision || 'city';
+      const since = new Date(Date.now() - minutes * 60 * 1000).toISOString();
+      const countryFilter = query.countryCode?.trim().toUpperCase();
+      const currencyFilter = query.currency?.trim().toUpperCase();
+      const statusFilter = query.status?.trim().toUpperCase();
+      const minRiskScore = query.minRiskScore ?? 0;
+
+      let txQuery = sb
+        .from('transactions')
+        .select('id, user_id, amount, currency, status, type, created_at, metadata')
+        .gte('created_at', since)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (currencyFilter) txQuery = txQuery.eq('currency', currencyFilter);
+      if (statusFilter) txQuery = txQuery.eq('status', statusFilter);
+
+      const { data, error } = await txQuery;
+      if (error) return res.status(500).json({ success: false, error: error.message });
+
+      const points = (Array.isArray(data) ? data : []).flatMap((tx: any) => {
+        const row = objectValue(tx);
+        const geo = extractGeoSignal(row, 'transaction_metadata');
+        const metadata = objectValue(row.metadata);
+        const riskContext = objectValue(metadata.riskContext);
+        const riskScore = numberValue(metadata.riskScore ?? metadata.risk_score ?? riskContext.riskScore) || 0;
+        const hasCoordinates = geo.latitude !== null && geo.latitude !== undefined && geo.longitude !== null && geo.longitude !== undefined;
+
+        if (!hasCoordinates) return [];
+        if (geo.consented === false) return [];
+        if (countryFilter && geo.countryCode !== countryFilter) return [];
+        if (riskScore < minRiskScore) return [];
+
+        return [{
+          id: row.id,
+          transactionId: row.id,
+          userId: row.user_id || null,
+          status: row.status || null,
+          type: row.type || null,
+          amount: numberValue(row.amount) || 0,
+          currency: firstString(row.currency)?.toUpperCase() || null,
+          countryCode: geo.countryCode,
+          region: geo.region,
+          regionCode: geo.regionCode || null,
+          city: geo.city || null,
+          latitude: roundCoordinate(geo.latitude, precision),
+          longitude: roundCoordinate(geo.longitude, precision),
+          precision,
+          source: geo.source,
+          consented: true,
+          capturedAt: geo.capturedAt,
+          createdAt: row.created_at || null,
+          riskScore,
+          severity: geoSeverity(riskScore),
+        }];
+      });
+
+      await Audit.log('ADMIN', session.sub, 'RISK_LIVE_GEO_VIEWED', {
+        minutes,
+        limit,
+        precision,
+        returnedPoints: points.length,
+        filters: {
+          countryCode: countryFilter || null,
+          currency: currencyFilter || null,
+          status: statusFilter || null,
+          minRiskScore,
+        },
+      });
+
+      res.json({
+        success: true,
+        data: {
+          windowMinutes: minutes,
+          generatedAt: new Date().toISOString(),
+          privacy: {
+            granularity: precision,
+            consentRequired: true,
+            note: 'Live geo points are for restricted risk operations. Coordinates are rounded and every access is audited.',
+          },
+          summary: {
+            returnedPoints: points.length,
+            filters: {
+              countryCode: countryFilter || null,
+              currency: currencyFilter || null,
+              status: statusFilter || null,
+              minRiskScore,
+              limit,
+              precision,
+            },
+          },
+          points,
+        },
+      });
     } catch (e: any) {
       res.status(400).json({ success: false, error: e.message });
     }
