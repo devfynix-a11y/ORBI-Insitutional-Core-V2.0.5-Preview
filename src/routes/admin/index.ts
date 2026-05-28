@@ -96,6 +96,9 @@ const PlatformFeeConfigSchema = z.object({
     'AGENT_CASH_COMMISSION',
     'SYSTEM_OPERATION',
   ]),
+  transactionModel: z.string().optional(),
+  categoryCode: z.string().optional(),
+  categoryId: z.string().optional(),
   transactionType: z.string().optional(),
   operationType: z.string().optional(),
   direction: z.string().optional(),
@@ -371,7 +374,7 @@ export const registerAdminRoutes = (admin: Router, authenticate: RequestHandler)
     }
   });
 
-  admin.get('/platform-fees', async (req, res) => {
+  admin.get('/platform-fees', requireSessionPermission(['config.commissions.read', 'config.commissions.write', 'provider.read'], ['ADMIN', 'SUPER_ADMIN', 'IT', 'ACCOUNTANT', 'AUDIT']), async (req, res) => {
     try {
       const data = await LogicCore.getPlatformFeeConfigs({
         flowCode: req.query.flowCode || req.query.flow_code,
@@ -380,6 +383,9 @@ export const registerAdminRoutes = (admin: Router, authenticate: RequestHandler)
         currency: req.query.currency,
         countryCode: req.query.countryCode || req.query.country_code,
         rail: req.query.rail,
+        transactionModel: req.query.transactionModel || req.query.transaction_model,
+        categoryCode: req.query.categoryCode || req.query.category_code,
+        categoryId: req.query.categoryId || req.query.category_id,
       });
       res.json({ success: true, data });
     } catch (e: any) {
@@ -388,7 +394,7 @@ export const registerAdminRoutes = (admin: Router, authenticate: RequestHandler)
     }
   });
 
-  admin.post('/platform-fees', async (req, res) => {
+  admin.post('/platform-fees', requireSessionPermission(['config.commissions.write', 'provider.write'], ['ADMIN', 'SUPER_ADMIN', 'IT']), async (req, res) => {
     try {
       const payload = PlatformFeeConfigSchema.parse(req.body);
       const session = (req as any).session;
@@ -400,11 +406,12 @@ export const registerAdminRoutes = (admin: Router, authenticate: RequestHandler)
     }
   });
 
-  admin.patch('/platform-fees/:id', async (req, res) => {
+  admin.patch('/platform-fees/:id', requireSessionPermission(['config.commissions.write', 'provider.write'], ['ADMIN', 'SUPER_ADMIN', 'IT']), async (req, res) => {
     try {
       const payload = PlatformFeeConfigSchema.partial().parse(req.body);
       const session = (req as any).session;
-      const data = await LogicCore.upsertPlatformFeeConfig(payload, session.sub, req.params.id);
+      const configId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const data = await LogicCore.upsertPlatformFeeConfig(payload, session.sub, configId);
       res.json({ success: true, data });
     } catch (e: any) {
       console.error('[Admin] Update Platform Fee Error:', e);
