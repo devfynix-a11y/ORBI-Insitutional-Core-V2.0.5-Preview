@@ -606,7 +606,14 @@ class OrbiServer {
     async getBootstrapState() {
         const sb = getAdminSupabase() || getSupabase();
         if (!sb) return { staffCount: 0, bootstrapRequired: true };
-        const { count } = await sb.from('staff').select('id', { count: 'exact', head: true });
+        const timeoutMs = Number(process.env.ORBI_BOOTSTRAP_STATE_TIMEOUT_MS || 3500);
+        const timeout = new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error('BOOTSTRAP_STATE_TIMEOUT')), Number.isFinite(timeoutMs) ? timeoutMs : 3500);
+        });
+        const { count } = await Promise.race([
+            sb.from('staff').select('id', { count: 'exact', head: true }),
+            timeout,
+        ]);
         const staffCount = count || 0;
         return {
             staffCount,
