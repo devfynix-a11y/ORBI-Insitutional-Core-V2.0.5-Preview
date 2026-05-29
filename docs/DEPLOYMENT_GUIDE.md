@@ -39,8 +39,8 @@ Configure the following environment variables in the Render dashboard:
 | `KMS_MASTER_SALT` | `random-secure-string` | A long, random string for encryption. |
 | `REDIS_CLUSTER_NODES` | `redis://user:pass@host:port` | Connection string for your Redis instance. |
 | `API_KEY` | `your-gemini-api-key` | API Key for Google Gemini (Sentinel AI). |
-| `ORBI_COMMUNICATIONS_GATEWAY_API_KEY` | `your-orbi-communications-gateway-api-key` | API key for ORBI SMS/email/push/template delivery. |
-| `ORBI_COMMUNICATIONS_GATEWAY_URL` | `https://your-orbi-communications-gateway-url.com` | Base URL for ORBI communications gateway. |
+| `ORBI_TALK_GATEWAY_API_KEY` | `your-orbi-talk-gateway-api-key` | API key for ORBI SMS/email/push/template delivery. |
+| `ORBI_TALK_GATEWAY_URL` | `https://talk.orbifinancial.com` | Base URL for ORBI Talk Gateway. |
 | `ORBI_ANDROID_APP_HASH` | `Base64 SHA-256 Hash` | **CRITICAL**: Official Android App signing certificate hash (Base64). |
 | `ORBI_ANDROID_SMS_HASH` | `11-char string` | **CRITICAL**: Android SMS Retriever hash for auto-OTP reading. |
 | `RP_ID` | `Canonical RP ID` | **CRITICAL**: Canonical Relying Party ID for Passkey operations. |
@@ -107,3 +107,4 @@ The `/health` endpoint provides a real-time status of the system's core componen
 ---
 
 **ORBI Infrastructure Team**
+

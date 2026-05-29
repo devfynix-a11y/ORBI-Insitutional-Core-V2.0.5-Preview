@@ -1,21 +1,21 @@
-# ORBI Communications Gateway Message Templates
+# ORBI Talk Gateway Message Templates
 
-This document outlines all the message templates used by the ORBI backend system, along with their required variables. These templates must be configured in your ORBI Communications Gateway to ensure SMS, push, and email notifications are formatted correctly.
+This document outlines all the message templates used by the ORBI backend system, along with their required variables. These templates must be configured in your ORBI Talk Gateway to ensure SMS, push, and email notifications are formatted correctly.
 
 ## Architecture
 
-1. **Template Types (`/backend/templates/template_types.ts`)**: Defines the exact structure and required variables for every template. This provides strict TypeScript safety when calling `orbiCommunicationsGatewayService.sendTemplate`.
-2. **Seed File (`/backend/templates/orbi_gateway_templates.json`)**: A JSON array containing the actual text/HTML for all templates across all channels and languages. This file should be imported into the ORBI Communications Gateway database.
-3. **Communications Gateway Service (`/backend/infrastructure/orbiGatewayService.ts`)**: The HTTP client that sends the `templateName` and `data` payload to the external communications gateway.
+1. **Template Types (`/backend/templates/template_types.ts`)**: Defines the exact structure and required variables for every template. This provides strict TypeScript safety when calling `orbiTalkGatewayService.sendTemplate`.
+2. **Seed File (`/backend/templates/orbi_talk_gateway_templates.json`)**: A JSON array containing the actual text/HTML for all templates across all channels and languages. This file should be imported into the ORBI Talk Gateway database.
+3. **ORBI Talk Gateway Service (`/backend/infrastructure/orbiTalkGatewayService.ts`)**: The HTTP client that sends the `templateName` and `data` payload to the external ORBI Talk Gateway.
 
-## How to Sync to Communications Gateway
+## How to Sync to ORBI Talk Gateway
 
-To update the templates on the ORBI Communications Gateway, copy the contents of `/docs/orbi_gateway_templates.json` and import it into the communications gateway database. The gateway will automatically match the `name`, `channel`, and `language` fields when a request is received.
+To update the templates on the ORBI Talk Gateway, copy the contents of `/docs/orbi_talk_gateway_templates.json` and import it into the ORBI Talk Gateway database. The gateway will automatically match the `name`, `channel`, and `language` fields when a request is received.
 
 > **⚠️ Important Naming Convention Note:**
 > There is a strict distinction between how templates are *stored* versus how they are *requested*:
-> * **Template Creation/Import (JSON):** When importing templates into the communications gateway database, the identifier field must be called `"name"` (e.g., `"name": "OTP_Message"`).
-> * **API Requests (POST):** When the backend sends a request to the communications gateway's `/api/send-template` endpoint, the identifier field in the JSON payload must be called `"templateName"` (e.g., `"templateName": "OTP_Message"`).
+> * **Template Creation/Import (JSON):** When importing templates into the ORBI Talk Gateway database, the identifier field must be called `"name"` (e.g., `"name": "OTP_Message"`).
+> * **API Requests (POST):** When the backend sends a request to the ORBI Talk Gateway `/api/send-template` endpoint, the identifier field in the JSON payload must be called `"templateName"` (e.g., `"templateName": "OTP_Message"`).
 
 ## Available Templates
 

@@ -25,6 +25,11 @@ const OPTIONAL_ENV = [
   'ORBI_PROVIDER_TIMEOUT_MS',
   'ORBI_PROVIDER_MAX_ATTEMPTS',
   'ORBI_PROVIDER_RETRY_DELAY_MS',
+  'ORBI_TALK_GATEWAY_URL',
+  'ORBI_TALK_GATEWAY_BASE_URL',
+  'ORBI_TALK_GATEWAY_API_KEY',
+  'ORBI_TALK_GATEWAY_USER_ID',
+  'ORBI_TALK_GATEWAY_USER_EMAIL',
   'ORBI_COMMUNICATIONS_GATEWAY_URL',
   'ORBI_COMMUNICATIONS_GATEWAY_BASE_URL',
   'ORBI_COMMUNICATIONS_GATEWAY_API_KEY',
@@ -224,27 +229,30 @@ export const validateStartupEnvironment = () => {
 
 const validateProviderSecretDependencies = (isProd: boolean) => {
   const hasLegacyMessagingGatewayKey = Boolean(process.env.ORBI_GATEWAY_API_KEY);
-  const hasCommunicationsGatewayKey = Boolean(
+  const hasOrbiTalkGatewayKey = Boolean(
+    process.env.ORBI_TALK_GATEWAY_API_KEY ||
     process.env.ORBI_COMMUNICATIONS_GATEWAY_API_KEY ||
     hasLegacyMessagingGatewayKey
   );
-  const hasCommunicationsGatewayUrl = Boolean(
+  const hasOrbiTalkGatewayUrl = Boolean(
+    process.env.ORBI_TALK_GATEWAY_URL ||
+    process.env.ORBI_TALK_GATEWAY_BASE_URL ||
     process.env.ORBI_COMMUNICATIONS_GATEWAY_URL ||
     process.env.ORBI_COMMUNICATIONS_GATEWAY_BASE_URL ||
     process.env.ORBI_GATEWAY_URL ||
     (hasLegacyMessagingGatewayKey && process.env.ORBI_GATEWAY_BASE_URL)
   );
 
-  if (hasCommunicationsGatewayKey !== hasCommunicationsGatewayUrl) {
+  if (hasOrbiTalkGatewayKey !== hasOrbiTalkGatewayUrl) {
     const payload = {
-      has_communications_gateway_key: hasCommunicationsGatewayKey,
-      has_communications_gateway_url: hasCommunicationsGatewayUrl,
+      has_orbi_talk_gateway_key: hasOrbiTalkGatewayKey,
+      has_orbi_talk_gateway_url: hasOrbiTalkGatewayUrl,
     };
     if (isProd) {
-      logger.fatal('startup.invalid_communications_gateway_config', payload);
+      logger.fatal('startup.invalid_orbi_talk_gateway_config', payload);
       process.exit(1);
     } else {
-      logger.warn('startup.invalid_communications_gateway_config', payload);
+      logger.warn('startup.invalid_orbi_talk_gateway_config', payload);
     }
   }
 

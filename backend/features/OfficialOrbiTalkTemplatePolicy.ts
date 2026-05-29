@@ -8,7 +8,7 @@ export type OfficialMessageTemplateResolution = {
   systemCustomBypass: boolean;
 };
 
-class OfficialCommunicationsTemplatePolicy {
+class OfficialOrbiTalkTemplatePolicy {
   resolve(input: {
     category: OfficialMessageCategory;
     subject: string;
@@ -71,7 +71,4 @@ class OfficialCommunicationsTemplatePolicy {
   }
 }
 
-export const officialCommunicationsTemplatePolicy = new OfficialCommunicationsTemplatePolicy();
-
-// Backward compatibility for older imports.
-export const officialGatewayTemplatePolicy = officialCommunicationsTemplatePolicy;
+export const officialOrbiTalkTemplatePolicy = new OfficialOrbiTalkTemplatePolicy();

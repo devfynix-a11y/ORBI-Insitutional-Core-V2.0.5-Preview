@@ -3,7 +3,7 @@ import { UUID } from '../../services/utils.js';
 import { RedisManager } from '../enterprise/infrastructure/RedisManager.js';
 import { RedisClusterFactory } from '../infrastructure/RedisClusterFactory.js';
 import { getAdminSupabase } from '../../services/supabaseClient.js';
-import { orbiCommunicationsGatewayService } from '../infrastructure/orbiGatewayService.js';
+import { orbiTalkGatewayService } from '../infrastructure/orbiTalkGatewayService.js';
 import parsePhoneNumber from 'libphonenumber-js';
 import { logger } from '../infrastructure/logger.js';
 import crypto from 'crypto';
@@ -306,7 +306,7 @@ export class OTPService {
 
             if (actualType === 'sms') {
                 otpLogger.info('otp.dispatch_channel_selected', { actor_id: userId, action, delivery_type: 'sms', contact: actualContact, request_id: requestId });
-                await orbiCommunicationsGatewayService.sendTemplate('OTP_Message', actualContact, { 
+                await orbiTalkGatewayService.sendTemplate('OTP_Message', actualContact, { 
                     otp: code, 
                     name: name,
                     deviceName: deviceName || 'ORBI Mobile',
@@ -314,7 +314,7 @@ export class OTPService {
                 }, { messageType: 'transactional', language, fcmToken, channel: 'sms', requestId });
             } else if (actualType === 'whatsapp') {
                 otpLogger.info('otp.dispatch_channel_selected', { actor_id: userId, action, delivery_type: 'whatsapp', contact: actualContact, request_id: requestId });
-                await orbiCommunicationsGatewayService.sendTemplate('OTP_Message', actualContact, { 
+                await orbiTalkGatewayService.sendTemplate('OTP_Message', actualContact, { 
                     otp: code, 
                     name: name,
                     deviceName: deviceName || 'ORBI Mobile',
@@ -322,7 +322,7 @@ export class OTPService {
                 }, { messageType: 'transactional', language, fcmToken, channel: 'whatsapp', requestId });
             } else if (actualType === 'email') {
                 otpLogger.info('otp.dispatch_channel_selected', { actor_id: userId, action, delivery_type: 'email', contact: actualContact, request_id: requestId });
-                await orbiCommunicationsGatewayService.sendTemplate('OTP_Message', actualContact, { 
+                await orbiTalkGatewayService.sendTemplate('OTP_Message', actualContact, { 
                     otp: code, 
                     name: name,
                     deviceName: deviceName || 'ORBI Mobile',
@@ -330,7 +330,7 @@ export class OTPService {
                 }, { messageType: 'transactional', language, fcmToken, channel: 'email', requestId });
             } else if (actualType === 'push' && fcmToken) {
                 otpLogger.info('otp.dispatch_channel_selected', { actor_id: userId, action, delivery_type: 'push', contact: actualContact, request_id: requestId });
-                await orbiCommunicationsGatewayService.sendTemplate('OTP_Message', fcmToken, { 
+                await orbiTalkGatewayService.sendTemplate('OTP_Message', fcmToken, { 
                     otp: code, 
                     name: name,
                     deviceName: deviceName || 'ORBI Mobile',
@@ -458,3 +458,4 @@ export class OTPService {
         // Redis handles this automatically via TTL
     }
 }
+

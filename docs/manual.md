@@ -219,25 +219,25 @@ Authorized staff can access fee transaction data via the Admin API:
 
 ## 9. Messaging & Notifications Configuration
 
-ORBI uses a dual-provider architecture for notifications: the custom ORBI Communications Gateway for SMS/push/templates and Brevo for email where configured.
+ORBI uses a dual-provider architecture for notifications: the custom ORBI Talk Gateway for SMS/push/templates and Brevo for email where configured.
 
-### 9.1 ORBI Communications Gateway Setup (SMS / Push / Templates)
-The ORBI Communications Gateway handles automated SMS, push, and template messages (OTP, transaction confirmations, security alerts). It supports language preferences (English `en` and Swahili `sw`).
+### 9.1 ORBI Talk Gateway Setup (SMS / Push / Templates)
+The ORBI Talk Gateway handles automated SMS, push, and template messages (OTP, transaction confirmations, security alerts). It supports language preferences (English `en` and Swahili `sw`).
 
-> **Note:** For a complete list of all message templates and their required variables, please refer to the [ORBI Gateway Message Templates](./GATEWAY_TEMPLATES.md) documentation.
+> **Note:** For a complete list of all message templates and their required variables, please refer to the [ORBI Talk Gateway Message Templates](./ORBI_TALK_GATEWAY_TEMPLATES.md) documentation.
 
 **Environment Variables:**
 ```env
-ORBI_COMMUNICATIONS_GATEWAY_API_KEY=your_orbi_communications_gateway_api_key_here
-ORBI_COMMUNICATIONS_GATEWAY_URL=https://your-orbi-communications-gateway-url.com
+ORBI_TALK_GATEWAY_API_KEY=your_orbi_talk_gateway_api_key_here
+ORBI_TALK_GATEWAY_URL=https://talk.orbifinancial.com
 ```
 
 **Usage:**
 ```typescript
-import { orbiCommunicationsGatewayService } from './backend/infrastructure/orbiGatewayService.js';
+import { orbiTalkGatewayService } from './backend/infrastructure/orbiTalkGatewayService.js';
 
 // Send a template message
-await orbiCommunicationsGatewayService.sendTemplate(
+await orbiTalkGatewayService.sendTemplate(
     'Transfer_Received', 
     '+255700000000', 
     { amount: '50,000', currency: 'TZS', sender: 'John Doe' },
@@ -351,3 +351,4 @@ The main application provides real-time visibility into the broker's status:
 
 **ORBI Financial Technologies Ltd.**  
 *Building the Future of Money.*
+

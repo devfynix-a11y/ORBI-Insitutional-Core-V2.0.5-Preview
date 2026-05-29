@@ -22,8 +22,8 @@ This reference is for maintainability only. It intentionally does not store secr
 
 - `ORBI_MONITOR_API_KEY` is now a dedicated internal monitor token used only for protected monitor endpoints.
 - monitor routes no longer reuse tenant-facing `x-api-key` authentication.
-- `ORBI_COMMUNICATIONS_GATEWAY_API_KEY` is for backend-to-communications-gateway messaging calls such as SMS, email, push, and templates.
-- Legacy `ORBI_GATEWAY_*` messaging variables are still accepted as fallback, but new deployments should use `ORBI_COMMUNICATIONS_GATEWAY_*` to avoid mixing messaging with payment gateway configuration.
+- `ORBI_TALK_GATEWAY_API_KEY` is for backend-to-ORBI-Talk-Gateway messaging calls such as SMS, email, push, and templates.
+- Legacy `ORBI_COMMUNICATIONS_GATEWAY_*` and `ORBI_GATEWAY_*` messaging variables are still accepted as fallback, but new deployments should use `ORBI_TALK_GATEWAY_*` to avoid mixing messaging with payment gateway configuration.
 - `ORBI_BASE_URL` is also script-only. In practice it often points to the same value as `BACKEND_URL`.
 - `NEW_SECRET` appears in the shared env file but is not present in `.env.example` and was not introduced by the new work. Its purpose should be reviewed and documented by the team.
 - `KMS_MASTER_SALT` exists only in `.env.example` as a legacy compatibility name. The active env file uses `KMS_SALT`.
@@ -81,17 +81,17 @@ This reference is for maintainability only. It intentionally does not store secr
 | `S3_REGION` | Runtime | Non-secret | Yes | Yes | Storage region name. |
 | `KYC_BUCKET` | Runtime | Non-secret | Yes | Yes | Bucket or storage namespace used for KYC artifacts. |
 
-## ORBI Communications Gateway And Messaging
+## ORBI Talk Gateway And Messaging
 
 | Variable | Type | Secret | In Shared Env | In `.env.example` | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| `ORBI_COMMUNICATIONS_GATEWAY_URL` | Runtime | Non-secret | No | Yes | Base URL for the ORBI communications gateway used for SMS, email, push, and templates. |
-| `ORBI_COMMUNICATIONS_GATEWAY_BASE_URL` | Runtime | Non-secret | No | No | Alternate communications gateway base URL name. |
-| `ORBI_COMMUNICATIONS_GATEWAY_API_KEY` | Runtime | Secret | No | Yes | API key used by backend-to-communications-gateway requests. |
-| `ORBI_COMMUNICATIONS_GATEWAY_USER_ID` | Runtime | Non-secret | No | Yes | Optional communications gateway owner/user identifier. |
-| `ORBI_COMMUNICATIONS_GATEWAY_USER_EMAIL` | Runtime | Non-secret | No | Yes | Optional communications gateway owner/user email. |
-| `ORBI_GATEWAY_URL` | Runtime | Non-secret | Yes | No | Legacy messaging gateway URL fallback. Prefer `ORBI_COMMUNICATIONS_GATEWAY_URL`. |
-| `ORBI_GATEWAY_API_KEY` | Runtime | Secret | Yes | No | Legacy messaging gateway API key fallback. Prefer `ORBI_COMMUNICATIONS_GATEWAY_API_KEY`. |
+| `ORBI_TALK_GATEWAY_URL` | Runtime | Non-secret | No | Yes | Base URL for the ORBI Talk Gateway used for SMS, email, push, and templates. |
+| `ORBI_TALK_GATEWAY_BASE_URL` | Runtime | Non-secret | No | No | Alternate ORBI Talk Gateway base URL name. |
+| `ORBI_TALK_GATEWAY_API_KEY` | Runtime | Secret | No | Yes | API key used by backend-to-ORBI-Talk-Gateway requests. |
+| `ORBI_TALK_GATEWAY_USER_ID` | Runtime | Non-secret | No | Yes | Optional ORBI Talk Gateway owner/user identifier. |
+| `ORBI_TALK_GATEWAY_USER_EMAIL` | Runtime | Non-secret | No | Yes | Optional ORBI Talk Gateway owner/user email. |
+| `ORBI_GATEWAY_URL` | Runtime | Non-secret | Yes | No | Legacy messaging gateway URL fallback. Prefer `ORBI_TALK_GATEWAY_URL`. |
+| `ORBI_GATEWAY_API_KEY` | Runtime | Secret | Yes | No | Legacy messaging gateway API key fallback. Prefer `ORBI_TALK_GATEWAY_API_KEY`. |
 | `OBI_GATEWAY_USER_ID` | Runtime | Non-secret | Yes | No | Legacy typo gateway-linked user identifier fallback. |
 | `OBI_GATEWAY_USER_EMAIL` | Runtime | Non-secret | Yes | No | Legacy typo gateway-linked user email fallback. |
 
@@ -257,3 +257,4 @@ This reference is for maintainability only. It intentionally does not store secr
 3. Do not store real secret values in docs, examples, or committed env files.
 4. Review undocumented variables such as `NEW_SECRET` and either document them properly or remove them.
 5. Consider rotating any real secrets that were previously shared in plaintext outside secure secret storage.
+

@@ -1,6 +1,6 @@
 
 import { Audit } from '../security/audit.js';
-import { orbiCommunicationsGatewayService } from './orbiGatewayService.js';
+import { orbiTalkGatewayService } from './orbiTalkGatewayService.js';
 import { Messaging } from '../features/MessagingService.js';
 
 /**
@@ -40,7 +40,7 @@ export class MonitoringService {
         } catch (e) {
             console.error('[Monitoring] Messaging dispatch failed, falling back to direct Gateway calls', e);
             // Fallback to direct Orbi Gateway calls if dispatch fails (e.g. user not found)
-            await orbiCommunicationsGatewayService.sendEmail(
+            await orbiTalkGatewayService.sendEmail(
                 this.ADMIN_EMAIL,
                 `🚨 CRITICAL: ${title}`,
                 message,
@@ -52,7 +52,7 @@ export class MonitoringService {
             );
 
             if (this.ADMIN_PHONE) {
-                await orbiCommunicationsGatewayService.sendSms(
+                await orbiTalkGatewayService.sendSms(
                     this.ADMIN_PHONE,
                     `🚨 CRITICAL ORBI ALERT: ${title}. Check admin email for details.`,
                     'en',
@@ -82,7 +82,7 @@ export class MonitoringService {
             );
         } catch (e) {
             console.error('[Monitoring] Messaging info dispatch failed, falling back to direct Gateway calls', e);
-            await orbiCommunicationsGatewayService.sendEmail(
+            await orbiTalkGatewayService.sendEmail(
                 this.ADMIN_EMAIL,
                 `ℹ️ System Info: ${title}`,
                 JSON.stringify(details),
@@ -95,3 +95,4 @@ export class MonitoringService {
         }
     }
 }
+

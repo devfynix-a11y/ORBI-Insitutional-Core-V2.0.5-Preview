@@ -1,5 +1,5 @@
 import { Messaging } from './MessagingService.js';
-import { communicationsTemplateCatalog, CommunicationsTemplateSearchInput } from './GatewayTemplateCatalogService.js';
+import { orbiTalkTemplateCatalog, OrbiTalkTemplateSearchInput } from './OrbiTalkTemplateCatalogService.js';
 import { messageAudienceService, MessageAudienceFilters, AudienceUser } from './MessageAudienceService.js';
 import { TemplateChannel, TemplateLanguage, MessageType } from '../templates/template_types.js';
 import { getAdminSupabase } from '../../services/supabaseClient.js';
@@ -54,18 +54,18 @@ const normalizeVariables = (variables: Record<string, any> = {}, user: AudienceU
 });
 
 class StaffMessagingAdminService {
-  async searchTemplates(input: CommunicationsTemplateSearchInput = {}) {
-    return communicationsTemplateCatalog.listTemplates(input);
+  async searchTemplates(input: OrbiTalkTemplateSearchInput = {}) {
+    return orbiTalkTemplateCatalog.listTemplates(input);
   }
 
   async previewTemplate(input: { templateName: string; variables?: Record<string, any>; channel?: TemplateChannel; language?: TemplateLanguage; messageType?: MessageType; }) {
-    const template = await communicationsTemplateCatalog.getTemplate(input.templateName, {
+    const template = await orbiTalkTemplateCatalog.getTemplate(input.templateName, {
       channel: input.channel,
       language: input.language,
       messageType: input.messageType,
     });
     if (!template) throw new Error('TEMPLATE_NOT_FOUND');
-    const rendered = communicationsTemplateCatalog.renderTemplate(template, input.variables || {});
+    const rendered = orbiTalkTemplateCatalog.renderTemplate(template, input.variables || {});
     return { template, rendered };
   }
 
@@ -78,7 +78,7 @@ class StaffMessagingAdminService {
   }
 
   async sendTemplated(input: StaffTemplatedSendInput) {
-    const template = await communicationsTemplateCatalog.getTemplate(input.templateName, {
+    const template = await orbiTalkTemplateCatalog.getTemplate(input.templateName, {
       channel: input.channel,
       language: input.language,
       messageType: input.messageType,
@@ -91,7 +91,7 @@ class StaffMessagingAdminService {
 
     for (const recipient of recipients) {
       const mergedVariables = normalizeVariables(input.variables || {}, recipient);
-      const rendered = communicationsTemplateCatalog.renderTemplate(template, mergedVariables);
+      const rendered = orbiTalkTemplateCatalog.renderTemplate(template, mergedVariables);
       await Messaging.dispatch(recipient.id, category, rendered.subject || `ORBI ${template.name}`, rendered.body, {
         template: String(template.name),
         variables: mergedVariables,
@@ -155,3 +155,4 @@ class StaffMessagingAdminService {
 }
 
 export const staffMessagingAdminService = new StaffMessagingAdminService();
+

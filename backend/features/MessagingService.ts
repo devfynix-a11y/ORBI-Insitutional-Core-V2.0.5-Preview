@@ -6,14 +6,14 @@ import { Storage, STORAGE_KEYS } from '../storage.js';
 import { GoogleGenAI } from "@google/genai";
 import { DataVault } from '../security/encryption.js';
 import { DataProtection } from '../security/DataProtection.js';
-import { orbiCommunicationsGatewayService } from '../infrastructure/orbiGatewayService.js';
+import { orbiTalkGatewayService } from '../infrastructure/orbiTalkGatewayService.js';
 import { firebasePushService } from '../infrastructure/firebasePushService.js';
 import parsePhoneNumber from 'libphonenumber-js';
 
 import { SocketRegistry } from '../infrastructure/SocketRegistry.js';
 
 import { TemplateName, TemplatePayloads } from '../templates/template_types.js';
-import { officialCommunicationsTemplatePolicy } from './OfficialGatewayTemplatePolicy.js';
+import { officialOrbiTalkTemplatePolicy } from './OfficialOrbiTalkTemplatePolicy.js';
 
 /**
  * NEXUS MESSAGING & NOTIFICATION NODE (V5.1)
@@ -321,7 +321,7 @@ CEO, ORBI`
         const id = UUID.generate();
         const refId = id.substring(0, 8).toUpperCase();
         const isTransactional = ['security', 'update', 'info'].includes(category);
-        const templatePlan = officialCommunicationsTemplatePolicy.resolve({
+        const templatePlan = officialOrbiTalkTemplatePolicy.resolve({
             category,
             subject,
             body,
@@ -454,7 +454,7 @@ CEO, ORBI`
         // Try SMS
         if (options.sms && profile.phone) {
             if (templatePlan.templateName) {
-                await orbiCommunicationsGatewayService.sendTemplate(templatePlan.templateName as TemplateName, formattedPhone, vars as any, { 
+                await orbiTalkGatewayService.sendTemplate(templatePlan.templateName as TemplateName, formattedPhone, vars as any, { 
                     language, 
                     messageType: category === 'promo' ? 'promotional' : 'transactional',
                     channel: 'sms',
@@ -462,7 +462,7 @@ CEO, ORBI`
                     requestId: id
                 });
             } else if (templatePlan.systemCustomBypass) {
-                await orbiCommunicationsGatewayService.sendSms(formattedPhone, `${subject}: ${body}`, language, undefined, undefined, id);
+                await orbiTalkGatewayService.sendSms(formattedPhone, `${subject}: ${body}`, language, undefined, undefined, id);
             }
         }
 
@@ -470,7 +470,7 @@ CEO, ORBI`
         if (options.email && emailAllowed && profile.email) {
             let emailSent = false;
             if (templatePlan.templateName) {
-                emailSent = await orbiCommunicationsGatewayService.sendTemplate(templatePlan.templateName as TemplateName, profile.email, vars as any, { 
+                emailSent = await orbiTalkGatewayService.sendTemplate(templatePlan.templateName as TemplateName, profile.email, vars as any, { 
                     language, 
                     messageType: category === 'promo' ? 'promotional' : 'transactional',
                     channel: 'email',
@@ -483,7 +483,7 @@ CEO, ORBI`
         // Try WhatsApp
         if (options.whatsapp && profile.phone) {
             if (templatePlan.templateName) {
-                await orbiCommunicationsGatewayService.sendTemplate(templatePlan.templateName as TemplateName, formattedPhone, vars as any, { 
+                await orbiTalkGatewayService.sendTemplate(templatePlan.templateName as TemplateName, formattedPhone, vars as any, { 
                     language, 
                     messageType: category === 'promo' ? 'promotional' : 'transactional',
                     channel: 'whatsapp',
@@ -492,7 +492,7 @@ CEO, ORBI`
                 });
             } else if (templatePlan.systemCustomBypass) {
                 // Fallback to SMS if no template, as WhatsApp usually requires templates for business-initiated messages
-                await orbiCommunicationsGatewayService.sendSms(formattedPhone, `${subject}: ${body}`, language, undefined, undefined, id);
+                await orbiTalkGatewayService.sendSms(formattedPhone, `${subject}: ${body}`, language, undefined, undefined, id);
             }
         }
 
@@ -866,3 +866,4 @@ CEO, ORBI`
 }
 
 export const Messaging = new MessagingService();
+

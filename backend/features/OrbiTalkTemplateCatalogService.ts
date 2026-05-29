@@ -1,7 +1,7 @@
 import { TemplateChannel, TemplateLanguage, MessageType, TemplateName } from '../templates/template_types.js';
-import { orbiCommunicationsGatewayService } from '../infrastructure/orbiGatewayService.js';
+import { orbiTalkGatewayService } from '../infrastructure/orbiTalkGatewayService.js';
 
-export type CommunicationsTemplateCatalogItem = {
+export type OrbiTalkTemplateCatalogItem = {
   name: TemplateName | string;
   channel: TemplateChannel;
   language: TemplateLanguage | string;
@@ -11,7 +11,7 @@ export type CommunicationsTemplateCatalogItem = {
   variables: string[];
 };
 
-export type CommunicationsTemplateSearchInput = {
+export type OrbiTalkTemplateSearchInput = {
   search?: string;
   channel?: TemplateChannel;
   language?: TemplateLanguage;
@@ -19,9 +19,9 @@ export type CommunicationsTemplateSearchInput = {
   limit?: number;
 };
 
-class CommunicationsTemplateCatalogService {
-  async listTemplates(input: CommunicationsTemplateSearchInput = {}): Promise<CommunicationsTemplateCatalogItem[]> {
-    const items = await orbiCommunicationsGatewayService.getTemplateCatalog(input);
+class OrbiTalkTemplateCatalogService {
+  async listTemplates(input: OrbiTalkTemplateSearchInput = {}): Promise<OrbiTalkTemplateCatalogItem[]> {
+    const items = await orbiTalkGatewayService.getTemplateCatalog(input);
     return (items || []).sort((a, b) => {
       const byName = String(a.name).localeCompare(String(b.name));
       if (byName !== 0) return byName;
@@ -31,7 +31,7 @@ class CommunicationsTemplateCatalogService {
     });
   }
 
-  async getTemplate(name: string, preferred: Omit<CommunicationsTemplateSearchInput, 'search' | 'limit'> = {}): Promise<CommunicationsTemplateCatalogItem | null> {
+  async getTemplate(name: string, preferred: Omit<OrbiTalkTemplateSearchInput, 'search' | 'limit'> = {}): Promise<OrbiTalkTemplateCatalogItem | null> {
     const items = await this.listTemplates({
       search: name,
       channel: preferred.channel,
@@ -49,7 +49,7 @@ class CommunicationsTemplateCatalogService {
     return items.find((item) => item.name === name) || null;
   }
 
-  renderTemplate(template: CommunicationsTemplateCatalogItem, variables: Record<string, any> = {}) {
+  renderTemplate(template: OrbiTalkTemplateCatalogItem, variables: Record<string, any> = {}) {
     const replace = (input?: string) => {
       if (!input) return '';
       return input.replace(/\{\{(.*?)\}\}/g, (_match, key) => {
@@ -69,10 +69,4 @@ class CommunicationsTemplateCatalogService {
   }
 }
 
-export const communicationsTemplateCatalog = new CommunicationsTemplateCatalogService();
-
-export type GatewayTemplateCatalogItem = CommunicationsTemplateCatalogItem;
-export type GatewayTemplateSearchInput = CommunicationsTemplateSearchInput;
-
-// Backward compatibility for older admin messaging code.
-export const gatewayTemplateCatalog = communicationsTemplateCatalog;
+export const orbiTalkTemplateCatalog = new OrbiTalkTemplateCatalogService();
