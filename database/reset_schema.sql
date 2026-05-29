@@ -1132,7 +1132,9 @@ CREATE TABLE IF NOT EXISTS public.financial_partners (
     connection_secret VARCHAR(255),
     client_id TEXT,
     client_secret TEXT,
+    api_key TEXT,
     api_base_url TEXT,
+    merchant_id TEXT,
     webhook_secret TEXT,
     token_cache TEXT,
     token_expiry BIGINT,
@@ -1140,7 +1142,10 @@ CREATE TABLE IF NOT EXISTS public.financial_partners (
     mapping_config JSONB DEFAULT '{}'::jsonb,
     logic_type TEXT DEFAULT 'REGISTRY',
     status VARCHAR(20) DEFAULT 'ACTIVE',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_by UUID,
+    updated_by UUID,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS public.provider_config_versions (
@@ -1160,6 +1165,15 @@ CREATE TABLE IF NOT EXISTS public.provider_config_versions (
 
 CREATE INDEX IF NOT EXISTS idx_provider_config_versions_provider_status
     ON public.provider_config_versions(provider_id, status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_financial_partners_provider_code
+    ON public.financial_partners ((LOWER(provider_metadata->>'provider_code')));
+
+CREATE INDEX IF NOT EXISTS idx_financial_partners_status_type
+    ON public.financial_partners(status, type, logic_type);
+
+CREATE INDEX IF NOT EXISTS idx_financial_partners_rail
+    ON public.financial_partners ((provider_metadata->>'rail'));
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_config_versions_one_active
     ON public.provider_config_versions(provider_id)
@@ -1244,6 +1258,22 @@ CREATE TABLE IF NOT EXISTS public.provider_routing_rules (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_provider_routing_rules_scope
+    ON public.provider_routing_rules(
+        rail,
+        operation_code,
+        COALESCE(country_code, ''),
+        COALESCE(currency, ''),
+        provider_id,
+        COALESCE(status, 'ACTIVE')
+    );
+
+CREATE INDEX IF NOT EXISTS idx_provider_routing_rules_provider_status
+    ON public.provider_routing_rules(provider_id, status, priority);
+
+CREATE INDEX IF NOT EXISTS idx_provider_routing_rules_country_currency
+    ON public.provider_routing_rules(country_code, currency, status, priority);
 
 CREATE TABLE IF NOT EXISTS public.platform_fee_configs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1348,8 +1378,14 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='financial_partners' AND column_name='client_secret') THEN
         ALTER TABLE public.financial_partners ADD COLUMN client_secret TEXT;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='financial_partners' AND column_name='api_key') THEN
+        ALTER TABLE public.financial_partners ADD COLUMN api_key TEXT;
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='financial_partners' AND column_name='api_base_url') THEN
         ALTER TABLE public.financial_partners ADD COLUMN api_base_url TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='financial_partners' AND column_name='merchant_id') THEN
+        ALTER TABLE public.financial_partners ADD COLUMN merchant_id TEXT;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='financial_partners' AND column_name='webhook_secret') THEN
         ALTER TABLE public.financial_partners ADD COLUMN webhook_secret TEXT;
@@ -1362,6 +1398,15 @@ BEGIN
     END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='financial_partners' AND column_name='logic_type') THEN
         ALTER TABLE public.financial_partners ADD COLUMN logic_type TEXT DEFAULT 'REGISTRY';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='financial_partners' AND column_name='created_by') THEN
+        ALTER TABLE public.financial_partners ADD COLUMN created_by UUID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='financial_partners' AND column_name='updated_by') THEN
+        ALTER TABLE public.financial_partners ADD COLUMN updated_by UUID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='financial_partners' AND column_name='updated_at') THEN
+        ALTER TABLE public.financial_partners ADD COLUMN updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
     END IF;
 
     BEGIN
