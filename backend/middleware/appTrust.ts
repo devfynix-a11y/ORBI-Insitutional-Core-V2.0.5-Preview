@@ -52,6 +52,26 @@ const resolveTrustedAppRequest = (
     };
 };
 
+const hostnameFromOriginLike = (value: string) => {
+    const input = String(value || '').trim();
+    if (!input) return '';
+
+    try {
+        if (/^https?:\/\//i.test(input)) {
+            return new URL(input).hostname.toLowerCase();
+        }
+        return input.replace(/^https?:\/\//i, '').split('/')[0].split(':')[0].toLowerCase();
+    } catch {
+        return '';
+    }
+};
+
+const isExactTrustedWebOrigin = (originLike: string) => {
+    const host = hostnameFromOriginLike(originLike);
+    if (!host) return false;
+    return ALLOWED_DOMAINS.some((domain) => hostnameFromOriginLike(domain) === host);
+};
+
 const isTrustedIosBundleOrigin = (origin: string) => {
     if (!origin.startsWith('ios:bundle-id:')) return false;
     const bundleId = origin.replace('ios:bundle-id:', '').trim();
@@ -114,7 +134,7 @@ export const appTrustMiddleware = (req: Request, res: Response, next: NextFuncti
 
     // 3b. Web Browser & Mobile App Requests: Require exact allowed Origin/Referer host
     // In production, we don't trust all *.run.app hosts.
-    const isWebOrigin = ALLOWED_DOMAINS.some(domain => origin.includes(domain));
+    const isWebOrigin = isExactTrustedWebOrigin(origin);
     const { isTrustedOrigin, isTrustedId, isTrustedApp } = resolveTrustedAppRequest(
         appIdHeader,
         appOriginHeader,

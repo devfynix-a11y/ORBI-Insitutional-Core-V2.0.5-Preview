@@ -104,6 +104,8 @@ const criticalRules: LimitRule[] = [
       /^\/admin\/platform-operational-accounts(?:\/[^/]+)?(?:\/(?:fund|payout|refund))?$/.test(path) ||
       /^\/api\/admin\/platform-operational-accounts(?:\/[^/]+)?(?:\/(?:fund|payout|refund))?$/.test(path) ||
       /^\/platform-operational-accounts(?:\/[^/]+)?(?:\/(?:fund|payout|refund))?$/.test(path) ||
+      /^\/admin\/b2b\/(?:merchant-settlement-reports\/generate|agent-float-controls|commission-disputes(?:\/[^/]+)?|organization-limits)$/.test(path) ||
+      /^\/api\/admin\/b2b\/(?:merchant-settlement-reports\/generate|agent-float-controls|commission-disputes(?:\/[^/]+)?|organization-limits)$/.test(path) ||
       path === '/admin/reconciliation/run' ||
       path === '/api/admin/reconciliation/run' ||
       /^\/(?:transactions\/.*\/(?:lock|audit|approve|reverse)|staff\/.*\/reset-password|kyc\/review|documents\/.*\/verify|devices\/.*\/status)$/.test(path)

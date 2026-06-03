@@ -190,6 +190,11 @@ This reference is for maintainability only. It intentionally does not store secr
 | `ORBI_REQUIRE_WEBHOOK_SIGNATURES` | Runtime | Non-secret | No | Yes | Rejects unsigned provider webhook callbacks. |
 | `ORBI_PROVIDER_TIMEOUT_MS` | Runtime | Non-secret | No | Yes | Default outbound provider timeout. |
 | `ORBI_ALLOW_INSECURE_PROVIDER_URLS` | Runtime | Non-secret | No | Yes | Debug-only flag to allow insecure provider URLs. |
+| `ORBI_MAX_QUERY_LENGTH` | Runtime | Non-secret | No | Yes | Maximum allowed API query-string length before request rejection. |
+| `ORBI_MAX_QUERY_PARAMS` | Runtime | Non-secret | No | Yes | Maximum allowed API query parameter count before request rejection. |
+| `ORBI_REQUIRE_API_CONTENT_TYPE` | Runtime | Non-secret | No | Yes | Requires approved content types for API requests with mutation bodies. |
+| `ORBI_REQUIRE_ADMIN_TRACE` | Runtime | Non-secret | No | Yes | Requires `x-orbi-trace` on admin mutations for audit correlation. Defaults on in production. |
+| `ORBI_REQUIRE_ADMIN_DEVICE_ID` | Runtime | Non-secret | No | Yes | Requires `x-orbi-device-id` or `x-orbi-fingerprint` on admin mutations when enabled. |
 | `ORBI_WEBHOOK_REPLAY_WINDOW_SECONDS` | Runtime | Non-secret | No | Yes | Webhook replay protection window. |
 | `ORBI_ALLOW_PROCESS_LOCAL_WEBHOOK_REPLAY_STORE` | Runtime | Non-secret | No | Yes | Debug-only local replay store fallback. |
 

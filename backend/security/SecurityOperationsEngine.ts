@@ -103,6 +103,16 @@ export class SecurityOperationsEngine {
             return { route, method, class: 'CONFIG_COMMIT', failClosed: true, severity: 'CRITICAL', requiresReason: bodyMode === 'commit', requiresIdempotency: false };
         }
 
+        if (route === '/admin/b2b/merchant-settlement-reports/generate') {
+            return { route, method, class: 'ADMIN_SENSITIVE', failClosed: true, severity: 'HIGH', requiresReason: false, requiresIdempotency: false };
+        }
+
+        if (
+            /^\/admin\/b2b\/(?:agent-float-controls|commission-disputes(?:\/[^/]+)?|organization-limits)$/.test(route)
+        ) {
+            return { route, method, class: 'ADMIN_SENSITIVE', failClosed: true, severity: 'CRITICAL', requiresReason: true, requiresIdempotency: false };
+        }
+
         if (
             /^\/admin\/transactions\/.*\/(?:lock|audit|approve|reverse)$/.test(route) ||
             /^\/transactions\/.*\/(?:lock|audit|approve|reverse)$/.test(route) ||
@@ -173,7 +183,13 @@ export class SecurityOperationsEngine {
 
     static hasRequiredReason(req: Request, profile: SecurityOperationProfile) {
         if (!profile.requiresReason) return true;
-        const reason = String((req.body as any)?.reason || (req.body as any)?.status_reason || (req.body as any)?.notes || '').trim();
+        const reason = String(
+            (req.body as any)?.reason ||
+            (req.body as any)?.status_reason ||
+            (req.body as any)?.resolutionNote ||
+            (req.body as any)?.notes ||
+            '',
+        ).trim();
         return reason.length >= 5;
     }
 
