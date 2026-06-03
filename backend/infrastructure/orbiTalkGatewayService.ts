@@ -392,6 +392,8 @@ class OrbiTalkGatewayService {
         if (options.language) params.set('language', options.language);
         if (options.messageType) params.set('messageType', options.messageType);
         if (options.limit) params.set('limit', String(options.limit));
+        const ownerUid = this.ownerUid();
+        if (ownerUid) params.set('ownerUid', ownerUid);
 
         const endpoint = `${this.baseUrl}/api/templates/catalog${params.size ? `?${params.toString()}` : ''}`;
 
