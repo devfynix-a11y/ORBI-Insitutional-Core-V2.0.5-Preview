@@ -1,782 +1,626 @@
 [
   {
-    "name": "OTP_Message",
-    "channel": "sms",
-    "language": "en",
-    "messageType": "transactional",
-    "body": "Hello {{name}}, your OTP for {{deviceName}} is {{otp}}. It expires in 5 minutes."
-  },
-  {
-    "name": "OTP_Message",
-    "channel": "sms",
+    "name": "Service_Customer_Registered",
     "language": "sw",
+    "subject": "",
+    "body": "ORBI: Kumb {{refId}}. {{customerName}} amesajiliwa kikamilifu na {{actorLabel}}.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Merchant_Service_Update",
+    "language": "sw",
+    "subject": "Taarifa muhimu kuhusu huduma yako ya biashara",
+    "body": "Habari, hii hapa taarifa ya huduma yako ya biashara.\n\nKumbukumbu: {{refId}}\nMfanyabiashara: {{actorLabel}}\nKiasi: {{currency}} {{amount}}\nHali: {{status}}\n\nTaarifa hii imethibitishwa na ORBI.",
+    "channel": "email",
     "messageType": "transactional",
-    "body": "Ndugu {{name}}, Msimbo wako wa siri(OTP) wa kifaa chako {{deviceName}} ni {{otp}}. utaisha matumizi ndani ya dakika 5."
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
+  },
+  {
+    "name": "Agent_Cash_Update",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI Agent: Ref {{refId}}. {{direction}} of {{currency}} {{amount}} is {{status}} by {{actorLabel}}.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Transfer_Received",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI: Ref {{refId}}. You have received {{currency}} {{amount}} from {{senderName}} on {{timestamp}}.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Security_Alert_Message",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI Usalama: {{subject}}. Kumb {{refId}}. {{body}}",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Agent_Cash_Update",
+    "language": "sw",
+    "subject": "Muamala wa wakala umerekodiwa",
+    "body": "Hapa kuna taarifa mpya ya muamala wa wakala.\n\nKumbukumbu: {{refId}}\nWakala: {{actorLabel}}\nAina ya Muamala: {{direction}}\nKiasi: {{currency}} {{amount}}\nHali: {{status}}",
+    "channel": "email",
+    "messageType": "transactional",
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
+  },
+  {
+    "name": "Service_Access_Approved",
+    "language": "sw",
+    "subject": "Ombi lako la huduma limekubaliwa!",
+    "body": "Habari, ufikiaji wa huduma uliyoomba umepitishwa.\n\nKumbukumbu: {{refId}}\nMhusika: {{actorLabel}}\n\nHuduma yako ya ORBI sasa ipo tayari na unaweza kuanza kuitumia.",
+    "channel": "email",
+    "messageType": "transactional",
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
+  },
+  {
+    "name": "Agent_Cash_Update",
+    "language": "sw",
+    "subject": "Muamala wa wakala",
+    "body": "Muamala wa {{direction}} uko {{status}}: {{currency}} {{amount}}.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Merchant_Customer_Payment_Update",
+    "language": "en",
+    "subject": "Update on customer payment",
+    "body": "Here is an update on your customer's payment.\n\nReference: {{refId}}\nMerchant: {{actorLabel}}\nAmount: {{currency}} {{amount}}\nStatus: {{status}}",
+    "channel": "email",
+    "messageType": "transactional",
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
+  },
+  {
+    "name": "Salary_Received",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI Payroll Update 🎉\n\nRef: {{refId}}\nEmployee: {{employeeName}}\nMonth: {{month}}\nAmount: {{currency}} {{amount}}\nDate/Time: {{timestamp}}",
+    "channel": "whatsapp",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Merchant_Service_Update",
+    "language": "en",
+    "subject": "Merchant service status update",
+    "body": "Hello, here is the latest update regarding your merchant service.\n\nReference: {{refId}}\nMerchant: {{actorLabel}}\nAmount: {{currency}} {{amount}}\nStatus: {{status}}\n\nThis transaction was securely processed by ORBI.",
+    "channel": "email",
+    "messageType": "transactional",
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
+  },
+  {
+    "name": "New_Device_Alert",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI Security: New login detected from {{deviceName}}. Ref {{refId}}. If this wasn't you, please secure your account immediately.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Treasury_Withdrawal_Request",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI Treasury: {{employeeName}} has requested a withdrawal of {{currency}} {{amount}} for {{reason}}.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Transfer_Sent",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI: Ref {{refId}}. You have successfully sent {{currency}} {{amount}} to {{recipientName}} on {{timestamp}}.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Escrow_Released",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI PaySafe Escrow Released 🔓\n\nRef: {{refId}}\nAmount: {{currency}} {{amount}}\nRecipient: {{recipientName}}\n\nThe escrow funds have been safely released to the recipient.",
+    "channel": "whatsapp",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Service_Access_Approved",
+    "language": "en",
+    "subject": "Your service access request has been approved!",
+    "body": "Great news! Your service access request has been approved.\n\nReference: {{refId}}\nActor: {{actorLabel}}\n\nYour requested ORBI service is now active and ready for use.",
+    "channel": "email",
+    "messageType": "transactional",
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
+  },
+  {
+    "name": "Agent_Cash_Update",
+    "language": "en",
+    "subject": "Agent cash transaction status",
+    "body": "Hello, here is the update for the agent cash transaction.\n\nReference: {{refId}}\nAgent: {{actorLabel}}\nType: {{direction}}\nAmount: {{currency}} {{amount}}\nStatus: {{status}}",
+    "channel": "email",
+    "messageType": "transactional",
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
+  },
+  {
+    "name": "Transfer_Sent",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI: Kumb {{refId}}. Umetuma kwa mafanikio {{currency}} {{amount}} kwenda kwa {{recipientName}} tarehe {{timestamp}}.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Merchant_Customer_Payment_Update",
+    "language": "sw",
+    "subject": "Taarifa ya malipo ya mteja",
+    "body": "Malipo ya mteja yako {{status}}: {{currency}} {{amount}}.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Agent_Customer_Cash_Update",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI Agent: Ref {{refId}}. Customer {{direction}} is {{status}} for {{currency}} {{amount}} at {{actorLabel}}.",
+    "channel": "sms",
+    "messageType": "transactional"
   },
   {
     "name": "OTP_Message",
+    "language": "sw",
+    "subject": "Msimbo wako wa siri wa ORBI",
+    "body": "Habari {{name}},\n\nTafadhali tumia msimbo huu {{otp}} kuthibitisha kifaa chako cha {{deviceName}}. Msimbo huu unaisha muda hivi punde. Kumbuka: Wafanyakazi wa ORBI HAWAWEZI kukuomba msimbo huu.\n\nKama hukufanya ombi hili, wasiliana na timu yetu ya usaidizi mara moja.",
     "channel": "email",
-    "language": "en",
     "messageType": "transactional",
+    "fromEmail": "ORBI Security <security@orbifinancial.com>",
+    "replyTo": "security@orbifinancial.com"
+  },
+  {
+    "name": "Service_Access_Approved",
+    "language": "sw",
+    "subject": "Ruhusa ya huduma",
+    "body": "Ufikiaji wa huduma kwa {{actorLabel}} umepitishwa kwa mafanikio.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Service_Access_Approved",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI: Ref {{refId}}. Service access for {{actorLabel}} has been successfully approved.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Salary_Received",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI Payroll: Ref {{refId}}. {{employeeName}} received {{month}} salary of {{currency}} {{amount}} on {{timestamp}}.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Service_Customer_Registered",
+    "language": "sw",
+    "subject": "Usajili wa mteja umekamilika kikamilifu",
+    "body": "Usajili wa mteja umekamilika kwa mafanikio.\n\nKumbukumbu: {{refId}}\nMteja: {{customerName}}\nAmesajiliwa na: {{actorLabel}}\n\nSasa taarifa za mteja zinapatikana kwenye mfumo wa ORBI.",
+    "channel": "email",
+    "messageType": "transactional",
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
+  },
+  {
+    "name": "Merchant_Customer_Payment_Update",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI Merchant: Kumb {{refId}}. Malipo ya mteja yako {{status}} kwa {{currency}} {{amount}} kwenda kwa {{actorLabel}}.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Service_Customer_Registered",
+    "language": "sw",
+    "subject": "Usajili wa mteja",
+    "body": "{{customerName}} amesajiliwa kwa mafanikio kwenye mfumo.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Agent_Commission_Paid",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI Agent: Ref {{refId}}. Commission of {{currency}} {{amount}} has been paid to {{actorLabel}}.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Escrow_Created",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI PaySafe: Ref {{refId}}. {{currency}} {{amount}} is now securely held in escrow for {{recipientName}}.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Service_Access_Approved",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI: Kumb {{refId}}. Ruhusa ya huduma kwa {{actorLabel}} imethibitishwa.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Agent_Commission_Paid",
+    "language": "sw",
+    "subject": "Kamisheni imelipwa",
+    "body": "Hongera, kamisheni yako ya {{currency}} {{amount}} imelipwa.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Agent_Commission_Paid",
+    "language": "sw",
+    "subject": "Taarifa ya malipo ya kamisheni ya wakala",
+    "body": "Habari, malipo yako ya kamisheni yamekamilika.\n\nKumbukumbu: {{refId}}\nWakala: {{actorLabel}}\nKiasi: {{currency}} {{amount}}\n\nAsante kwa kufanya kazi na ORBI. Malipo haya yamesajiliwa kwenye mfumo.",
+    "channel": "email",
+    "messageType": "transactional",
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
+  },
+  {
+    "name": "LOW_BALANCE",
+    "language": "en",
+    "subject": "Low balance alert",
+    "body": "Your balance is running low and is now below {{threshold}}.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Merchant_Customer_Payment_Update",
+    "language": "sw",
+    "subject": "Taarifa mpya ya malipo ya mteja",
+    "body": "Hapa kuna taarifa mpya kuhusu malipo ya mteja wako.\n\nKumbukumbu: {{refId}}\nMfanyabiashara: {{actorLabel}}\nKiasi: {{currency}} {{amount}}\nHali ya Malipo: {{status}}",
+    "channel": "email",
+    "messageType": "transactional",
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
+  },
+  {
+    "name": "Escrow_Released",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI PaySafe: Ref {{refId}}. The escrow payment of {{currency}} {{amount}} has been released to {{recipientName}}.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Transactional_Message",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI: Ref {{refId}}. {{body}}",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Agent_Cash_Update",
+    "language": "en",
+    "subject": "Agent cash transaction update",
+    "body": "Transaction {{direction}} is {{status}}: {{currency}} {{amount}}.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "OTP_Message",
+    "language": "sw",
+    "subject": "",
+    "body": "Uthibitisho wa ORBI\n\nMsimbo wako: {{otp}}\nKifaa: {{deviceName}}\n\nUsimpe mtu yeyote msimbo huu kwa sababu za kiusalama.",
+    "channel": "whatsapp",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Merchant_Service_Update",
+    "language": "sw",
+    "subject": "Taarifa ya huduma ya mfanyabiashara",
+    "body": "Huduma ya {{actorLabel}} ipo {{status}}.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Agent_Customer_Cash_Update",
+    "language": "en",
+    "subject": "Customer cash transaction update",
+    "body": "Customer {{direction}} is {{status}}: {{currency}} {{amount}}.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Agent_Cash_Update",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI Agent: Kumb {{refId}}. Muamala wa {{direction}} uko {{status}} kwa {{currency}} {{amount}} kupitia {{actorLabel}}.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Merchant_Customer_Payment_Update",
+    "language": "en",
+    "subject": "Customer payment update",
+    "body": "Customer payment is {{status}}: {{currency}} {{amount}}.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Merchant_Service_Update",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI Merchant: Kumb {{refId}}. Huduma ya {{actorLabel}} iko {{status}} kwa {{currency}} {{amount}}.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Merchant_Customer_Payment_Update",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI Merchant: Ref {{refId}}. Customer payment is {{status}} for {{currency}} {{amount}} at {{actorLabel}}.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Service_Access_Approved",
+    "language": "en",
+    "subject": "Service access approved",
+    "body": "Service access for {{actorLabel}} is now active.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Agent_Customer_Cash_Update",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI Agent: Kumb {{refId}}. Muamala wa mteja wa {{direction}} uko {{status}} kwa {{currency}} {{amount}} pale {{actorLabel}}.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Security_Alert_Message",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI Security: {{subject}}. Ref {{refId}}. {{body}}",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "OTP_Message",
+    "language": "en",
     "subject": "Your ORBI verification code",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Hello {{name}}, your OTP for {{deviceName}} is {{otp}}. It expires in 5 minutes."
-  },
-  {
-    "name": "OTP_Message",
+    "body": "Hello {{name}},\n\nPlease use {{otp}} to verify your device {{deviceName}}. This code will expire shortly. Remember, ORBI staff will never ask for this code.\n\nIf you didn't request this, please reach out to ORBI Support immediately.",
     "channel": "email",
-    "language": "sw",
     "messageType": "transactional",
-    "subject": "Msimbo wako wa uthibitisho wa ORBI",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Habari {{name}}, OTP yako kwa kifaa {{deviceName}} ni {{otp}}. Itaisha ndani ya dakika 5."
-  },
-
-  {
-    "name": "Welcome_Message",
-    "channel": "sms",
-    "language": "en",
-    "messageType": "promotional",
-    "body": "ORBI Financial Technologies:\n\nHello {{name}}, welcome to ORBI! Your account is now active.\n\nContinue enjoying our services, ORBI truly values your goals!"
-  },
-  {
-    "name": "Welcome_Message",
-    "channel": "sms",
-    "language": "sw",
-    "messageType": "promotional",
-    "body": "ORBI Financial Technologies:\n\nHabari {{name}}, karibu ORBI! Akaunti yako imeamilishwa.\n\nEndelea kufurahia huduma zetu, ORBI tunathamini sana malengo yako!"
-  },
-  {
-    "name": "Welcome_Message",
-    "channel": "email",
-    "language": "en",
-    "messageType": "transactional",
-    "subject": "Welcome to ORBI",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Hello {{name}}, welcome to ORBI. Your account is now active and ready for secure financial services."
-  },
-  {
-    "name": "Welcome_Message",
-    "channel": "email",
-    "language": "sw",
-    "messageType": "transactional",
-    "subject": "Karibu ORBI",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Habari {{name}}, karibu ORBI. Akaunti yako sasa imewashwa na iko tayari kwa huduma salama za kifedha."
-  },
-
-  {
-    "name": "Transfer_Sent",
-    "channel": "sms",
-    "language": "en",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nRef: {{refId}}. You sent {{currency}} {{amount}}/= to {{recipientName}} at {{timestamp}}.\n\nContinue enjoying our services, ORBI truly values your goals!"
-  },
-  {
-    "name": "Transfer_Sent",
-    "channel": "sms",
-    "language": "sw",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nKumb: {{refId}}. Umetuma {{currency}} {{amount}}/= kwenda kwa {{recipientName}} saa {{timestamp}}.\n\nEndelea kufurahia huduma zetu, ORBI tunathamini sana malengo yako!"
-  },
-  {
-    "name": "Transfer_Sent",
-    "channel": "email",
-    "language": "en",
-    "messageType": "transactional",
-    "subject": "ORBI transaction sent - {{refId}}",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Ref: {{refId}}. You sent {{currency}} {{amount}}/= to {{recipientName}} at {{timestamp}}."
-  },
-  {
-    "name": "Transfer_Sent",
-    "channel": "email",
-    "language": "sw",
-    "messageType": "transactional",
-    "subject": "Muamala wa ORBI umetumwa - {{refId}}",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Kumb: {{refId}}. Umetuma {{currency}} {{amount}}/= kwenda kwa {{recipientName}} saa {{timestamp}}."
-  },
-
-  {
-    "name": "Transfer_Received",
-    "channel": "sms",
-    "language": "en",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nRef: {{refId}}. You received {{currency}} {{amount}}/= from {{senderName}} at {{timestamp}}.\n\nContinue enjoying our services, ORBI truly values your goals!"
-  },
-  {
-    "name": "Transfer_Received",
-    "channel": "sms",
-    "language": "sw",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nKumb: {{refId}}. Umepokea {{currency}} {{amount}}/= kutoka kwa {{senderName}} saa {{timestamp}}.\n\nEndelea kufurahia huduma zetu, ORBI tunathamini sana malengo yako!"
-  },
-  {
-    "name": "Transfer_Received",
-    "channel": "email",
-    "language": "en",
-    "messageType": "transactional",
-    "subject": "ORBI funds received - {{refId}}",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Ref: {{refId}}. You received {{currency}} {{amount}}/= from {{senderName}} at {{timestamp}}."
-  },
-  {
-    "name": "Transfer_Received",
-    "channel": "email",
-    "language": "sw",
-    "messageType": "transactional",
-    "subject": "Fedha za ORBI zimepokelewa - {{refId}}",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Kumb: {{refId}}. Umepokea {{currency}} {{amount}}/= kutoka kwa {{senderName}} saa {{timestamp}}."
-  },
-
-  {
-    "name": "Security_Alert_Message",
-    "channel": "sms",
-    "language": "en",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nRef: {{refId}}. Security Alert: {{subject}}\n\n{{body}}\n\nCall support: +255764258114"
-  },
-  {
-    "name": "Security_Alert_Message",
-    "channel": "sms",
-    "language": "sw",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nKumb: {{refId}}. Tahadhari ya Usalama: {{subject}}\n\n{{body}}\n\nWasiliana nasi: +255764258114"
-  },
-  {
-    "name": "Security_Alert_Message",
-    "channel": "email",
-    "language": "en",
-    "messageType": "transactional",
-    "subject": "ORBI security alert - {{subject}}",
     "fromEmail": "ORBI Security <security@orbifinancial.com>",
-    "body": "Ref: {{refId}}. Security Alert: {{subject}}\n\n{{body}}\n\nIf this was not you, contact ORBI support immediately."
+    "replyTo": "security@orbifinancial.com"
   },
   {
-    "name": "Security_Alert_Message",
+    "name": "Service_Customer_Registered",
+    "language": "en",
+    "subject": "Customer registration successful",
+    "body": "The customer registration has been completed successfully.\n\nReference: {{refId}}\nCustomer: {{customerName}}\nRegistered by: {{actorLabel}}\n\nThe record is now securely stored in ORBI.",
     "channel": "email",
-    "language": "sw",
     "messageType": "transactional",
-    "subject": "Tahadhari ya usalama ya ORBI - {{subject}}",
-    "fromEmail": "ORBI Security <security@orbifinancial.com>",
-    "body": "Kumb: {{refId}}. Tahadhari ya Usalama: {{subject}}\n\n{{body}}\n\nKama hukuwa wewe, wasiliana na ORBI mara moja."
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
   },
-
   {
-    "name": "LOW_BALANCE",
+    "name": "Welcome_Message",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI: Welcome, {{name}}! Your secure financial account is now ready for action.",
+    "channel": "sms",
+    "messageType": "promotional"
+  },
+  {
+    "name": "Service_Customer_Registered",
+    "language": "en",
+    "subject": "Customer registration completed",
+    "body": "{{customerName}} has been successfully registered.",
     "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Escrow_Created",
     "language": "en",
-    "messageType": "transactional",
-    "body": "Hi {{name}}, your balance is below {{threshold}}."
+    "subject": "",
+    "body": "ORBI PaySafe Escrow Created 🔒\n\nRef: {{refId}}\nAmount: {{currency}} {{amount}}\nRecipient: {{recipientName}}\n\nYour funds are held safely until all release conditions are met.",
+    "channel": "whatsapp",
+    "messageType": "transactional"
   },
   {
     "name": "LOW_BALANCE",
+    "language": "sw",
+    "subject": "Salio lako linaisha",
+    "body": "Salio lako limepungua na liko chini ya {{threshold}}.",
     "channel": "push",
-    "language": "sw",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Merchant_Service_Update",
+    "language": "en",
+    "subject": "Merchant service update",
+    "body": "Service update for {{actorLabel}} is now {{status}}.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Agent_Commission_Paid",
+    "language": "en",
+    "subject": "Agent commission paid",
+    "body": "Good news, your commission of {{currency}} {{amount}} has been paid.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Agent_Customer_Cash_Update",
+    "language": "en",
+    "subject": "Customer cash transaction status",
+    "body": "Hello, here is the update on the customer's cash transaction.\n\nReference: {{refId}}\nAgent: {{actorLabel}}\nType: {{direction}}\nAmount: {{currency}} {{amount}}\nStatus: {{status}}",
+    "channel": "email",
     "messageType": "transactional",
-    "body": "Habari {{name}}, salio lako liko chini ya {{threshold}}."
-  },
-
-  {
-    "name": "OTP_Message",
-    "channel": "whatsapp",
-    "language": "en",
-    "components": [
-      {
-        "type": "body",
-        "text": "Hello {{name}}, your ORBI OTP is {{otp}} for {{deviceName}}. It expires in 5 minutes."
-      },
-      {
-        "type": "footer",
-        "text": "ORBI Financial Technologies"
-      }
-    ]
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
   },
   {
     "name": "OTP_Message",
-    "channel": "whatsapp",
-    "language": "sw",
-    "components": [
-      {
-        "type": "body",
-        "text": "Habari {{name}}, OTP yako ya ORBI ni {{otp}} kwa kifaa {{deviceName}}. Itaisha ndani ya dakika 5."
-      },
-      {
-        "type": "footer",
-        "text": "ORBI Financial Technologies"
-      }
-    ]
-  },
-
-  {
-    "name": "Transfer_Sent",
-    "channel": "whatsapp",
     "language": "en",
-    "components": [
-      {
-        "type": "body",
-        "text": "Ref: {{refId}}. You sent {{currency}} {{amount}}/= to {{recipientName}} at {{timestamp}}."
-      },
-      {
-        "type": "footer",
-        "text": "Continue enjoying our services, ORBI truly values your goals!"
-      }
-    ]
+    "subject": "",
+    "body": "ORBI Verification\n\nCode: {{otp}}\nDevice: {{deviceName}}\n\nFor security reasons, do not share this code with anyone.",
+    "channel": "whatsapp",
+    "messageType": "transactional"
   },
   {
     "name": "Transfer_Sent",
-    "channel": "whatsapp",
     "language": "sw",
-    "components": [
-      {
-        "type": "body",
-        "text": "Kumb: {{refId}}. Umetuma {{currency}} {{amount}}/= kwenda kwa {{recipientName}} saa {{timestamp}}."
-      },
-      {
-        "type": "footer",
-        "text": "Endelea kufurahia huduma zetu, ORBI tunathamini sana malengo yako!"
-      }
-    ]
-  },
-  {
-    "name": "Escrow_Created",
-    "channel": "sms",
-    "language": "en",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nRef: {{refId}}. Escrow of {{currency}} {{amount}}/= created for {{recipientName}}."
-  },
-  {
-    "name": "Escrow_Created",
-    "channel": "email",
-    "language": "en",
-    "messageType": "transactional",
-    "subject": "ORBI escrow created - {{refId}}",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Ref: {{refId}}. Escrow of {{currency}} {{amount}}/= has been created for {{recipientName}}."
-  },
-  {
-    "name": "Escrow_Created",
+    "subject": "",
+    "body": "Muamala wa ORBI Umetumwa 💸\n\nKumb: {{refId}}\nKiasi: {{currency}} {{amount}}\nKwenda kwa: {{recipientName}}\nMuda: {{timestamp}}",
     "channel": "whatsapp",
-    "language": "en",
-    "components": [
-      {
-        "type": "body",
-        "text": "Ref: {{refId}}. Escrow of {{currency}} {{amount}}/= created for {{recipientName}}."
-      },
-      {
-        "type": "footer",
-        "text": "ORBI Financial Technologies"
-      }
-    ]
-  },
-  {
-    "name": "Escrow_Released",
-    "channel": "sms",
-    "language": "en",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nRef: {{refId}}. Escrow of {{currency}} {{amount}}/= has been released to {{recipientName}}."
-  },
-  {
-    "name": "Escrow_Released",
-    "channel": "email",
-    "language": "en",
-    "messageType": "transactional",
-    "subject": "ORBI escrow released - {{refId}}",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Ref: {{refId}}. Escrow of {{currency}} {{amount}}/= has been released to {{recipientName}}."
-  },
-  {
-    "name": "Escrow_Released",
-    "channel": "whatsapp",
-    "language": "en",
-    "components": [
-      {
-        "type": "body",
-        "text": "Ref: {{refId}}. Escrow of {{currency}} {{amount}}/= has been released to {{recipientName}}."
-      },
-      {
-        "type": "footer",
-        "text": "ORBI Financial Technologies"
-      }
-    ]
-  },
-  {
-    "name": "Salary_Received",
-    "channel": "sms",
-    "language": "en",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nHello {{name}}, your salary of {{currency}} {{amount}}/= for {{month}} has been credited to your account."
-  },
-  {
-    "name": "Salary_Received",
-    "channel": "email",
-    "language": "en",
-    "messageType": "transactional",
-    "subject": "ORBI salary credited - {{month}}",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Hello {{employeeName}}, your salary of {{currency}} {{amount}}/= for {{month}} has been credited to your ORBI account at {{timestamp}}. Ref: {{refId}}."
-  },
-  {
-    "name": "Salary_Received",
-    "channel": "whatsapp",
-    "language": "en",
-    "components": [
-      {
-        "type": "body",
-        "text": "Hello {{name}}, your salary of {{currency}} {{amount}}/= for {{month}} has been credited to your account."
-      },
-      {
-        "type": "footer",
-        "text": "ORBI Financial Technologies"
-      }
-    ]
+    "messageType": "transactional"
   },
   {
     "name": "Treasury_Withdrawal_Request",
-    "channel": "sms",
     "language": "en",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nWithdrawal request of {{currency}} {{amount}}/= by {{employeeName}}. Reason: {{reason}}."
-  },
-  {
-    "name": "Treasury_Withdrawal_Request",
-    "channel": "email",
-    "language": "en",
-    "messageType": "transactional",
-    "subject": "ORBI treasury withdrawal request",
-    "fromEmail": "ORBI Admin <admin@orbifinancial.com>",
-    "body": "Treasury withdrawal request of {{currency}} {{amount}}/= by {{employeeName}}. Reason: {{reason}}."
-  },
-  {
-    "name": "Treasury_Withdrawal_Request",
+    "subject": "",
+    "body": "ORBI Treasury Request 📋\n\nEmployee: {{employeeName}}\nAmount: {{currency}} {{amount}}\nReason: {{reason}}\n\nPlease review and approve if all details are correct.",
     "channel": "whatsapp",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Service_Customer_Registered",
     "language": "en",
-    "components": [
-      {
-        "type": "body",
-        "text": "Withdrawal request of {{currency}} {{amount}}/= by {{employeeName}}. Reason: {{reason}}."
-      },
-      {
-        "type": "footer",
-        "text": "ORBI Financial Technologies"
-      }
-    ]
+    "subject": "",
+    "body": "ORBI: Ref {{refId}}. {{customerName}} was successfully registered by {{actorLabel}}.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "OTP_Message",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI: {{otp}} ni msimbo wako wa uthibitisho wa kifaa cha {{deviceName}}. Utaisha muda hivi punde, usimpe mtu yeyote.",
+    "channel": "sms",
+    "messageType": "transactional"
   },
   {
     "name": "Promo_Message",
-    "channel": "sms",
     "language": "en",
-    "messageType": "promotional",
-    "body": "ORBI Financial Technologies:\n\n{{body}}"
+    "subject": "",
+    "body": "ORBI: {{body}}",
+    "channel": "sms",
+    "messageType": "promotional"
+  },
+  {
+    "name": "Transfer_Received",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI: Kumb {{refId}}. Umepokea {{currency}} {{amount}} kutoka kwa {{senderName}} tarehe {{timestamp}}.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "OTP_Message",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI: {{otp}} is your verification code for {{deviceName}}. It will expire soon. Do not share it.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Transfer_Sent",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI Transfer Sent 💸\n\nRef: {{refId}}\nAmount: {{currency}} {{amount}}\nTo: {{recipientName}}\nTime: {{timestamp}}",
+    "channel": "whatsapp",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Welcome_Message",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI: Karibu sana {{name}}! Akaunti yako salama ya kifedha ipo tayari kutumika sasa.",
+    "channel": "sms",
+    "messageType": "promotional"
+  },
+  {
+    "name": "New_Device_Alert",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI Security Notice ⚠️\n\nRef: {{refId}}\nA new sign-in was detected on your account from {{deviceName}}.\n\nIf this wasn't you, please protect your account immediately.",
+    "channel": "whatsapp",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Merchant_Service_Update",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI Merchant: Ref {{refId}}. {{actorLabel}} service status is {{status}} for {{currency}} {{amount}}.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Agent_Customer_Cash_Update",
+    "language": "sw",
+    "subject": "Taarifa mpya ya muamala wa mteja",
+    "body": "Hapa kuna muhtasari wa muamala wa fedha wa mteja wako.\n\nKumbukumbu: {{refId}}\nWakala: {{actorLabel}}\nAina: {{direction}}\nKiasi: {{currency}} {{amount}}\nHali: {{status}}",
+    "channel": "email",
+    "messageType": "transactional",
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
   },
   {
     "name": "Promo_Message",
-    "channel": "email",
     "language": "en",
-    "messageType": "promotional",
-    "subject": "ORBI update",
-    "fromEmail": "ORBI Info <info@orbifinancial.com>",
-    "body": "{{body}}"
+    "subject": "",
+    "body": "ORBI News & Updates 📢\n\n{{body}}",
+    "channel": "whatsapp",
+    "messageType": "transactional"
   },
   {
-    "name": "Promo_Message",
-    "channel": "whatsapp",
+    "name": "Agent_Commission_Paid",
     "language": "en",
-    "components": [
-      {
-        "type": "body",
-        "text": "{{body}}"
-      },
-      {
-        "type": "footer",
-        "text": "ORBI Financial Technologies"
-      }
-    ]
+    "subject": "Your commission payout is ready",
+    "body": "Hello, your commission payout has been successfully processed.\n\nReference: {{refId}}\nAgent: {{actorLabel}}\nAmount: {{currency}} {{amount}}\n\nThank you for partnering with ORBI. This payout is securely logged.",
+    "channel": "email",
+    "messageType": "transactional",
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
   },
   {
     "name": "Transactional_Message",
-    "channel": "sms",
     "language": "en",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nRef: {{refId}}. {{body}}"
-  },
-  {
-    "name": "Transactional_Message",
-    "channel": "email",
-    "language": "en",
-    "messageType": "transactional",
-    "subject": "ORBI notification - {{refId}}",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Ref: {{refId}}. {{body}}"
-  },
-  {
-    "name": "Transactional_Message",
+    "subject": "",
+    "body": "ORBI Transaction Alert 🔔\n\nRef: {{refId}}\n{{body}}",
     "channel": "whatsapp",
-    "language": "en",
-    "components": [
-      {
-        "type": "body",
-        "text": "Ref: {{refId}}. {{body}}"
-      },
-      {
-        "type": "footer",
-        "text": "ORBI Financial Technologies"
-      }
-    ]
-  },
-  {
-    "name": "New_Device_Alert",
-    "channel": "sms",
-    "language": "en",
-    "messageType": "transactional",
-    "body": "Ref: {{refId}}. ORBI Financial Technologies:\n\nSecurity Alert: A new device '{{deviceName}}' has been used to access your account.\n\nIf this was not you, please contact support immediately: +255764258114"
-  },
-  {
-    "name": "New_Device_Alert",
-    "channel": "email",
-    "language": "en",
-    "messageType": "transactional",
-    "subject": "ORBI new device alert",
-    "fromEmail": "ORBI Security <security@orbifinancial.com>",
-    "body": "Ref: {{refId}}. A new device '{{deviceName}}' has been used to access your ORBI account.\n\nIf this was not you, please contact support immediately."
-  },
-  {
-    "name": "New_Device_Alert",
-    "channel": "whatsapp",
-    "language": "en",
-    "components": [
-      {
-        "type": "body",
-        "text": "Security Alert: A new device '{{deviceName}}' has been used to access your account.\n\nIf this was not you, please contact support immediately."
-      },
-      {
-        "type": "footer",
-        "text": "ORBI Financial Technologies"
-      }
-    ]
-  },
-  {
-    "name": "Merchant_Service_Update",
-    "channel": "sms",
-    "language": "en",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nRef: {{refId}}. Merchant update: {{status}} payment of {{currency}} {{amount}} in {{actorLabel}}."
-  },
-  {
-    "name": "Merchant_Service_Update",
-    "channel": "sms",
-    "language": "sw",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nKumb: {{refId}}. Taarifa ya merchant: malipo ya {{currency}} {{amount}} katika {{actorLabel}} yako katika hali ya {{status}}."
-  },
-  {
-    "name": "Merchant_Service_Update",
-    "channel": "push",
-    "language": "en",
-    "messageType": "transactional",
-    "body": "Merchant payment {{status}}: {{currency}} {{amount}} in {{actorLabel}}."
-  },
-  {
-    "name": "Merchant_Service_Update",
-    "channel": "push",
-    "language": "sw",
-    "messageType": "transactional",
-    "body": "Malipo ya merchant {{status}}: {{currency}} {{amount}} katika {{actorLabel}}."
-  },
-  {
-    "name": "Merchant_Service_Update",
-    "channel": "email",
-    "language": "en",
-    "messageType": "transactional",
-    "subject": "ORBI merchant payment update - {{refId}}",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Ref: {{refId}}. Merchant payment update: {{status}} payment of {{currency}} {{amount}} in {{actorLabel}}."
-  },
-  {
-    "name": "Merchant_Service_Update",
-    "channel": "email",
-    "language": "sw",
-    "messageType": "transactional",
-    "subject": "Taarifa ya malipo ya merchant - {{refId}}",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Kumb: {{refId}}. Taarifa ya malipo ya merchant: malipo ya {{currency}} {{amount}} katika {{actorLabel}} yako yapo kwenye hali ya {{status}}."
-  },
-  {
-    "name": "Agent_Cash_Update",
-    "channel": "sms",
-    "language": "en",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nRef: {{refId}}. Agent {{direction}} update: {{status}} amount {{currency}} {{amount}} in {{actorLabel}}."
-  },
-  {
-    "name": "Agent_Cash_Update",
-    "channel": "sms",
-    "language": "sw",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nKumb: {{refId}}. Taarifa ya agent {{direction}}: kiasi cha {{currency}} {{amount}} katika {{actorLabel}} yako kiko kwenye hali ya {{status}}."
-  },
-  {
-    "name": "Agent_Cash_Update",
-    "channel": "push",
-    "language": "en",
-    "messageType": "transactional",
-    "body": "Agent {{direction}} {{status}}: {{currency}} {{amount}} in {{actorLabel}}."
-  },
-  {
-    "name": "Agent_Cash_Update",
-    "channel": "push",
-    "language": "sw",
-    "messageType": "transactional",
-    "body": "Agent {{direction}} {{status}}: {{currency}} {{amount}} katika {{actorLabel}}."
-  },
-  {
-    "name": "Agent_Cash_Update",
-    "channel": "email",
-    "language": "en",
-    "messageType": "transactional",
-    "subject": "ORBI agent cash update - {{refId}}",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Ref: {{refId}}. Agent {{direction}} update: {{status}} amount {{currency}} {{amount}} in {{actorLabel}}."
-  },
-  {
-    "name": "Agent_Cash_Update",
-    "channel": "email",
-    "language": "sw",
-    "messageType": "transactional",
-    "subject": "Taarifa ya fedha ya agent - {{refId}}",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Kumb: {{refId}}. Taarifa ya agent {{direction}}: kiasi cha {{currency}} {{amount}} katika {{actorLabel}} yako kiko kwenye hali ya {{status}}."
-  },
-  {
-    "name": "Merchant_Customer_Payment_Update",
-    "channel": "sms",
-    "language": "en",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nRef: {{refId}}. Your payment of {{currency}} {{amount}} through {{actorLabel}} is {{status}}."
-  },
-  {
-    "name": "Merchant_Customer_Payment_Update",
-    "channel": "sms",
-    "language": "sw",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nKumb: {{refId}}. Malipo yako ya {{currency}} {{amount}} kupitia {{actorLabel}} yako kwenye hali ya {{status}}."
-  },
-  {
-    "name": "Merchant_Customer_Payment_Update",
-    "channel": "push",
-    "language": "en",
-    "messageType": "transactional",
-    "body": "Your payment of {{currency}} {{amount}} through {{actorLabel}} is {{status}}."
-  },
-  {
-    "name": "Merchant_Customer_Payment_Update",
-    "channel": "push",
-    "language": "sw",
-    "messageType": "transactional",
-    "body": "Malipo yako ya {{currency}} {{amount}} kupitia {{actorLabel}} yako kwenye hali ya {{status}}."
-  },
-  {
-    "name": "Merchant_Customer_Payment_Update",
-    "channel": "email",
-    "language": "en",
-    "messageType": "transactional",
-    "subject": "ORBI payment update - {{refId}}",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Ref: {{refId}}. Your payment of {{currency}} {{amount}} through {{actorLabel}} is {{status}}."
-  },
-  {
-    "name": "Merchant_Customer_Payment_Update",
-    "channel": "email",
-    "language": "sw",
-    "messageType": "transactional",
-    "subject": "Taarifa ya malipo ya ORBI - {{refId}}",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Kumb: {{refId}}. Malipo yako ya {{currency}} {{amount}} kupitia {{actorLabel}} yako kwenye hali ya {{status}}."
-  },
-  {
-    "name": "Agent_Customer_Cash_Update",
-    "channel": "sms",
-    "language": "en",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nRef: {{refId}}. Your {{direction}} request of {{currency}} {{amount}} through {{actorLabel}} is {{status}}."
-  },
-  {
-    "name": "Agent_Customer_Cash_Update",
-    "channel": "sms",
-    "language": "sw",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nKumb: {{refId}}. Ombi lako la {{direction}} la {{currency}} {{amount}} kupitia {{actorLabel}} yako kwenye hali ya {{status}}."
-  },
-  {
-    "name": "Agent_Customer_Cash_Update",
-    "channel": "push",
-    "language": "en",
-    "messageType": "transactional",
-    "body": "Your {{direction}} request of {{currency}} {{amount}} through {{actorLabel}} is {{status}}."
-  },
-  {
-    "name": "Agent_Customer_Cash_Update",
-    "channel": "push",
-    "language": "sw",
-    "messageType": "transactional",
-    "body": "Ombi lako la {{direction}} la {{currency}} {{amount}} kupitia {{actorLabel}} yako kwenye hali ya {{status}}."
-  },
-  {
-    "name": "Agent_Customer_Cash_Update",
-    "channel": "email",
-    "language": "en",
-    "messageType": "transactional",
-    "subject": "ORBI cash request update - {{refId}}",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Ref: {{refId}}. Your {{direction}} request of {{currency}} {{amount}} through {{actorLabel}} is {{status}}."
-  },
-  {
-    "name": "Agent_Customer_Cash_Update",
-    "channel": "email",
-    "language": "sw",
-    "messageType": "transactional",
-    "subject": "Taarifa ya ombi la fedha - {{refId}}",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Kumb: {{refId}}. Ombi lako la {{direction}} la {{currency}} {{amount}} kupitia {{actorLabel}} yako kwenye hali ya {{status}}."
+    "messageType": "transactional"
   },
   {
     "name": "Agent_Commission_Paid",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI Agent: Kumb {{refId}}. Kamisheni ya {{currency}} {{amount}} imelipwa kikamilifu kwa {{actorLabel}}.",
     "channel": "sms",
-    "language": "en",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nRef: {{refId}}. Commission paid: {{currency}} {{amount}} has been credited to {{actorLabel}}."
+    "messageType": "transactional"
   },
   {
-    "name": "Agent_Commission_Paid",
-    "channel": "sms",
+    "name": "Agent_Customer_Cash_Update",
     "language": "sw",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nKumb: {{refId}}. Kamisheni imelipwa: {{currency}} {{amount}} imeingizwa kwenye {{actorLabel}}."
-  },
-  {
-    "name": "Agent_Commission_Paid",
+    "subject": "Muamala wa mteja",
+    "body": "Muamala wa mteja wa {{direction}} uko {{status}}: {{currency}} {{amount}}.",
     "channel": "push",
-    "language": "en",
-    "messageType": "transactional",
-    "body": "Commission paid: {{currency}} {{amount}} credited to {{actorLabel}}."
-  },
-  {
-    "name": "Agent_Commission_Paid",
-    "channel": "push",
-    "language": "sw",
-    "messageType": "transactional",
-    "body": "Kamisheni imelipwa: {{currency}} {{amount}} imeingizwa kwenye {{actorLabel}}."
-  },
-  {
-    "name": "Agent_Commission_Paid",
-    "channel": "email",
-    "language": "en",
-    "messageType": "transactional",
-    "subject": "ORBI commission paid - {{refId}}",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Ref: {{refId}}. Commission paid: {{currency}} {{amount}} has been credited to {{actorLabel}}."
-  },
-  {
-    "name": "Agent_Commission_Paid",
-    "channel": "email",
-    "language": "sw",
-    "messageType": "transactional",
-    "subject": "Kamisheni ya ORBI imelipwa - {{refId}}",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Kumb: {{refId}}. Kamisheni imelipwa: {{currency}} {{amount}} imeingizwa kwenye {{actorLabel}}."
-  },
-  {
-    "name": "Service_Customer_Registered",
-    "channel": "sms",
-    "language": "en",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nRef: {{refId}}. {{customerName}} was registered successfully through {{actorLabel}}."
-  },
-  {
-    "name": "Service_Customer_Registered",
-    "channel": "sms",
-    "language": "sw",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nKumb: {{refId}}. {{customerName}} amesajiliwa kwa mafanikio kupitia {{actorLabel}}."
-  },
-  {
-    "name": "Service_Customer_Registered",
-    "channel": "push",
-    "language": "en",
-    "messageType": "transactional",
-    "body": "{{customerName}} was registered successfully through {{actorLabel}}."
-  },
-  {
-    "name": "Service_Customer_Registered",
-    "channel": "push",
-    "language": "sw",
-    "messageType": "transactional",
-    "body": "{{customerName}} amesajiliwa kwa mafanikio kupitia {{actorLabel}}."
-  },
-  {
-    "name": "Service_Customer_Registered",
-    "channel": "email",
-    "language": "en",
-    "messageType": "transactional",
-    "subject": "ORBI service customer registered - {{refId}}",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Ref: {{refId}}. {{customerName}} was registered successfully through {{actorLabel}}."
-  },
-  {
-    "name": "Service_Customer_Registered",
-    "channel": "email",
-    "language": "sw",
-    "messageType": "transactional",
-    "subject": "Mteja wa huduma ya ORBI amesajiliwa - {{refId}}",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Kumb: {{refId}}. {{customerName}} amesajiliwa kwa mafanikio kupitia {{actorLabel}}."
-  },
-  {
-    "name": "Service_Access_Approved",
-    "channel": "sms",
-    "language": "en",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nRef: {{refId}}. Your ORBI service access has been approved. {{actorLabel}} is now enabled."
-  },
-  {
-    "name": "Service_Access_Approved",
-    "channel": "sms",
-    "language": "sw",
-    "messageType": "transactional",
-    "body": "ORBI Financial Technologies:\n\nKumb: {{refId}}. Ufikiaji wako wa huduma za ORBI umeidhinishwa. {{actorLabel}} sasa imewezeshwa."
-  },
-  {
-    "name": "Service_Access_Approved",
-    "channel": "push",
-    "language": "en",
-    "messageType": "transactional",
-    "body": "Your ORBI service access has been approved. {{actorLabel}} is now enabled."
-  },
-  {
-    "name": "Service_Access_Approved",
-    "channel": "push",
-    "language": "sw",
-    "messageType": "transactional",
-    "body": "Ufikiaji wako wa huduma za ORBI umeidhinishwa. {{actorLabel}} sasa imewezeshwa."
-  },
-  {
-    "name": "Service_Access_Approved",
-    "channel": "email",
-    "language": "en",
-    "messageType": "transactional",
-    "subject": "ORBI service access approved - {{refId}}",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Ref: {{refId}}. Your ORBI service access has been approved. {{actorLabel}} is now enabled."
-  },
-  {
-    "name": "Service_Access_Approved",
-    "channel": "email",
-    "language": "sw",
-    "messageType": "transactional",
-    "subject": "Ufikiaji wa huduma ya ORBI umeidhinishwa - {{refId}}",
-    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
-    "body": "Kumb: {{refId}}. Ufikiaji wako wa huduma za ORBI umeidhinishwa. {{actorLabel}} sasa imewezeshwa."
+    "messageType": "transactional"
   }
 ]

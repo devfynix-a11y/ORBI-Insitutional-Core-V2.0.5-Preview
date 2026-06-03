@@ -92,12 +92,25 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
       });
     }
 
-    const status = session.user.user_metadata?.account_status || 'active';
+    const status = String(
+      session.user?.account_status ||
+      session.user?.user_metadata?.account_status ||
+      'active',
+    ).trim().toLowerCase();
     if (status === 'blocked' || status === 'frozen') {
       return res.status(403).json({
         success: false,
         error: 'IDENTITY_LOCKED',
         message: `Your account has been ${String(status).toUpperCase()} by Cluster Governance.`,
+      });
+    }
+
+    if (status !== 'active') {
+      return res.status(403).json({
+        success: false,
+        error: 'ACCOUNT_NOT_ACTIVE',
+        message: 'Confirm your email or phone OTP before accessing ORBI services.',
+        account_status: status,
       });
     }
 

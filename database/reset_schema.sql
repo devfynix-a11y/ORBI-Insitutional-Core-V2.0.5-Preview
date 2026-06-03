@@ -159,14 +159,21 @@ COMMENT ON TABLE public.audit_logs IS 'LEGACY / NON-AUTHORITATIVE. Do not use fo
 CREATE TABLE IF NOT EXISTS public.users (
     id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     full_name TEXT,
-    email TEXT UNIQUE NOT NULL,
+    email TEXT UNIQUE,
     customer_id TEXT UNIQUE NOT NULL, 
     phone TEXT,
     nationality TEXT DEFAULT 'Tanzania',
     address TEXT,
     avatar_url TEXT,
     currency TEXT DEFAULT 'TZS',
-    account_status TEXT DEFAULT 'active',
+    account_status TEXT DEFAULT 'pending_confirmation',
+    status_reason TEXT,
+    status_reason_code TEXT,
+    status_changed_at TIMESTAMP WITH TIME ZONE,
+    status_changed_by TEXT,
+    auth_confirmed_at TIMESTAMP WITH TIME ZONE,
+    activation_expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '24 hours'),
+    activation_method TEXT,
     registry_type TEXT DEFAULT 'CONSUMER',
     role TEXT DEFAULT 'USER',
     app_origin TEXT DEFAULT 'OBI_INSTITUTIONAL_CORE_V25',
@@ -196,6 +203,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_phone_unique
 ON public.users (phone)
 WHERE phone IS NOT NULL;
 
+CREATE INDEX IF NOT EXISTS idx_users_pending_activation_expiry
+ON public.users (activation_expires_at)
+WHERE account_status IN ('pending_confirmation', 'unconfirmed', 'inactive');
+
+CREATE INDEX IF NOT EXISTS idx_users_account_status_reason
+ON public.users(account_status, status_reason_code, status_changed_at DESC);
+
 -- Compatibility View for user_profiles
 CREATE OR REPLACE VIEW public.user_profiles AS SELECT * FROM public.users;
 
@@ -204,7 +218,14 @@ CREATE TABLE IF NOT EXISTS public.staff (
     full_name TEXT NOT NULL,
     email TEXT UNIQUE NOT NULL,
     role TEXT NOT NULL DEFAULT 'USER',
-    account_status TEXT DEFAULT 'pending',
+    account_status TEXT DEFAULT 'pending_confirmation',
+    status_reason TEXT,
+    status_reason_code TEXT,
+    status_changed_at TIMESTAMP WITH TIME ZONE,
+    status_changed_by TEXT,
+    auth_confirmed_at TIMESTAMP WITH TIME ZONE,
+    activation_expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '24 hours'),
+    activation_method TEXT,
     customer_id TEXT UNIQUE NOT NULL,
     phone TEXT,
     avatar_url TEXT,
@@ -227,6 +248,41 @@ CREATE TABLE IF NOT EXISTS public.staff (
 CREATE UNIQUE INDEX IF NOT EXISTS staff_phone_unique
 ON public.staff (phone)
 WHERE phone IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_staff_pending_activation_expiry
+ON public.staff (activation_expires_at)
+WHERE account_status IN ('pending_confirmation', 'unconfirmed', 'inactive');
+
+CREATE INDEX IF NOT EXISTS idx_staff_account_status_reason
+ON public.staff(account_status, status_reason_code, status_changed_at DESC);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='users' AND column_name='status_reason') THEN
+        ALTER TABLE public.users ADD COLUMN status_reason TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='users' AND column_name='status_reason_code') THEN
+        ALTER TABLE public.users ADD COLUMN status_reason_code TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='users' AND column_name='status_changed_at') THEN
+        ALTER TABLE public.users ADD COLUMN status_changed_at TIMESTAMP WITH TIME ZONE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='users' AND column_name='status_changed_by') THEN
+        ALTER TABLE public.users ADD COLUMN status_changed_by TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='staff' AND column_name='status_reason') THEN
+        ALTER TABLE public.staff ADD COLUMN status_reason TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='staff' AND column_name='status_reason_code') THEN
+        ALTER TABLE public.staff ADD COLUMN status_reason_code TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='staff' AND column_name='status_changed_at') THEN
+        ALTER TABLE public.staff ADD COLUMN status_changed_at TIMESTAMP WITH TIME ZONE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='staff' AND column_name='status_changed_by') THEN
+        ALTER TABLE public.staff ADD COLUMN status_changed_by TEXT;
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS public.wallets (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(), 
@@ -1108,6 +1164,27 @@ CREATE TABLE IF NOT EXISTS public.audit_trail (
     action TEXT NOT NULL, 
     metadata JSONB, 
     signature TEXT
+);
+
+CREATE TABLE IF NOT EXISTS public.operator_alerts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'INFO' CHECK (severity IN ('INFO', 'WARNING', 'HIGH', 'CRITICAL')),
+    event_code TEXT NOT NULL,
+    target_roles TEXT[] DEFAULT ARRAY['SUPER_ADMIN', 'ADMIN', 'RISK_OFFICER', 'AUDIT']::TEXT[],
+    actor_id TEXT,
+    transaction_id TEXT,
+    resource_type TEXT,
+    resource_id TEXT,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    actions JSONB DEFAULT '[]'::jsonb,
+    status TEXT NOT NULL DEFAULT 'UNREAD' CHECK (status IN ('UNREAD', 'READ', 'RESOLVED')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    read_at TIMESTAMP WITH TIME ZONE,
+    resolved_at TIMESTAMP WITH TIME ZONE,
+    resolved_by TEXT,
+    resolution_note TEXT
 );
 
 CREATE TABLE IF NOT EXISTS public.provider_anomalies (
@@ -4453,6 +4530,7 @@ BEGIN
     ALTER TABLE public.support_tickets ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.staff_issues ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.audit_trail ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.operator_alerts ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.approval_requests ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.legal_holds ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.infra_system_matrix ENABLE ROW LEVEL SECURITY;
@@ -4540,6 +4618,12 @@ CREATE POLICY "Audit WORM Write" ON public.audit_trail FOR INSERT WITH CHECK (au
 -- SYSTEM BYPASS: Ensure service_role (Admin Client) can always manage audit trails
 DROP POLICY IF EXISTS "System bypass audit trail" ON public.audit_trail;
 CREATE POLICY "System bypass audit trail" ON public.audit_trail FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Operator alert read" ON public.operator_alerts;
+CREATE POLICY "Operator alert read" ON public.operator_alerts FOR SELECT USING ((SELECT public.get_auth_role()) IN ('SUPER_ADMIN', 'ADMIN', 'AUDIT', 'RISK_OFFICER', 'FRAUD', 'IT', 'CUSTOMER_CARE'));
+
+DROP POLICY IF EXISTS "Operator alert system write" ON public.operator_alerts;
+CREATE POLICY "Operator alert system write" ON public.operator_alerts FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Users create transactions" ON public.transactions;
 CREATE POLICY "Users create transactions" ON public.transactions FOR INSERT WITH CHECK (auth.uid() = user_id);
@@ -4860,6 +4944,9 @@ CREATE INDEX IF NOT EXISTS idx_transaction_events_transaction_created ON public.
 CREATE INDEX IF NOT EXISTS idx_audit_trail_transaction_timestamp ON public.audit_trail(transaction_id, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_trail_event_timestamp ON public.audit_trail(event_type, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_trail_actor_timestamp ON public.audit_trail(actor_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_operator_alerts_status_created ON public.operator_alerts(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_operator_alerts_event_created ON public.operator_alerts(event_code, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_operator_alerts_transaction_created ON public.operator_alerts(transaction_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_institutional_payment_accounts_role ON public.institutional_payment_accounts(role, currency, status);
 CREATE INDEX IF NOT EXISTS idx_institutional_payment_accounts_provider ON public.institutional_payment_accounts(provider_id);
 CREATE INDEX IF NOT EXISTS idx_external_fund_movements_user_date ON public.external_fund_movements(user_id, created_at);
@@ -4872,6 +4959,8 @@ CREATE INDEX IF NOT EXISTS idx_offline_transaction_sessions_request_id ON public
 CREATE INDEX IF NOT EXISTS idx_offline_transaction_sessions_status ON public.offline_transaction_sessions(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_outbound_sms_request_id ON public.outbound_sms_messages(request_id);
 CREATE INDEX IF NOT EXISTS idx_wallets_user ON public.wallets(user_id);
+CREATE INDEX IF NOT EXISTS idx_wallets_lock_reason ON public.wallets(status, is_locked, locked_at DESC);
+CREATE INDEX IF NOT EXISTS idx_platform_vaults_lock_reason ON public.platform_vaults(status, is_locked, locked_at DESC);
 CREATE INDEX IF NOT EXISTS idx_goals_user ON public.goals(user_id);
 CREATE INDEX IF NOT EXISTS idx_external_fund_movements_user ON public.external_fund_movements(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_external_fund_movements_provider ON public.external_fund_movements(provider_id, status);

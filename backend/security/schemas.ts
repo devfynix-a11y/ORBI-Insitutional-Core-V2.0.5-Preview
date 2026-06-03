@@ -82,6 +82,7 @@ export const WalletLockSchema = z.object({
 });
 
 export const WalletUnlockSchema = z.object({
+    reason: z.string().trim().max(255).optional(),
     pin: z.string().min(4).max(8).optional(),
     force: z.boolean().optional()
 });

@@ -30,6 +30,7 @@ import { BruteForceService } from '../backend/src/services/bruteForce.service.js
 export class AuthService {
     private security = new SecurityService();
     private bruteForce = new BruteForceService();
+    private readonly activationTtlMs = 24 * 60 * 60 * 1000;
     private readonly allowLocalSessionFallback =
         process.env.NODE_ENV !== 'production' &&
         process.env.ORBI_ALLOW_LOCAL_SESSION_FALLBACK === 'true';
@@ -220,6 +221,207 @@ export class AuthService {
 
     public describePermissionsForRole(role: UserRole = 'USER', status: string = 'pending'): Permission[] {
         return this.getPermissionsForRole(role, status);
+    }
+
+    private isActiveStatus(status?: string | null): boolean {
+        return String(status || '').trim().toLowerCase() === 'active';
+    }
+
+    private isConfirmationPendingStatus(status?: string | null): boolean {
+        return ['pending', 'pending_confirmation', 'unconfirmed', 'inactive'].includes(
+            String(status || '').trim().toLowerCase(),
+        );
+    }
+
+    private maskContact(contact?: string | null): string {
+        const value = String(contact || '').trim();
+        if (!value) return '';
+        if (value.includes('@')) {
+            const [name, domain] = value.split('@');
+            return `${name.slice(0, 2)}***@${domain}`;
+        }
+        return value.length <= 6 ? '***' : `${value.slice(0, 4)}***${value.slice(-3)}`;
+    }
+
+    private normalizePhoneIdentifier(identifier: string): string {
+        const value = String(identifier || '').trim();
+        if (!value || value.includes('@')) return value;
+        try {
+            const phoneNumber = parsePhoneNumber(value, 'TZ');
+            if (phoneNumber && phoneNumber.isValid()) return phoneNumber.format('E.164');
+        } catch (e) {
+            // Fall through to compact E.164-style normalization.
+        }
+        return value.startsWith('+') ? value : '+' + value.replace(/\s/g, '');
+    }
+
+    private async resolveIdentityForChallenge(identifier: string): Promise<{
+        userId: string;
+        table: 'users' | 'staff';
+        email?: string | null;
+        phone?: string | null;
+        fullName?: string | null;
+        language?: string | null;
+        status?: string | null;
+        registryType?: string | null;
+        customerId?: string | null;
+    } | null> {
+        const sb = getAdminSupabase();
+        if (!sb) return null;
+
+        const rawIdentifier = String(identifier || '').trim();
+        if (!rawIdentifier) return null;
+        const normalizedIdentifier = this.normalizePhoneIdentifier(rawIdentifier);
+        const isEmail = rawIdentifier.includes('@');
+        const filters: Array<{ column: string; operator: 'eq'; value: unknown }> = isEmail
+            ? [{ column: 'email', operator: 'eq', value: rawIdentifier.toLowerCase() }]
+            : [
+                { column: 'phone', operator: 'eq', value: normalizedIdentifier },
+                { column: 'customer_id', operator: 'eq', value: rawIdentifier },
+            ];
+
+        for (const table of ['users', 'staff'] as const) {
+            const { data } = await sb
+                .from(table)
+                .select('id, full_name, email, phone, language, account_status, registry_type, customer_id')
+                .or(buildPostgrestOrFilter(filters))
+                .maybeSingle();
+            if (data) {
+                return {
+                    userId: data.id,
+                    table,
+                    email: data.email,
+                    phone: data.phone,
+                    fullName: data.full_name,
+                    language: data.language,
+                    status: data.account_status,
+                    registryType: data.registry_type || (table === 'staff' ? 'STAFF' : 'CONSUMER'),
+                    customerId: data.customer_id,
+                };
+            }
+        }
+
+        return null;
+    }
+
+    private preferredChallengeContact(identity: { email?: string | null; phone?: string | null }, fallback?: string): { contact: string; type: 'sms' | 'email' } | null {
+        const phone = String(identity.phone || '').trim();
+        const email = String(identity.email || '').trim();
+        const fallbackValue = String(fallback || '').trim();
+        if (phone) return { contact: phone, type: 'sms' };
+        if (email) return { contact: email, type: 'email' };
+        if (fallbackValue) return { contact: fallbackValue, type: fallbackValue.includes('@') ? 'email' : 'sms' };
+        return null;
+    }
+
+    private normalizeActivationContact(contact: string): { contact: string; type: 'sms' | 'email'; column: 'phone' | 'email' } {
+        const value = String(contact || '').trim();
+        if (!value) throw new Error('MISSING_CONTACT');
+        if (value.includes('@')) {
+            return { contact: value.toLowerCase(), type: 'email', column: 'email' };
+        }
+        return { contact: this.normalizePhoneIdentifier(value), type: 'sms', column: 'phone' };
+    }
+
+    private async assertActivationContactAvailable(contact: string, excludeUserId: string) {
+        const sb = getAdminSupabase();
+        if (!sb) throw new Error('DB_OFFLINE');
+        const normalized = this.normalizeActivationContact(contact);
+        for (const table of ['users', 'staff'] as const) {
+            const { data, error } = await sb
+                .from(table)
+                .select('id')
+                .eq(normalized.column, normalized.contact)
+                .neq('id', excludeUserId)
+                .maybeSingle();
+            if (error) throw error;
+            if (data) throw new Error(`${normalized.column === 'email' ? 'EMAIL' : 'PHONE'}_ALREADY_IN_USE`);
+        }
+        return normalized;
+    }
+
+    private async issueAccountActivationChallenge(
+        identity: {
+            userId: string;
+            table: 'users' | 'staff';
+            email?: string | null;
+            phone?: string | null;
+            fullName?: string | null;
+            language?: string | null;
+            status?: string | null;
+            registryType?: string | null;
+            customerId?: string | null;
+        },
+        fallback?: string,
+        replacementContact?: string,
+    ) {
+        const sb = getAdminSupabase();
+        if (!sb) throw new Error('DB_OFFLINE');
+
+        let forcedContact: { contact: string; type: 'sms' | 'email'; column: 'phone' | 'email' } | null = null;
+        if (replacementContact && replacementContact.trim()) {
+            forcedContact = await this.assertActivationContactAvailable(replacementContact, identity.userId);
+            await sb.from(identity.table).update({
+                [forcedContact.column]: forcedContact.contact,
+            }).eq('id', identity.userId);
+            await sb.auth.admin.updateUserById(identity.userId, {
+                ...(forcedContact.column === 'email' ? { email: forcedContact.contact, email_confirm: false } : {}),
+                ...(forcedContact.column === 'phone' ? { phone: forcedContact.contact, phone_confirm: false } : {}),
+                user_metadata: {
+                    email: forcedContact.column === 'email' ? forcedContact.contact : identity.email,
+                    phone: forcedContact.column === 'phone' ? forcedContact.contact : identity.phone,
+                },
+            });
+            if (forcedContact.column === 'email') identity.email = forcedContact.contact;
+            if (forcedContact.column === 'phone') identity.phone = forcedContact.contact;
+        }
+
+        const challengeContact = forcedContact || this.preferredChallengeContact(identity, fallback);
+        if (!challengeContact) return { success: false, error: 'NO_CONTACT_AVAILABLE' };
+
+        const result = await OTPService.generateAndSend(
+            identity.userId,
+            challengeContact.contact,
+            'ACCOUNT_ACTIVATION',
+            challengeContact.type,
+            'ORBI Account Activation',
+        );
+
+        return {
+            success: true,
+            confirmationRequired: true,
+            requestId: result.requestId,
+            deliveryType: result.deliveryType,
+            deliveryContact: this.maskContact(result.deliveryContact || challengeContact.contact),
+            expiresInSeconds: 300,
+        };
+    }
+
+    async cleanupExpiredUnconfirmedAccounts() {
+        const sb = getAdminSupabase();
+        if (!sb) return { terminated: 0 };
+
+        const now = new Date().toISOString();
+        let terminated = 0;
+
+        for (const table of ['users', 'staff'] as const) {
+            const { data } = await sb
+                .from(table)
+                .select('id, account_status, created_at, activation_expires_at')
+                .in('account_status', ['pending_confirmation', 'unconfirmed', 'inactive'])
+                .not('activation_expires_at', 'is', null)
+                .lt('activation_expires_at', now);
+
+            for (const row of data || []) {
+                const { error } = await sb.auth.admin.deleteUser(row.id);
+                if (!error) {
+                    terminated += 1;
+                    await this.security.logActivity(row.id, 'UNCONFIRMED_ACCOUNT_TERMINATED', 'success', `Expired ${table} identity removed after activation window`);
+                }
+            }
+        }
+
+        return { terminated };
     }
 
     private async resolveNodeStatus(
@@ -443,6 +645,7 @@ export class AuthService {
     async login(e: string, p: string, metadata?: { fingerprint?: string, ip?: string, userAgent?: string }) { 
         const sb = getSupabase();
         if (!sb) return { error: { message: "ORBI Cluster Offline" } };
+        await this.cleanupExpiredUnconfirmedAccounts();
         
         // Lookup user ID for brute force protection
         let userId = null;
@@ -482,6 +685,17 @@ export class AuthService {
                 }
 
                 const mapped = await this.mapSession(res.data.session);
+
+                if (!this.isActiveStatus(mapped.user.account_status)) {
+                    await sb.auth.signOut().catch(() => {});
+                    return {
+                        error: {
+                            message: 'ACCOUNT_NOT_ACTIVATED: Confirm your email or phone OTP before accessing ORBI services.',
+                            code: 'ACCOUNT_NOT_ACTIVATED',
+                            account_status: mapped.user.account_status,
+                        },
+                    };
+                }
                 
                 // Banking Security: Anomaly Detection & Session Tracking
                 if (metadata?.fingerprint && metadata?.ip) {
@@ -782,6 +996,7 @@ export class AuthService {
         const sb = getSupabase();
         if (sb) {
             try {
+                await this.cleanupExpiredUnconfirmedAccounts();
                 const normalizedCurrency = typeof m?.currency === 'string'
                     ? m.currency.trim().toUpperCase()
                     : '';
@@ -844,6 +1059,45 @@ export class AuthService {
                     }
                 }
 
+                const signupIdentifiers = [
+                    ...(e && typeof e === 'string' && e.trim() ? [e.trim()] : []),
+                    ...(formattedPhone ? [formattedPhone] : []),
+                ];
+                for (const identifier of signupIdentifiers) {
+                    const existingIdentity = await this.resolveIdentityForChallenge(identifier);
+                    if (!existingIdentity) continue;
+                    if (this.isActiveStatus(existingIdentity.status)) {
+                        return { data: null, error: { message: "ACCOUNT_ALREADY_EXISTS: This email or phone is already linked to an active ORBI account." } };
+                    }
+                    if (!this.isConfirmationPendingStatus(existingIdentity.status)) {
+                        return { data: null, error: { message: `ACCOUNT_NOT_CONFIRMABLE: Current status is ${existingIdentity.status || 'unknown'}.` } };
+                    }
+
+                    const activationChallenge = await this.issueAccountActivationChallenge(
+                        existingIdentity,
+                        identifier,
+                    );
+                    await this.security.logActivity(existingIdentity.userId, 'ACCOUNT_ACTIVATION_RESENT_FOR_EXISTING_PENDING_IDENTITY', 'success', 'Duplicate signup detected and routed to activation');
+                    return {
+                        data: {
+                            user: {
+                                id: existingIdentity.userId,
+                                email: existingIdentity.email,
+                                phone: existingIdentity.phone,
+                                full_name: existingIdentity.fullName,
+                                registry_type: existingIdentity.registryType,
+                                account_status: existingIdentity.status,
+                                existingPendingActivation: true,
+                                activation: activationChallenge,
+                            },
+                            session: null,
+                            existingPendingActivation: true,
+                            activation: activationChallenge,
+                        },
+                        error: null,
+                    };
+                }
+
                 // Enforce single phone number across all identities
                 if (formattedPhone) {
                     const adminSb = getAdminSupabase();
@@ -878,13 +1132,17 @@ export class AuthService {
                 const nationality = m?.nationality || 'Tanzania';
                 const language = m?.language || (nationality === 'Tanzania' ? 'sw' : 'en');
 
+                const activationExpiresAt = new Date(Date.now() + this.activationTtlMs).toISOString();
+                const accountStatus = 'pending_confirmation';
                 const metadata = { 
                     ...m, 
                     phone: formattedPhone, 
                     customer_id: customerId, 
                     currency: normalizedCurrency,
                     language: language,
-                    account_status: 'pending',
+                    account_status: accountStatus,
+                    auth_confirmed_at: null,
+                    activation_expires_at: activationExpiresAt,
                     role,
                     registry_type: registryType
                 };
@@ -932,7 +1190,9 @@ export class AuthService {
                         nationality: nationality,
                         currency: normalizedCurrency,
                         language: language,
-                        account_status: 'active',
+                        account_status: accountStatus,
+                        auth_confirmed_at: null,
+                        activation_expires_at: activationExpiresAt,
                         registry_type: registryType,
                         app_origin: origin
                     };
@@ -956,20 +1216,29 @@ export class AuthService {
                         return { data: null, error: profileError };
                     }
 
-                    console.info(`[AuthService] Profile created. Triggering provisioning...`);
-                    const provisionResult = await ProvisioningService.provisionUser(res.data.user.id, m?.full_name || 'Customer', customerId);
-                    if (provisionResult.status === 'failed') {
-                        console.error(`[AuthService] Provisioning failed for user ${res.data.user.id}:`, provisionResult.error);
-                    } else {
-                        console.info(`[AuthService] Provisioning successful for user ${res.data.user.id}`);
+                    const activationContact = this.preferredChallengeContact(
+                        { email: profileData.email, phone: formattedPhone },
+                        e || formattedPhone,
+                    );
+                    let activationChallenge: any = null;
+                    if (activationContact) {
+                        activationChallenge = await OTPService.generateAndSend(
+                            res.data.user.id,
+                            activationContact.contact,
+                            'ACCOUNT_ACTIVATION',
+                            activationContact.type,
+                            'ORBI Account Activation',
+                        );
                     }
-                    
-                    const walletService = new WalletService();
-                    const wallets = await walletService.fetchForUser(res.data.user.id);
-                    (res.data.user as any).wallets = wallets;
 
-                    console.info(`[AuthService] Sending welcome message...`);
-                    await Messaging.sendWelcomeMessage(res.data.user, wallets);
+                    await this.security.logActivity(res.data.user.id, 'ACCOUNT_CREATED_PENDING_CONFIRMATION', 'success', `Created ${registryType.toLowerCase()} identity pending OTP activation`);
+                    (res.data.user as any).activation = {
+                        required: true,
+                        expires_at: activationExpiresAt,
+                        requestId: activationChallenge?.requestId,
+                        deliveryType: activationChallenge?.deliveryType,
+                        deliveryContact: this.maskContact(activationChallenge?.deliveryContact || activationContact?.contact),
+                    };
                 }
 
                 if (res.data?.session) {
@@ -983,6 +1252,81 @@ export class AuthService {
             }
         }
         return { error: { message: "Cloud Node Offline" } };
+    }
+
+    async initiateAccountConfirmation(identifier: string, replacementContact?: string) {
+        await this.cleanupExpiredUnconfirmedAccounts();
+        const identity = await this.resolveIdentityForChallenge(identifier);
+        if (!identity) return { success: true, confirmationRequired: true };
+        if (this.isActiveStatus(identity.status)) {
+            return { success: true, confirmationRequired: false, status: 'active' };
+        }
+        if (!this.isConfirmationPendingStatus(identity.status)) {
+            return { success: false, error: `ACCOUNT_NOT_CONFIRMABLE: Current status is ${identity.status || 'unknown'}.` };
+        }
+
+        return this.issueAccountActivationChallenge(identity, identifier, replacementContact);
+    }
+
+    async confirmAccount(identifier: string, requestId: string, code: string) {
+        await this.cleanupExpiredUnconfirmedAccounts();
+        const identity = await this.resolveIdentityForChallenge(identifier);
+        if (!identity) return { success: false, error: 'IDENTITY_NOT_FOUND' };
+        if (this.isActiveStatus(identity.status)) return { success: true, status: 'active', alreadyActive: true };
+        if (!this.isConfirmationPendingStatus(identity.status)) {
+            return { success: false, error: `ACCOUNT_NOT_CONFIRMABLE: Current status is ${identity.status || 'unknown'}.` };
+        }
+
+        const valid = await OTPService.verify(requestId, code, identity.userId);
+        if (!valid) return { success: false, error: 'INVALID_OTP' };
+
+        const sb = getAdminSupabase();
+        if (!sb) return { success: false, error: 'DB_OFFLINE' };
+
+        const activatedAt = new Date().toISOString();
+        await sb.from(identity.table).update({
+            account_status: 'active',
+            auth_confirmed_at: activatedAt,
+            activation_method: identity.phone ? 'sms_email_otp' : 'email_otp',
+            activation_expires_at: null,
+        }).eq('id', identity.userId);
+
+        const { data: authData } = await sb.auth.admin.getUserById(identity.userId);
+        await sb.auth.admin.updateUserById(identity.userId, {
+            email_confirm: Boolean(authData.user?.email || identity.email),
+            phone_confirm: Boolean(authData.user?.phone || identity.phone),
+            user_metadata: {
+                ...(authData.user?.user_metadata || {}),
+                account_status: 'active',
+                auth_confirmed_at: activatedAt,
+                activation_method: identity.phone ? 'sms_email_otp' : 'email_otp',
+            },
+        });
+
+        const provisionResult = await ProvisioningService.provisionUser(
+            identity.userId,
+            identity.fullName || 'Customer',
+            identity.customerId || undefined,
+        );
+        if (provisionResult.status === 'failed') {
+            console.error(`[AuthService] Activation provisioning failed for user ${identity.userId}:`, provisionResult.error);
+        }
+
+        const walletService = new WalletService();
+        const wallets = await walletService.fetchForUser(identity.userId);
+        await Messaging.sendWelcomeMessage({
+            id: identity.userId,
+            email: identity.email,
+            phone: identity.phone,
+            user_metadata: {
+                full_name: identity.fullName,
+                language: identity.language,
+                registry_type: identity.registryType,
+            },
+        }, wallets);
+
+        await this.security.logActivity(identity.userId, 'ACCOUNT_ACTIVATED', 'success', 'Identity confirmed by OTP and activated');
+        return { success: true, status: 'active', provisioned: provisionResult.status !== 'failed' };
     }
 
     async generateSessionForUser(userId: string): Promise<Session | null> {
@@ -1136,8 +1480,26 @@ export class AuthService {
         return { data: null, error: new Error("Cloud synchronization required.") };
     }
 
-    async completePasswordReset(password: string) {
-        // Wrapper for updatePassword to provide explicit semantics for password reset flow
+    async completePasswordReset(password: string, identifier?: string, requestId?: string, code?: string) {
+        if (identifier && requestId && code) {
+            const identity = await this.resolveIdentityForChallenge(identifier);
+            if (!identity) return { data: null, error: new Error('IDENTITY_NOT_FOUND') };
+            const valid = await OTPService.verify(requestId, code, identity.userId);
+            if (!valid) return { data: null, error: new Error('INVALID_OTP') };
+            const sb = getAdminSupabase();
+            if (!sb) return { data: null, error: new Error('DB_OFFLINE') };
+            const result = await sb.auth.admin.updateUserById(identity.userId, { password });
+            if (!result.error) {
+                try {
+                    await sb.from('user_sessions').update({ is_revoked: true }).eq('user_id', identity.userId);
+                } catch (e) {
+                    console.warn('[AuthService] Password reset session revocation failed:', e);
+                }
+                await this.security.logActivity(identity.userId, 'PASSWORD_RESET_COMPLETED', 'success', 'User completed OTP-confirmed password reset');
+            }
+            return result;
+        }
+
         const result = await this.updatePassword(password);
         if (!result.error) {
             await this.security.logActivity('system', 'PASSWORD_RESET_COMPLETED', 'success', 'User completed password reset');
@@ -1146,9 +1508,33 @@ export class AuthService {
     }
 
     async initiatePasswordReset(identifier: string) {
-        const sb = getSupabase();
-        if (sb) return await sb.auth.resetPasswordForEmail(identifier);
-        return { data: null, error: new Error("Cloud synchronization required.") };
+        await this.cleanupExpiredUnconfirmedAccounts();
+        const identity = await this.resolveIdentityForChallenge(identifier);
+        if (!identity) {
+            return { data: { requestId: null, deliveryContact: null }, error: null };
+        }
+        if (!this.isActiveStatus(identity.status)) {
+            return { data: null, error: new Error('ACCOUNT_NOT_ACTIVE: Confirm your account before resetting the password.') };
+        }
+        const challengeContact = this.preferredChallengeContact(identity, identifier);
+        if (!challengeContact) return { data: null, error: new Error('NO_CONTACT_AVAILABLE') };
+
+        const result = await OTPService.generateAndSend(
+            identity.userId,
+            challengeContact.contact,
+            'PASSWORD_RESET',
+            challengeContact.type,
+            'ORBI Password Reset',
+        );
+        return {
+            data: {
+                requestId: result.requestId,
+                deliveryType: result.deliveryType,
+                deliveryContact: this.maskContact(result.deliveryContact || challengeContact.contact),
+                expiresInSeconds: 300,
+            },
+            error: null,
+        };
     }
 
     async deleteAccount() { 

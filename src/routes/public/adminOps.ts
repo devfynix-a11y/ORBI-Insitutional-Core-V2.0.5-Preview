@@ -58,6 +58,13 @@ const TemplateCatalogQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional(),
 });
 
+const IncompleteRegistrationQuerySchema = z.object({
+  registryType: z.string().trim().optional(),
+  status: z.string().trim().optional(),
+  includeExpired: z.coerce.boolean().optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});
+
 const TemplatePreviewSchema = z.object({
   templateName: z.string().min(1),
   variables: z.record(z.string(), z.unknown()).optional(),
@@ -1075,6 +1082,105 @@ export const registerAdminOpsRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
+  v1.get('/admin/users/incomplete-registrations', authenticate, async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, [...USER_SEARCH_ROLES])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const query = IncompleteRegistrationQuerySchema.parse(req.query);
+      const sb = getAdminSupabase() || getSupabase();
+      if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+
+      const statuses = query.status
+        ? [query.status.trim().toLowerCase()]
+        : ['pending_confirmation', 'unconfirmed', 'inactive'];
+      const limit = query.limit || 100;
+      const nowMs = Date.now();
+      const selectColumns = [
+        'id',
+        'full_name',
+        'customer_id',
+        'email',
+        'phone',
+        'registry_type',
+        'role',
+        'account_status',
+        'created_at',
+        'activation_expires_at',
+        'activation_method',
+        'auth_confirmed_at',
+      ].join(', ');
+
+      const fetchTable = async (table: 'users' | 'staff') => {
+        let dbQuery = sb
+          .from(table)
+          .select(selectColumns)
+          .in('account_status', statuses)
+          .is('auth_confirmed_at', null)
+          .order('activation_expires_at', { ascending: true, nullsFirst: false })
+          .limit(limit);
+
+        if (!query.includeExpired) {
+          dbQuery = dbQuery.or(`activation_expires_at.is.null,activation_expires_at.gte.${new Date(nowMs).toISOString()}`);
+        }
+
+        const { data, error } = await dbQuery;
+        if (error) throw error;
+        return (data || []).map((row: any) => {
+          const expiresAtMs = row.activation_expires_at ? new Date(row.activation_expires_at).getTime() : null;
+          const hoursRemaining = expiresAtMs ? Math.max(0, Math.ceil((expiresAtMs - nowMs) / (60 * 60 * 1000))) : null;
+          return {
+            id: row.id,
+            sourceTable: table,
+            registryType: row.registry_type || (table === 'staff' ? 'STAFF' : 'CONSUMER'),
+            role: row.role || (table === 'staff' ? 'STAFF' : 'USER'),
+            status: row.account_status,
+            fullName: row.full_name,
+            customerId: row.customer_id,
+            email: row.email,
+            phone: row.phone,
+            activationMethod: row.activation_method,
+            createdAt: row.created_at,
+            activationExpiresAt: row.activation_expires_at,
+            hoursRemaining,
+            expired: expiresAtMs ? expiresAtMs < nowMs : false,
+          };
+        });
+      };
+
+      const rows = [
+        ...(await fetchTable('users')),
+        ...(await fetchTable('staff')),
+      ]
+        .filter((row) => !query.registryType || row.registryType.toUpperCase() === query.registryType!.toUpperCase())
+        .sort((a, b) => {
+          const aTime = a.activationExpiresAt ? new Date(a.activationExpiresAt).getTime() : Number.MAX_SAFE_INTEGER;
+          const bTime = b.activationExpiresAt ? new Date(b.activationExpiresAt).getTime() : Number.MAX_SAFE_INTEGER;
+          return aTime - bTime;
+        })
+        .slice(0, limit);
+
+      await Audit.log('ADMIN', session.sub, 'INCOMPLETE_REGISTRATIONS_VIEWED', {
+        count: rows.length,
+        registryType: query.registryType || 'ALL',
+        includeExpired: query.includeExpired === true,
+      });
+
+      res.json({
+        success: true,
+        data: {
+          windowHours: 24,
+          count: rows.length,
+          rows,
+        },
+      });
+    } catch (e: any) {
+      res.status(400).json({ success: false, error: e.message });
+    }
+  });
+
   v1.get('/admin/users/search', authenticate, async (req, res) => {
     const session = (req as any).session;
     if (!sessionHasAnyRole(session, [...USER_SEARCH_ROLES])) {
@@ -1088,7 +1194,7 @@ export const registerAdminOpsRoutes = (v1: Router, deps: Deps) => {
 
       let dbQuery = sb
         .from('users')
-        .select('id, full_name, avatar_url, customer_id, phone, email, registry_type, role, account_status, kyc_status, created_at')
+        .select('id, full_name, avatar_url, customer_id, phone, email, registry_type, role, account_status, status_reason, status_reason_code, status_changed_at, status_changed_by, kyc_status, created_at')
         .order('created_at', { ascending: false })
         .limit(query.limit || 25);
 

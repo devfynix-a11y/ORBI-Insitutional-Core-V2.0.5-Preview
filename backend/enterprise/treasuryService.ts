@@ -319,8 +319,9 @@ export class TreasuryService {
                 { 
                     sms: true,
                     email: true,
-                    template: 'Treasury_Withdrawal_Approved',
+                    template: 'Transactional_Message',
                     variables: {
+                        body,
                         amount: amount.toLocaleString(),
                         currency: tx.currency
                     }

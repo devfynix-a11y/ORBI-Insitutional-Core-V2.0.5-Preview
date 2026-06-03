@@ -399,24 +399,66 @@ export const registerAuthUserRoutes = (v1: Router, deps: Deps) => {
       const result = await LogicCore.initiatePasswordReset(identifier);
       if (result.error) return res.status(400).json({ success: false, error: result.error.message });
 
-      res.json({ success: true, message: 'Password reset email sent.' });
+      res.json({
+        success: true,
+        message: 'If the identity exists, a password reset OTP has been sent.',
+        data: result.data,
+      });
     } catch (e: any) {
       authRouteLogger.error('auth.password_reset_initiate_failed', buildRequestLogContext(req), e);
       res.status(500).json({ success: false, error: 'INTERNAL_SERVER_ERROR', message: e.message });
     }
   });
 
-  v1.post('/auth/password/reset/complete', authenticate, async (req, res) => {
+  v1.post('/auth/password/reset/complete', async (req, res) => {
     try {
-      const { password } = req.body;
-      if (!password) return res.status(400).json({ success: false, error: 'MISSING_PASSWORD' });
+      const { identifier, requestId, code, password } = req.body;
+      if (!identifier || !requestId || !code || !password) {
+        return res.status(400).json({ success: false, error: 'MISSING_FIELDS' });
+      }
 
-      const result = await LogicCore.completePasswordReset(password);
+      const result = await LogicCore.completePasswordResetWithOtp(identifier, requestId, code, password);
       if (result.error) return res.status(400).json({ success: false, error: result.error.message });
 
       res.json({ success: true, message: 'Password updated successfully.' });
     } catch (e: any) {
       authRouteLogger.error('auth.password_reset_complete_failed', buildRequestLogContext(req), e);
+      res.status(500).json({ success: false, error: 'INTERNAL_SERVER_ERROR', message: e.message });
+    }
+  });
+
+  v1.post('/auth/account/confirmation/initiate', async (req, res) => {
+    try {
+      const { identifier, contact, replacementContact, newContact } = req.body;
+      if (!identifier) return res.status(400).json({ success: false, error: 'MISSING_IDENTIFIER' });
+
+      const result = await LogicCore.initiateAccountConfirmation(identifier, replacementContact || newContact || contact);
+      if (result.error) return res.status(400).json({ success: false, error: result.error });
+
+      res.json({
+        success: true,
+        message: 'If confirmation is required, an activation OTP has been sent.',
+        data: result,
+      });
+    } catch (e: any) {
+      authRouteLogger.error('auth.account_confirmation_initiate_failed', buildRequestLogContext(req), e);
+      res.status(500).json({ success: false, error: 'INTERNAL_SERVER_ERROR', message: e.message });
+    }
+  });
+
+  v1.post('/auth/account/confirmation/complete', async (req, res) => {
+    try {
+      const { identifier, requestId, code } = req.body;
+      if (!identifier || !requestId || !code) {
+        return res.status(400).json({ success: false, error: 'MISSING_FIELDS' });
+      }
+
+      const result = await LogicCore.confirmAccount(identifier, requestId, code);
+      if (!result.success) return res.status(400).json({ success: false, error: result.error || 'CONFIRMATION_FAILED' });
+
+      res.json({ success: true, data: result });
+    } catch (e: any) {
+      authRouteLogger.error('auth.account_confirmation_complete_failed', buildRequestLogContext(req), e);
       res.status(500).json({ success: false, error: 'INTERNAL_SERVER_ERROR', message: e.message });
     }
   });
@@ -501,7 +543,11 @@ export const registerAuthUserRoutes = (v1: Router, deps: Deps) => {
         return res.status(400).json({ success: false, error: result.error.message || 'Registration failed' });
       }
 
-      res.json({ success: true, data: result.data });
+      res.status(202).json({
+        success: true,
+        data: result.data,
+        message: 'Account created pending OTP confirmation. Confirm within 24 hours to activate ORBI services.',
+      });
     } catch (e: any) {
       authRouteLogger.error('auth.signup_failed', buildRequestLogContext(req), e);
       res.status(500).json({ success: false, error: 'INTERNAL_SERVER_ERROR', message: e.message });

@@ -18,6 +18,8 @@ interface OTPRecord {
     action: string;
 }
 
+type OTPDeliveryType = 'sms' | 'email' | 'push' | 'whatsapp';
+
 export class OTPService {
     private static PREFIX = 'otp:';
     private static THROTTLE_PREFIX = 'otp_throttle:';
@@ -139,7 +141,18 @@ export class OTPService {
     /**
      * Generate and send a new OTP for a specific action
      */
-    static async generateAndSend(userId: string, contact: string, action: string, type: 'sms' | 'email' | 'push' | 'whatsapp' = 'sms', deviceName?: string): Promise<{ requestId: string, code?: string, deliveryType?: string, deliveryContact?: string }> {
+    private static addDeliveryTarget(
+        targets: Array<{ type: OTPDeliveryType; contact: string }>,
+        type: OTPDeliveryType,
+        contact?: string,
+    ) {
+        const normalizedContact = String(contact || '').trim();
+        if (!normalizedContact) return;
+        if (targets.some((target) => target.type === type && target.contact === normalizedContact)) return;
+        targets.push({ type, contact: normalizedContact });
+    }
+
+    static async generateAndSend(userId: string, contact: string, action: string, type: OTPDeliveryType = 'sms', deviceName?: string): Promise<{ requestId: string, code?: string, deliveryType?: string, deliveryContact?: string }> {
         // 1. Throttling check (60 seconds)
         const throttleKey = this.THROTTLE_PREFIX + userId + ':' + action;
         const isThrottled = await RedisManager.get(throttleKey);
@@ -177,6 +190,10 @@ export class OTPService {
 
         let actualType = type;
         let actualContact = contact;
+        let bestPhone = contact && !contact.includes('@') ? contact : '';
+        let bestEmail = contact && contact.includes('@') ? contact : '';
+        let responseDeliveryType: string = actualType;
+        let responseDeliveryContact = actualContact;
 
         // Send via Provider
         try {
@@ -251,8 +268,8 @@ export class OTPService {
                                    (phone && phone.startsWith('+255')) ||
                                    (profile?.id_type === 'NIDA');
 
-                const bestPhone = phone || (contact && !contact.includes('@') ? contact : '');
-                const bestEmail = email || (contact && contact.includes('@') ? contact : '');
+                bestPhone = phone || bestPhone;
+                bestEmail = email || bestEmail;
 
                 // User Request: Refined channel selection based on user origin and identity
                 // Tanzania -> SMS/Push. Others -> Email/WhatsApp/Push.
@@ -285,6 +302,9 @@ export class OTPService {
                 }
             }
 
+            if (!bestPhone && actualType === 'sms') bestPhone = actualContact;
+            if (!bestEmail && actualType === 'email') bestEmail = actualContact;
+
             // Format phone if applicable
             if ((actualType === 'sms' || actualType === 'whatsapp') && actualContact) {
                 try {
@@ -304,56 +324,95 @@ export class OTPService {
             otpLogger.info('otp.dispatch_started', { actor_id: userId, action, delivery_type: actualType, contact: actualContact, request_id: requestId });
 
             const ANDROID_HASH = process.env.ORBI_ANDROID_SMS_HASH;
+            const otpTemplateData = {
+                otp: code,
+                name,
+                deviceName: deviceName || 'ORBI Mobile',
+                androidHash: ANDROID_HASH,
+            };
+            const deliveryTargets: Array<{ type: OTPDeliveryType; contact: string }> = [];
 
-            if (actualType === 'sms') {
-                otpLogger.info('otp.dispatch_channel_selected', { actor_id: userId, action, delivery_type: 'sms', contact: actualContact, request_id: requestId });
-                await orbiTalkGatewayService.sendTemplate('OTP_Message', actualContact, { 
-                    otp: code, 
-                    name: name,
-                    deviceName: deviceName || 'ORBI Mobile',
-                    androidHash: ANDROID_HASH 
-                }, { messageType: 'transactional', language, fcmToken, channel: 'sms', requestId });
-            } else if (actualType === 'whatsapp') {
-                otpLogger.info('otp.dispatch_channel_selected', { actor_id: userId, action, delivery_type: 'whatsapp', contact: actualContact, request_id: requestId });
-                await orbiTalkGatewayService.sendTemplate('OTP_Message', actualContact, { 
-                    otp: code, 
-                    name: name,
-                    deviceName: deviceName || 'ORBI Mobile',
-                    androidHash: ANDROID_HASH 
-                }, { messageType: 'transactional', language, fcmToken, channel: 'whatsapp', requestId });
-            } else if (actualType === 'email') {
-                otpLogger.info('otp.dispatch_channel_selected', { actor_id: userId, action, delivery_type: 'email', contact: actualContact, request_id: requestId });
-                await orbiTalkGatewayService.sendTemplate('OTP_Message', actualContact, { 
-                    otp: code, 
-                    name: name,
-                    deviceName: deviceName || 'ORBI Mobile',
-                    androidHash: ANDROID_HASH 
-                }, { messageType: 'transactional', language, fcmToken, channel: 'email', requestId });
-            } else if (actualType === 'push' && fcmToken) {
-                otpLogger.info('otp.dispatch_channel_selected', { actor_id: userId, action, delivery_type: 'push', contact: actualContact, request_id: requestId });
-                await firebasePushService.send({
-                    token: fcmToken,
-                    title: language === 'sw' ? 'Msimbo wa ORBI' : 'ORBI verification code',
-                    body: language === 'sw'
-                        ? `Msimbo wako wa ${deviceName || 'ORBI Mobile'} ni ${code}. Utaisha ndani ya dakika 5.`
-                        : `Your ${deviceName || 'ORBI Mobile'} verification code is ${code}. It expires in 5 minutes.`,
-                    data: {
-                        type: 'OTP_Message',
-                        action,
+            this.addDeliveryTarget(deliveryTargets, actualType, actualContact);
+            if (bestPhone && !bestPhone.includes('@')) this.addDeliveryTarget(deliveryTargets, 'sms', bestPhone);
+            if (bestEmail && bestEmail.includes('@')) this.addDeliveryTarget(deliveryTargets, 'email', bestEmail);
+
+            const normalizedTargets = deliveryTargets.map((target) => {
+                if ((target.type !== 'sms' && target.type !== 'whatsapp') || !target.contact) {
+                    return target;
+                }
+                try {
+                    let region: any = 'TZ';
+                    if (country && country.length === 2) {
+                        region = country.toUpperCase();
+                    } else if (isTanzania) {
+                        region = 'TZ';
+                    }
+                    const parsed = parsePhoneNumber(target.contact, region);
+                    return {
+                        ...target,
+                        contact: parsed
+                            ? parsed.format('E.164')
+                            : (target.contact.startsWith('+') ? target.contact : '+' + target.contact.replace(/\s/g, '')),
+                    };
+                } catch (e) {
+                    return {
+                        ...target,
+                        contact: target.contact.startsWith('+') ? target.contact : '+' + target.contact.replace(/\s/g, ''),
+                    };
+                }
+            });
+
+            const sentTargets: Array<{ type: OTPDeliveryType; contact: string }> = [];
+            for (const target of normalizedTargets) {
+                if (target.type === 'push' && !fcmToken) continue;
+                otpLogger.info('otp.dispatch_channel_selected', { actor_id: userId, action, delivery_type: target.type, contact: target.contact, request_id: requestId });
+
+                let sent = false;
+                if (target.type === 'push') {
+                    await firebasePushService.send({
+                        token: fcmToken,
+                        title: language === 'sw' ? 'Msimbo wa ORBI' : 'ORBI verification code',
+                        body: language === 'sw'
+                            ? `Msimbo wako wa ${deviceName || 'ORBI Mobile'} ni ${code}. Utaisha ndani ya dakika 5.`
+                            : `Your ${deviceName || 'ORBI Mobile'} verification code is ${code}. It expires in 5 minutes.`,
+                        data: {
+                            type: 'OTP_Message',
+                            action,
+                            requestId,
+                            deviceName: deviceName || 'ORBI Mobile',
+                            ...(ANDROID_HASH ? { androidHash: ANDROID_HASH } : {}),
+                        },
                         requestId,
-                        deviceName: deviceName || 'ORBI Mobile',
-                        ...(ANDROID_HASH ? { androidHash: ANDROID_HASH } : {}),
-                    },
-                    requestId,
-                });
+                    });
+                    sent = true;
+                } else {
+                    sent = await orbiTalkGatewayService.sendTemplate('OTP_Message', target.contact, otpTemplateData, {
+                        messageType: 'transactional',
+                        language,
+                        fcmToken,
+                        channel: target.type,
+                        requestId,
+                    });
+                }
+
+                if (sent) {
+                    sentTargets.push(target);
+                } else {
+                    otpLogger.warn('otp.dispatch_channel_failed', { actor_id: userId, action, delivery_type: target.type, contact: target.contact, request_id: requestId });
+                }
+            }
+
+            if (sentTargets.length > 0) {
+                responseDeliveryType = sentTargets.map((target) => target.type).join('+');
+                responseDeliveryContact = sentTargets.map((target) => target.contact).join(',');
             }
             
-            otpLogger.info('otp.dispatch_completed', { actor_id: userId, action, delivery_type: actualType, request_id: requestId });
+            otpLogger.info('otp.dispatch_completed', { actor_id: userId, action, delivery_type: responseDeliveryType, request_id: requestId });
         } catch (error) {
             otpLogger.error('otp.dispatch_failed', { actor_id: userId, action, delivery_type: actualType, request_id: requestId }, error);
         }
 
-        return { requestId, code, deliveryType: actualType, deliveryContact: actualContact };
+        return { requestId, code, deliveryType: responseDeliveryType, deliveryContact: responseDeliveryContact };
     }
 
     /**

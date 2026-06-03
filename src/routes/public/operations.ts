@@ -1,6 +1,7 @@
 import { type RequestHandler, type Router } from 'express';
 import { z } from 'zod';
 import { sessionHasAnyRole } from '../../middleware/auth/authorization.js';
+import { operatorAlertService } from '../../../backend/infrastructure/OperatorAlertService.js';
 import {
   CONFIG_COMMISSION_VIEW_ROLES,
   CONFIG_FX_VIEW_ROLES,
@@ -17,6 +18,24 @@ const TreasuryApprovalSchema = z.object({
 
 const ReconciliationRunSchema = z.object({
   reason: z.string().trim().min(5).max(500),
+});
+
+const BrokerNotificationConfigSchema = z.object({
+  thresholdUsd: z.coerce.number().positive().max(1_000_000_000),
+  email: z.object({
+    enabled: z.boolean().default(false),
+    recipients: z.array(z.string().trim().email()).max(20).default([]),
+  }).default({ enabled: false, recipients: [] }),
+  slack: z.object({
+    enabled: z.boolean().default(false),
+    channel: z.string().trim().min(1).max(120).default('#ops-security-feed'),
+  }).default({ enabled: false, channel: '#ops-security-feed' }),
+  autoFreeze: z.object({
+    enabled: z.boolean().default(false),
+    riskScoreThreshold: z.coerce.number().min(50).max(100).default(90),
+    action: z.enum(['SUSPEND_USER', 'FREEZE_USER', 'REQUIRE_REVIEW']).default('SUSPEND_USER'),
+  }).default({ enabled: false, riskScoreThreshold: 90, action: 'SUSPEND_USER' }),
+  enabled: z.boolean().optional(),
 });
 
 type Deps = {
@@ -266,6 +285,137 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
 
       await ConfigClient.saveConfig(updatedConfig);
       res.json({ success: true, message: 'Ledger configuration updated successfully.' });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.get('/admin/risk/broker-notifications', authenticate as any, requireSessionPermission(['admin.audit.read', 'config.ledger.read'], [...CONFIG_LEDGER_ADMIN_ROLES, 'AUDIT', 'RISK_OFFICER', 'FRAUD']), async (_req, res) => {
+    try {
+      const currentConfig = await ConfigClient.getRuleConfig(true);
+      const brokerNotifications = currentConfig.broker_notifications || currentConfig.rules?.broker_notifications || {};
+      const autoFreeze = currentConfig.auto_freeze || currentConfig.rules?.auto_freeze || {};
+      res.json({
+        success: true,
+        data: {
+          enabled: brokerNotifications.enabled !== false,
+          thresholdUsd: Number(brokerNotifications.thresholdUsd || 10000),
+          email: {
+            enabled: brokerNotifications.email?.enabled === true,
+            recipients: Array.isArray(brokerNotifications.email?.recipients) ? brokerNotifications.email.recipients : [],
+          },
+          slack: {
+            enabled: brokerNotifications.slack?.enabled === true,
+            channel: brokerNotifications.slack?.channel || '#ops-security-feed',
+            webhookConfigured: Boolean(process.env.ORBI_SLACK_WEBHOOK_URL || process.env.SLACK_WEBHOOK_URL),
+          },
+          autoFreeze: {
+            enabled: autoFreeze.enabled === true,
+            riskScoreThreshold: Number(autoFreeze.riskScoreThreshold || 90),
+            action: autoFreeze.action || 'SUSPEND_USER',
+          },
+          eventCode: brokerNotifications.eventCode || 'DYNAMIC_BROKER_LIMIT_EXCEEDED',
+          updatedAt: brokerNotifications.updatedAt || null,
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.post('/admin/risk/broker-notifications', authenticate as any, requireSessionPermission(['config.ledger.write'], [...CONFIG_LEDGER_ADMIN_ROLES, 'RISK_OFFICER', 'FRAUD']), async (req, res) => {
+    const session = (req as any).session;
+    try {
+      const parsed = BrokerNotificationConfigSchema.parse(req.body || {});
+      const enabled = parsed.enabled ?? (parsed.email.enabled || parsed.slack.enabled);
+      const brokerNotifications = {
+        enabled,
+        thresholdUsd: parsed.thresholdUsd,
+        email: {
+          enabled: parsed.email.enabled,
+          recipients: parsed.email.recipients,
+        },
+        slack: {
+          enabled: parsed.slack.enabled,
+          channel: parsed.slack.channel,
+        },
+        eventCode: 'DYNAMIC_BROKER_LIMIT_EXCEEDED',
+        updatedAt: new Date().toISOString(),
+        updatedBy: session?.sub || 'unknown',
+      };
+      const autoFreeze = {
+        enabled: parsed.autoFreeze.enabled,
+        riskScoreThreshold: parsed.autoFreeze.riskScoreThreshold,
+        action: parsed.autoFreeze.action,
+        targetRoles: ['SUPER_ADMIN', 'ADMIN', 'RISK_OFFICER', 'FRAUD'],
+        updatedAt: new Date().toISOString(),
+        updatedBy: session?.sub || 'unknown',
+      };
+
+      const currentConfig = await ConfigClient.getRuleConfig();
+      const updatedRules = {
+        ...(currentConfig.rules || {}),
+        broker_notifications: brokerNotifications,
+        auto_freeze: autoFreeze,
+      };
+      const updatedConfig = {
+        ...currentConfig,
+        rules: updatedRules,
+        broker_notifications: brokerNotifications,
+        auto_freeze: autoFreeze,
+      };
+
+      await ConfigClient.saveConfig(updatedConfig);
+      res.json({
+        success: true,
+        message: 'Dynamic broker notification rules updated.',
+        data: {
+          ...brokerNotifications,
+          slack: {
+            ...brokerNotifications.slack,
+            webhookConfigured: Boolean(process.env.ORBI_SLACK_WEBHOOK_URL || process.env.SLACK_WEBHOOK_URL),
+          },
+          autoFreeze,
+        },
+      });
+    } catch (e: any) {
+      if (e?.name === 'ZodError') {
+        return res.status(400).json({ success: false, error: 'VALIDATION_FAILED', issues: e.issues });
+      }
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.get('/admin/operator-alerts', authenticate as any, requireSessionPermission(['admin.audit.read', 'transaction.view', 'user.read'], ['SUPER_ADMIN', 'ADMIN', 'AUDIT', 'RISK_OFFICER', 'FRAUD', 'IT', 'CUSTOMER_CARE']), async (req, res) => {
+    const session = (req as any).session;
+    try {
+      const data = await operatorAlertService.list({
+        role: session?.role || session?.user?.role,
+        status: String(req.query.status || 'ALL'),
+        limit: Number(req.query.limit || 50),
+      });
+      res.json({ success: true, data });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.patch('/admin/operator-alerts/:id/read', authenticate as any, requireSessionPermission(['admin.audit.read', 'transaction.view', 'user.read'], ['SUPER_ADMIN', 'ADMIN', 'AUDIT', 'RISK_OFFICER', 'FRAUD', 'IT', 'CUSTOMER_CARE']), async (req, res) => {
+    const session = (req as any).session;
+    try {
+      const data = await operatorAlertService.markRead(String(req.params.id), session?.sub || 'unknown');
+      res.json({ success: true, data });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.patch('/admin/operator-alerts/:id/resolve', authenticate as any, requireSessionPermission(['admin.audit.read', 'transaction.view', 'user.read'], ['SUPER_ADMIN', 'ADMIN', 'AUDIT', 'RISK_OFFICER', 'FRAUD', 'IT', 'CUSTOMER_CARE']), async (req, res) => {
+    const session = (req as any).session;
+    try {
+      const reason = String(req.body?.reason || '').trim();
+      const data = await operatorAlertService.resolve(String(req.params.id), session?.sub || 'unknown', reason || undefined);
+      res.json({ success: true, data });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });
     }

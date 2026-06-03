@@ -75,7 +75,8 @@ class SecuritySentinel {
                 await Server.updateAccountStatus(
                     session.sub, 
                     'frozen', 
-                    'system_sentinel'
+                    'system_sentinel',
+                    `Autonomous Sentinel quarantine: risk score ${report.riskScore} reached the auto-freeze threshold ${this.AUTO_FREEZE_THRESHOLD}. ${(report.reasons || []).join(' | ')}`
                 ).catch(e => console.error("[Sentinel] Quarantine Dispatch Failed:", e.message));
 
                 await Audit.log('SECURITY', 'system', 'AUTONOMOUS_QUARANTINE_TRIGGERED', { 

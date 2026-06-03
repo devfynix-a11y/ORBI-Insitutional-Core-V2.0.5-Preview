@@ -329,6 +329,7 @@ export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
     try {
       const walletId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
       const result = await LogicCore.unlockWallet(session.sub, walletId, {
+        reason: req.body.reason,
         pin: req.body.pin,
         force: req.body.force,
         isAdmin,

@@ -61,7 +61,9 @@ export class RulesConfigClient {
                         rules: rulesRes.data.config_data,
                         exchange_rates: fxRes.data?.config_data || this.getDefaultConfig().exchange_rates,
                         commission_programs: commissionRes.data?.config_data || this.getDefaultConfig().commission_programs,
-                        decision_matrix: this.getDefaultConfig().decision_matrix
+                        decision_matrix: this.getDefaultConfig().decision_matrix,
+                        broker_notifications: rulesRes.data.config_data?.broker_notifications || this.getDefaultConfig().broker_notifications,
+                        auto_freeze: rulesRes.data.config_data?.auto_freeze || this.getDefaultConfig().auto_freeze
                     };
                     
                     this.configCache = merged;
@@ -208,7 +210,37 @@ export class RulesConfigClient {
             },
             rules: {
                 "VL-001": { id: "VL-001", active: true, name: "Velocity Burst", severity: "HIGH", parameters: { threshold: 10 }, description: "High frequency transactional bursts" },
-                "ID-001": { id: "ID-001", active: true, name: "Identity Node Check", severity: "CRITICAL", parameters: {}, description: "Verified KYC status verification" }
+                "ID-001": { id: "ID-001", active: true, name: "Identity Node Check", severity: "CRITICAL", parameters: {}, description: "Verified KYC status verification" },
+                broker_notifications: {
+                    enabled: true,
+                    thresholdUsd: 10000,
+                    email: { enabled: true, recipients: ['security@orbifinancial.com'] },
+                    slack: { enabled: false, channel: '#ops-security-feed' },
+                    eventCode: 'DYNAMIC_BROKER_LIMIT_EXCEEDED',
+                    updatedAt: null
+                },
+                auto_freeze: {
+                    enabled: false,
+                    riskScoreThreshold: 90,
+                    action: 'SUSPEND_USER',
+                    targetRoles: ['SUPER_ADMIN', 'ADMIN', 'RISK_OFFICER', 'FRAUD'],
+                    updatedAt: null
+                }
+            },
+            broker_notifications: {
+                enabled: true,
+                thresholdUsd: 10000,
+                email: { enabled: true, recipients: ['security@orbifinancial.com'] },
+                slack: { enabled: false, channel: '#ops-security-feed' },
+                eventCode: 'DYNAMIC_BROKER_LIMIT_EXCEEDED',
+                updatedAt: null
+            },
+            auto_freeze: {
+                enabled: false,
+                riskScoreThreshold: 90,
+                action: 'SUSPEND_USER',
+                targetRoles: ['SUPER_ADMIN', 'ADMIN', 'RISK_OFFICER', 'FRAUD'],
+                updatedAt: null
             },
             decision_matrix: {
                 auto_block: { risk_score_threshold: 85, critical_rule_failures: 1 },

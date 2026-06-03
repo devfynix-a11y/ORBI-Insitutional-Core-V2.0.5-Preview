@@ -160,7 +160,13 @@ class OrbiServer {
     
     async updatePassword(password: string) { return this.auth.updatePassword(password); }
     async completePasswordReset(password: string) { return this.auth.completePasswordReset(password); }
+    async completePasswordResetWithOtp(identifier: string, requestId: string, code: string, password: string) {
+        return this.auth.completePasswordReset(password, identifier, requestId, code);
+    }
     async initiatePasswordReset(identifier: string) { return this.auth.initiatePasswordReset(identifier); }
+    async initiateAccountConfirmation(identifier: string) { return this.auth.initiateAccountConfirmation(identifier); }
+    async confirmAccount(identifier: string, requestId: string, code: string) { return this.auth.confirmAccount(identifier, requestId, code); }
+    async cleanupExpiredUnconfirmedAccounts() { return this.auth.cleanupExpiredUnconfirmedAccounts(); }
     async deleteAccount() { return this.auth.deleteAccount(); }
     async initiatePhoneLogin(phone: string) { return this.auth.initiatePhoneLogin(phone); }
     async verifyPhoneLogin(phone: string, token: string) { return this.auth.verifyPhoneLogin(phone, token); }
@@ -452,11 +458,20 @@ class OrbiServer {
         }
 
         const reason = opts.reason || (opts.isAdmin ? 'Admin lock' : 'User lock');
+        const lockedAt = new Date().toISOString();
+        const metadata = record.metadata && typeof record.metadata === 'object' ? record.metadata : {};
         const updatePayload: any = {
             is_locked: true,
             status: 'locked',
-            locked_at: new Date().toISOString(),
-            lock_reason: reason
+            locked_at: lockedAt,
+            lock_reason: reason,
+            metadata: {
+                ...metadata,
+                last_lock_reason: reason,
+                last_lock_at: lockedAt,
+                last_lock_by: actorUserId,
+                last_lock_source: opts.isAdmin ? 'admin' : 'user',
+            },
         };
 
         const { error } = await sb.from(table).update(updatePayload).eq('id', record.id);
@@ -468,7 +483,7 @@ class OrbiServer {
     async unlockWallet(
         actorUserId: string,
         walletId: string,
-        opts: { pin?: string; force?: boolean; isAdmin?: boolean } = {}
+        opts: { reason?: string; pin?: string; force?: boolean; isAdmin?: boolean } = {}
     ) {
         const sb = getAdminSupabase();
         if (!sb) throw new Error('DB_OFFLINE');
@@ -491,11 +506,33 @@ class OrbiServer {
         const nextStatus = (opts.isAdmin || this.shouldForceUnlockStatus(record.status))
             ? 'active'
             : record.status;
+        const unlockedAt = new Date().toISOString();
+        const unlockReason = opts.reason || (opts.isAdmin ? 'Admin unlock' : 'User unlock');
+        const metadata = record.metadata && typeof record.metadata === 'object' ? record.metadata : {};
+        const lockHistory = Array.isArray(metadata.lock_history) ? metadata.lock_history : [];
         const updatePayload: any = {
             is_locked: false,
             status: nextStatus,
             locked_at: null,
-            lock_reason: null
+            lock_reason: null,
+            metadata: {
+                ...metadata,
+                last_unlock_reason: unlockReason,
+                last_unlock_at: unlockedAt,
+                last_unlock_by: actorUserId,
+                lock_history: [
+                    ...lockHistory.slice(-24),
+                    {
+                        locked_at: record.locked_at || null,
+                        lock_reason: record.lock_reason || null,
+                        unlocked_at: unlockedAt,
+                        unlock_reason: unlockReason,
+                        unlocked_by: actorUserId,
+                        previous_status: record.status || null,
+                        next_status: nextStatus,
+                    },
+                ],
+            },
         };
 
         const { error } = await sb.from(table).update(updatePayload).eq('id', record.id);
@@ -756,8 +793,20 @@ class OrbiServer {
         }
 
         if (updates.account_status !== undefined) {
-            metadataUpdates.account_status = String(updates.account_status).trim().toLowerCase();
-            staffUpdates.account_status = String(updates.account_status).trim().toLowerCase();
+            const normalizedStatus = String(updates.account_status).trim().toLowerCase();
+            const statusReason = String(updates.status_reason || updates.reason || `Staff status changed to ${normalizedStatus}`).trim();
+            const reasonCode = String(updates.status_reason_code || 'STAFF_STATUS_UPDATE').trim().toUpperCase();
+            const changedAt = new Date().toISOString();
+            metadataUpdates.account_status = normalizedStatus;
+            metadataUpdates.status_reason = statusReason;
+            metadataUpdates.status_reason_code = reasonCode;
+            metadataUpdates.status_changed_at = changedAt;
+            metadataUpdates.status_changed_by = actorId;
+            staffUpdates.account_status = normalizedStatus;
+            staffUpdates.status_reason = statusReason;
+            staffUpdates.status_reason_code = reasonCode;
+            staffUpdates.status_changed_at = changedAt;
+            staffUpdates.status_changed_by = actorId;
         }
 
         const { error: authUpdateError } = await sb.auth.admin.updateUserById(staffId, {
@@ -801,15 +850,26 @@ class OrbiServer {
         // 1. Get current metadata to merge
         const { data: user, error: getError } = await sb.auth.admin.getUserById(targetUserId);
         const currentMetadata = user?.user?.user_metadata || {};
+        const profileUpdates = { ...updates };
+        if (profileUpdates.account_status !== undefined) {
+            const normalizedStatus = String(profileUpdates.account_status).trim().toLowerCase();
+            const statusReason = String(profileUpdates.status_reason || profileUpdates.reason || `User status changed to ${normalizedStatus}`).trim();
+            profileUpdates.account_status = normalizedStatus;
+            profileUpdates.status_reason = statusReason;
+            profileUpdates.status_reason_code = String(profileUpdates.status_reason_code || 'USER_STATUS_UPDATE').trim().toUpperCase();
+            profileUpdates.status_changed_at = new Date().toISOString();
+            profileUpdates.status_changed_by = actorId;
+            delete profileUpdates.reason;
+        }
 
         // 2. Update public profile
-        const { error: dbError } = await sb.from('users').update(updates).eq('id', targetUserId);
+        const { error: dbError } = await sb.from('users').update(profileUpdates).eq('id', targetUserId);
         if (dbError) return { error: dbError.message };
 
         // 3. Update Auth Metadata if needed (for critical fields)
-        if (updates.full_name || updates.kyc_level || updates.kyc_status || updates.role || updates.account_status) {
+        if (profileUpdates.full_name || profileUpdates.kyc_level || profileUpdates.kyc_status || profileUpdates.role || profileUpdates.account_status) {
             await sb.auth.admin.updateUserById(targetUserId, {
-                user_metadata: { ...currentMetadata, ...updates }
+                user_metadata: { ...currentMetadata, ...profileUpdates }
             });
         }
 
@@ -821,23 +881,50 @@ class OrbiServer {
         const sb = getAdminSupabase();
         if (!sb) return;
 
+        const normalizedStatus = String(status || '').trim().toLowerCase();
+        const normalizedReason = String(reason || '').trim() || `Status changed to ${normalizedStatus}`;
+        const reasonCode = normalizedStatus === 'active'
+            ? 'STATUS_REACTIVATED'
+            : normalizedStatus === 'frozen'
+                ? 'ACCOUNT_FROZEN'
+                : normalizedStatus === 'blocked'
+                    ? 'ACCOUNT_BLOCKED'
+                    : normalizedStatus === 'pending'
+                        ? 'ACCOUNT_PENDING_REVIEW'
+                        : 'STATUS_CHANGED';
+        const statusPatch = {
+            account_status: normalizedStatus,
+            status_reason: normalizedReason,
+            status_reason_code: reasonCode,
+            status_changed_at: new Date().toISOString(),
+            status_changed_by: actorId,
+        };
+
         // 1. Update public tables
-        await sb.from('staff').update({ account_status: status }).eq('id', userId);
-        await sb.from('users').update({ account_status: status }).eq('id', userId);
+        await sb.from('staff').update(statusPatch).eq('id', userId);
+        await sb.from('users').update(statusPatch).eq('id', userId);
 
         // 2. Update Auth Metadata for immediate enforcement
         const { data: user } = await sb.auth.admin.getUserById(userId);
         if (user?.user) {
             await sb.auth.admin.updateUserById(userId, {
-                user_metadata: { ...user.user.user_metadata, account_status: status }
+                user_metadata: {
+                    ...user.user.user_metadata,
+                    account_status: normalizedStatus,
+                    status_reason: normalizedReason,
+                    status_reason_code: reasonCode,
+                    status_changed_at: statusPatch.status_changed_at,
+                    status_changed_by: actorId,
+                }
             });
         }
 
-        await this.security.logActivity(actorId, 'GOVERNANCE_STATUS_UPDATE', 'success', `Node ${userId} rotated to ${status}`);
+        await this.security.logActivity(actorId, 'GOVERNANCE_STATUS_UPDATE', 'success', `Node ${userId} rotated to ${normalizedStatus}: ${normalizedReason}`);
         await Audit.log('ADMIN', actorId, 'ACCOUNT_STATUS_UPDATE', {
             targetUserId: userId,
-            status,
-            reason: reason || 'No reason supplied',
+            status: normalizedStatus,
+            reason: normalizedReason,
+            reasonCode,
         });
     }
     async getForensicState(): Promise<ForensicReport> { return VaultAuditor.getForensicReport(); }
