@@ -9,6 +9,29 @@ export type OfficialMessageTemplateResolution = {
 };
 
 class OfficialOrbiTalkTemplatePolicy {
+  private readonly officialTemplates = new Set<string>([
+    'OTP_Message',
+    'Welcome_Message',
+    'Transfer_Sent',
+    'Transfer_Received',
+    'Security_Alert_Message',
+    'New_Device_Alert',
+    'Escrow_Created',
+    'Escrow_Released',
+    'Salary_Received',
+    'Treasury_Withdrawal_Request',
+    'Merchant_Service_Update',
+    'Agent_Cash_Update',
+    'Merchant_Customer_Payment_Update',
+    'Agent_Customer_Cash_Update',
+    'Agent_Commission_Paid',
+    'Service_Customer_Registered',
+    'Service_Access_Approved',
+    'LOW_BALANCE',
+    'Promo_Message',
+    'Transactional_Message',
+  ]);
+
   resolve(input: {
     category: OfficialMessageCategory;
     subject: string;
@@ -25,7 +48,7 @@ class OfficialOrbiTalkTemplatePolicy {
       ...(input.variables || {}),
     };
 
-    if (input.template) {
+    if (input.template && this.officialTemplates.has(input.template)) {
       return {
         templateName: input.template as TemplateName,
         variables: baseVariables,

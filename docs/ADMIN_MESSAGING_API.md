@@ -255,6 +255,49 @@ Example response:
 }
 ```
 
+## Automated ORBI Node Template Policy
+
+Automated backend events must use the official ORBI Talk templates through `Messaging.dispatch()` or `orbiTalkGatewayService.sendTemplate()`.
+
+Official automated template names:
+- `OTP_Message`
+- `Welcome_Message`
+- `Transfer_Sent`
+- `Transfer_Received`
+- `Security_Alert_Message`
+- `New_Device_Alert`
+- `Escrow_Created`
+- `Escrow_Released`
+- `Salary_Received`
+- `Treasury_Withdrawal_Request`
+- `Merchant_Service_Update`
+- `Agent_Cash_Update`
+- `Merchant_Customer_Payment_Update`
+- `Agent_Customer_Cash_Update`
+- `Agent_Commission_Paid`
+- `Service_Customer_Registered`
+- `Service_Access_Approved`
+- `LOW_BALANCE`
+- `Promo_Message`
+- `Transactional_Message`
+
+Core fills safe default variables at the gateway boundary so automated events remain valid even when a caller omits non-critical variables:
+- `refId`
+- `timestamp`
+- `name`
+- `recipientName`
+- `senderName`
+- `employeeName`
+- `actorLabel`
+- `currency`
+- `amount`
+- `status`
+- `direction`
+- `subject`
+- `body`
+
+Staff-created/custom templates should be treated as staff outreach templates. They may be previewed and rendered in the admin flow, but automated node events should remain on the official template set above.
+
 ## Notes
 
 - Official notifications continue to prefer gateway templates.

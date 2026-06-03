@@ -96,6 +96,32 @@ class OrbiTalkGatewayService {
             normalized.deviceName ||
             normalized.device_name ||
             'ORBI Mobile';
+        const fallbackRefId =
+            normalized.refId ||
+            normalized.reference ||
+            normalized.transactionId ||
+            normalized.requestId ||
+            `ORBI-${Date.now().toString(36).toUpperCase()}`;
+        const fallbackTimestamp =
+            normalized.timestamp ||
+            normalized.createdAt ||
+            normalized.created_at ||
+            new Date().toISOString();
+        const fallbackCurrency = normalized.currency || 'TZS';
+        const fallbackAmount = normalized.amount ?? '0';
+        const fallbackRecipientName =
+            normalized.recipientName ||
+            normalized.customerName ||
+            normalized.name ||
+            fallbackName;
+        const fallbackSenderName =
+            normalized.senderName ||
+            normalized.actorLabel ||
+            normalized.name ||
+            fallbackName;
+        const fallbackActorLabel = normalized.actorLabel || 'ORBI';
+
+        normalized.refId = normalized.refId || fallbackRefId;
 
         switch (templateName) {
             case 'OTP_Message':
@@ -108,6 +134,74 @@ class OrbiTalkGatewayService {
                 break;
             case 'New_Device_Alert':
                 normalized.deviceName = normalized.deviceName || fallbackDeviceName;
+                break;
+            case 'Transfer_Sent':
+                normalized.senderName = normalized.senderName || fallbackSenderName;
+                normalized.recipientName = normalized.recipientName || fallbackRecipientName;
+                normalized.currency = normalized.currency || fallbackCurrency;
+                normalized.amount = normalized.amount ?? fallbackAmount;
+                normalized.timestamp = normalized.timestamp || fallbackTimestamp;
+                break;
+            case 'Transfer_Received':
+                normalized.senderName = normalized.senderName || fallbackSenderName;
+                normalized.currency = normalized.currency || fallbackCurrency;
+                normalized.amount = normalized.amount ?? fallbackAmount;
+                normalized.timestamp = normalized.timestamp || fallbackTimestamp;
+                break;
+            case 'Escrow_Created':
+            case 'Escrow_Released':
+                normalized.recipientName = normalized.recipientName || fallbackRecipientName;
+                normalized.currency = normalized.currency || fallbackCurrency;
+                normalized.amount = normalized.amount ?? fallbackAmount;
+                break;
+            case 'Salary_Received':
+                normalized.employeeName = normalized.employeeName || fallbackName;
+                normalized.name = normalized.name || normalized.employeeName;
+                normalized.month = normalized.month || new Intl.DateTimeFormat('en', { month: 'long', year: 'numeric' }).format(new Date());
+                normalized.currency = normalized.currency || fallbackCurrency;
+                normalized.amount = normalized.amount ?? fallbackAmount;
+                normalized.timestamp = normalized.timestamp || fallbackTimestamp;
+                break;
+            case 'Treasury_Withdrawal_Request':
+                normalized.employeeName = normalized.employeeName || fallbackName;
+                normalized.currency = normalized.currency || fallbackCurrency;
+                normalized.amount = normalized.amount ?? fallbackAmount;
+                normalized.reason = normalized.reason || 'Treasury operation review';
+                break;
+            case 'Merchant_Service_Update':
+            case 'Merchant_Customer_Payment_Update':
+                normalized.actorLabel = normalized.actorLabel || fallbackActorLabel;
+                normalized.currency = normalized.currency || fallbackCurrency;
+                normalized.amount = normalized.amount ?? fallbackAmount;
+                normalized.status = normalized.status || 'COMPLETED';
+                break;
+            case 'Agent_Cash_Update':
+            case 'Agent_Customer_Cash_Update':
+                normalized.actorLabel = normalized.actorLabel || fallbackActorLabel;
+                normalized.currency = normalized.currency || fallbackCurrency;
+                normalized.amount = normalized.amount ?? fallbackAmount;
+                normalized.direction = normalized.direction || 'deposit';
+                normalized.status = normalized.status || 'COMPLETED';
+                break;
+            case 'Agent_Commission_Paid':
+                normalized.actorLabel = normalized.actorLabel || fallbackActorLabel;
+                normalized.currency = normalized.currency || fallbackCurrency;
+                normalized.amount = normalized.amount ?? fallbackAmount;
+                break;
+            case 'Service_Customer_Registered':
+                normalized.actorLabel = normalized.actorLabel || fallbackActorLabel;
+                normalized.customerName = normalized.customerName || fallbackRecipientName;
+                break;
+            case 'Service_Access_Approved':
+                normalized.actorLabel = normalized.actorLabel || fallbackActorLabel;
+                break;
+            case 'Security_Alert_Message':
+                normalized.subject = normalized.subject || 'ORBI security alert';
+                normalized.body = normalized.body || 'A security event was detected on your ORBI account.';
+                break;
+            case 'Promo_Message':
+            case 'Transactional_Message':
+                normalized.body = normalized.body || normalized.subject || 'ORBI account update.';
                 break;
             default:
                 break;

@@ -47,13 +47,18 @@ export interface TemplatePayloads {
     Escrow_Created: {
         currency: string;
         amount: string | number;
+        recipientName?: string;
+        refId?: string;
     };
     Escrow_Released: {
         currency: string;
         amount: string | number;
+        recipientName?: string;
+        refId?: string;
     };
     Salary_Received: {
         employeeName: string;
+        name?: string;
         month: string;
         currency: string;
         amount: string | number;
@@ -62,6 +67,7 @@ export interface TemplatePayloads {
         footer?: string;
     };
     Treasury_Withdrawal_Request: {
+        employeeName?: string;
         currency: string;
         amount: string | number;
         reason: string;
