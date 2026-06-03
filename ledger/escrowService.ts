@@ -69,10 +69,13 @@ export class EscrowService {
 
         await Messaging.dispatch(recipient.id, 'info', subject, body, { 
             sms: true,
+            email: true,
             template: 'Escrow_Created',
             variables: {
                 amount: amount.toLocaleString(),
-                currency: 'TZS'
+                currency: 'TZS',
+                recipientName: recipient.full_name,
+                refId: referenceId,
             }
         });
 
@@ -120,10 +123,13 @@ export class EscrowService {
 
         await Messaging.dispatch(recipientId, 'info', subject, body, { 
             sms: true,
+            email: true,
             template: 'Escrow_Released',
             variables: {
                 amount: tx.amount.toLocaleString(),
-                currency: tx.currency || 'TZS'
+                currency: tx.currency || 'TZS',
+                recipientName: tx.metadata?.recipient_name,
+                refId: referenceId,
             }
         });
 
@@ -157,8 +163,13 @@ export class EscrowService {
 
         await Messaging.dispatch(tx.user_id, 'security', senderSubject, senderBody, { 
             sms: true,
-            template: 'Escrow_Disputed',
-            variables: { referenceId }
+            email: true,
+            template: 'Security_Alert_Message',
+            variables: {
+                subject: senderSubject,
+                body: senderBody,
+                refId: referenceId,
+            }
         });
 
         const { data: recipientUser } = await sb.from('users').select('language').eq('id', tx.metadata.recipient_id).maybeSingle();
@@ -170,8 +181,13 @@ export class EscrowService {
 
         await Messaging.dispatch(tx.metadata.recipient_id, 'security', recipientSubject, recipientBody, { 
             sms: true,
-            template: 'Escrow_Disputed_Recipient',
-            variables: { referenceId }
+            email: true,
+            template: 'Security_Alert_Message',
+            variables: {
+                subject: recipientSubject,
+                body: recipientBody,
+                refId: referenceId,
+            }
         });
 
         await Audit.log('SECURITY', userId, 'ESCROW_DISPUTED', { referenceId, reason });
@@ -214,8 +230,12 @@ export class EscrowService {
 
         await Messaging.dispatch(tx.user_id, 'info', subject, body, { 
             sms: true,
-            template: 'Escrow_Refunded',
-            variables: { referenceId }
+            email: true,
+            template: 'Transactional_Message',
+            variables: {
+                body,
+                refId: referenceId,
+            }
         });
 
         await Audit.log('FINANCIAL', adminId, 'ESCROW_REFUNDED', { referenceId, senderId: tx.user_id });

@@ -393,6 +393,43 @@ CEO, ORBI`
                            profile.phone?.startsWith('+255') ||
                            profile.id_type === 'NIDA';
         const language = profile.language || 'en';
+        const eventCode = String(options.eventCode || '').toUpperCase();
+        const templateName = String(templatePlan.templateName || options.template || '').toUpperCase();
+        const isSecurityMessage = category === 'security';
+        const isCriticalSecurityMessage =
+            isSecurityMessage &&
+            !templateName.includes('OTP') &&
+            (
+                templateName.includes('SECURITY_ALERT') ||
+                templateName.includes('NEW_DEVICE_ALERT') ||
+                eventCode.includes('SECURITY') ||
+                eventCode.includes('DEVICE') ||
+                eventCode.includes('DISPUTE') ||
+                eventCode.includes('REVERS') ||
+                eventCode.includes('BLOCK') ||
+                eventCode.includes('FRAUD') ||
+                eventCode.includes('RISK') ||
+                eventCode.includes('AML') ||
+                options.email === true
+            );
+        const isMoneyMovementMessage =
+            [
+                'TRANSFER_SENT',
+                'TRANSFER_RECEIVED',
+                'SALARY_RECEIVED',
+                'ESCROW_CREATED',
+                'ESCROW_RELEASED',
+                'MERCHANT_SERVICE_UPDATE',
+                'MERCHANT_CUSTOMER_PAYMENT_UPDATE',
+                'AGENT_CASH_UPDATE',
+                'AGENT_CUSTOMER_CASH_UPDATE',
+                'AGENT_COMMISSION_PAID',
+                'TREASURY_WITHDRAWAL_REQUEST',
+            ].some((key) => templateName.includes(key));
+        const shouldSendEmailForAuditTrail =
+            emailAllowed &&
+            Boolean(profile.email) &&
+            (isCriticalSecurityMessage || isMoneyMovementMessage || options.email === true);
         
         // Add refId to variables for templates
         const vars = this.normalizeTemplateVariables(
@@ -418,14 +455,18 @@ CEO, ORBI`
             }
         }
 
-        // User Request: if the user is from Tanzania prefer SMS, otherwise sent to email or whatsapp
+        // Channel policy:
+        // - Tanzania users still receive SMS for high-deliverability local rails.
+        // - Security and transactional/financial events also go to email when available.
+        // - Non-Tanzania users prefer email, then WhatsApp for phone-only users.
+        // - Promotional messages only use opted-in/requested channels.
         if (isTanzania && profile.phone) {
             options.sms = true;
-            options.email = false;
+            options.email = shouldSendEmailForAuditTrail;
             options.whatsapp = false;
         } else if (profile.email) {
-            options.email = true;
-            options.sms = false;
+            options.email = shouldSendEmailForAuditTrail;
+            options.sms = options.sms === true;
             options.whatsapp = options.whatsapp ?? false;
         } else if (profile.phone) {
             // Non-Tanzania with phone but no email -> WhatsApp
