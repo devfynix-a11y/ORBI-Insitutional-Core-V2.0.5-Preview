@@ -5,21 +5,16 @@ This is the **Sovereign Financial Operating System** powering the ORBI ecosystem
 
 ## 📚 Documentation
 
-*   **[Oracle Cloud Deployment](./ORACLE_CLOUD_GITHUB_ACTIONS_DEPLOYMENT.md)**: Primary GitHub Actions deployment path for Oracle Cloud VMs.
-*   **[Legacy Render Notes](./DEPLOYMENT_GUIDE.md)**: Archived Render-specific deployment notes kept only for migration reference.
-*   **[Project Structure](./PROJECT_STRUCTURE.md)**: Breakdown of file locations and functions.
-*   **[Financial Core Engine (Core Banking Architecture)](./CORE_BANKING_ARCHITECTURE.md)**: **NEW** - Multi-Tenant Fintech Platform, Banking-as-a-Service (BaaS).
-*   **[Enterprise B2B Architecture](./ENTERPRISE_B2B_ARCHITECTURE.md)**: Multi-Tenancy, Corporate Goals, and Hard Budgets.
-*   **[Multi-Tenant Merchant Architecture](./MERCHANT_ARCHITECTURE.md)**: Marketplaces, Payment Gateways, and Business Accounts.
-*   **[Reconciliation Engine](./RECONCILIATION_ENGINE.md)**: Financial Integrity & Forensic Auditing.
-*   **[Production Deployment](./PRODUCTION_DEPLOYMENT.md)**: Production readiness checks, env requirements, and rollout guidance.
-*   **[Master Integration Manual](./INTEGRATION_MANUAL.md)**: The definitive technical specification.
+*   **[Documentation Index](./DOCUMENTATION_INDEX.md)**: Canonical map for all maintained docs and merged compatibility files.
+*   **[ORBI Business Operational Playbook](./ORBI_BUSINESS_OPERATIONAL_PLAYBOOK.md)**: Business model, B2C/B2B/B2B2C operating model, staff roles, merchant/agent operations, risk, support, and daily control-room procedures.
+*   **[Production Deployment](./PRODUCTION_DEPLOYMENT.md)**: Active production deployment checks, env requirements, TLS, migrations, workers, release automation, and rollback guidance.
+*   **[Environment Variables Reference](./ENVIRONMENT_VARIABLES_REFERENCE.md)**: Complete environment variable catalog.
+*   **[ORBI Admin Frontend API SDK](./ORBI_ADMIN_FRONTEND_API_SDK.md)**: Admin portal SDK, failover, activity accounting, safe mutations, and API groups.
+*   **[ORBI Talk Gateway Templates](./ORBI_TALK_GATEWAY_TEMPLATES.md)**: Official customer/staff communication template model and seed guidance.
+*   **[Financial Core Engine](./CORE_BANKING_ARCHITECTURE.md)**: Multi-tenant ledger, security, escrow, treasury, messaging, and FX architecture.
+*   **[Reconciliation Engine](./RECONCILIATION_ENGINE.md)**: Financial integrity, forensic auditing, and reconciliation operations.
 *   **[Provider Registry Contract](./PROVIDER_REGISTRY_CONTRACT.md)**: Admin/UI and backend contract for registry-driven providers.
-*   **[Universal Provider And Offline Gateway Status](./UNIVERSAL_PROVIDER_AND_OFFLINE_GATEWAY_STATUS.md)**: Current implementation status for routing, institutional settlements, deposit intents, and offline bridge flows.
-*   **[Agent, Merchant, and System Fee Flows](./AGENT_MERCHANT_FEE_FLOWS.md)**: How fees and commissions use `platform_fee_configs`.
-*   **[Mobile SDK Guide](./MOBILE_SDK_GUIDE.md)**: For iOS/Android developers.
-*   **[Quick Start Guide](./INTEGRATION_GUIDE.md)**: Get connected in 5 minutes.
-*   **[Vision & Philosophy](./manual.md)**: The "Why" behind ORBI.
+*   **[Project Structure](./PROJECT_STRUCTURE.md)**: Repository layout and ownership.
 
 ## 🚀 Core Features
 - **Orbi TrustBridge (Secure Escrow)**: Conditional payment system with PaySafe locking, multi-party release, and AI-assisted dispute resolution.
@@ -27,8 +22,8 @@ This is the **Sovereign Financial Operating System** powering the ORBI ecosystem
 - **Neural Sentinel AI (Security)**: Real-time behavioral risk analysis and fraud prevention for every ingress operation (<50ms latency).
 - **Next-Generation Security Architecture (9-Layer)**: True Zero-Trust model featuring Passkeys (FIDO2), Device Fingerprinting, Behavioral Biometrics, AI Fraud Detection, and Hardware Security Module (HSM) integration.
 - **Financial Core Engine (Core Banking)**: True Multi-Tenant Architecture (Individuals, Merchants, Marketplaces, Partners) with strict Row Level Security (RLS) isolation.
-- **Enterprise B2B Multi-Tenancy**: Corporate Treasury Goals, Departmental Cost Centers, and Hard Budget Enforcement.
-- **Multi-Tenant Merchant Architecture**: Users can own and manage multiple merchant accounts with dedicated wallets, settlement schedules, and fee configurations.
+- **Enterprise B2B Multi-Tenancy**: Corporate Treasury Goals, Departmental Cost Centers, organization-level limits, and Hard Budget Enforcement.
+- **Merchant And Agent Operations**: Merchants accept payments and settlement reporting; agents register customers, operate cash desks, manage float, and earn audited commissions.
 - **Transaction State Machine**: Strict lifecycle management (Created -> Authorized -> Settled -> Completed) with forensic auditability.
 - **Reconciliation Engine**: Continuous multi-layer verification (Internal, System, External) to ensure absolute ledger integrity.
 - **Atomic Multi-Leg Ledger**: Ensures fiscal integrity for every asset migration (Principal + Tax + Fee + Yield). Includes `append_ledger_entries_v1` for high-performance, atomic ledger updates.

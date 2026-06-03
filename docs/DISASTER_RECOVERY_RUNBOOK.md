@@ -211,7 +211,7 @@ These are planning targets until validated by restore drills.
 ## Drill Execution References
 
 - backup restore drill procedure: `docs/BACKUP_RESTORE_DRILL_PROCEDURE.md`
-- first drill execution plan: `docs/FIRST_BACKUP_RESTORE_DRILL_PLAN.md`
+- restore drill procedure: `docs/BACKUP_RESTORE_DRILL_PROCEDURE.md`
 - drill evidence generator: `node scripts/drill-report.mjs`
 
 ## Ownership

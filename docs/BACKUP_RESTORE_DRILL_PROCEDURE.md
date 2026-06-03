@@ -4,7 +4,7 @@
 
 This procedure defines how to run and document a backup restore drill for ORBI Institutional Core.
 
-For the first scheduled execution, use `docs/FIRST_BACKUP_RESTORE_DRILL_PLAN.md` alongside this procedure.
+This procedure is the canonical restore-drill document for both first-time drills and recurring drills.
 
 Use this procedure in:
 

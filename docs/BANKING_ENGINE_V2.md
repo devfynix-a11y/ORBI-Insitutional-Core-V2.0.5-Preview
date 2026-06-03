@@ -199,7 +199,7 @@ Categories have been upgraded to act as **Enterprise Budgets**.
 *   **Hard Limits**: If a budget has `hard_limit = TRUE`, the engine will physically block any transaction that exceeds the allocated amount for the given `period` (Monthly, Quarterly, Annual).
 *   **Budget Alerts**: The `budget_alerts` table tracks spending thresholds (e.g., 80% warning, 100% exceeded) and triggers real-time notifications to Finance admins.
 
-For full details, see the [Enterprise B2B Architecture](./ENTERPRISE_B2B_ARCHITECTURE.md) document.
+For the maintained business operating model, see the [ORBI Business Operational Playbook](./ORBI_BUSINESS_OPERATIONAL_PLAYBOOK.md).
 
 ---
 
