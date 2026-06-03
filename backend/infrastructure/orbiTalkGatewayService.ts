@@ -199,6 +199,73 @@ class OrbiTalkGatewayService {
         }
     }
 
+    async getEmailHealth(): Promise<{
+        success: boolean;
+        status: 'ACTIVE' | 'MISSING_CONFIG' | 'UNREACHABLE';
+        provider?: string | null;
+        configured?: boolean;
+        missing?: string[];
+        allowedSenders?: Array<{ email: string; sender: string }>;
+        raw?: any;
+    }> {
+        if (!this.apiKey || !this.baseUrl) {
+            orbiTalkGatewayLogger.error('orbi_talk_gateway.email_health_missing_configuration');
+            return {
+                success: false,
+                status: 'MISSING_CONFIG',
+                missing: [
+                    ...(!this.apiKey ? ['ORBI_TALK_GATEWAY_API_KEY'] : []),
+                    ...(!this.baseUrl ? ['ORBI_TALK_GATEWAY_URL'] : []),
+                ],
+            };
+        }
+
+        const endpoint = `${this.baseUrl}/api/email/health`;
+        try {
+            const response = await fetch(endpoint, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': this.apiKey,
+                },
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                orbiTalkGatewayLogger.error('orbi_talk_gateway.email_health_failed', {
+                    endpoint,
+                    status_code: response.status,
+                    missing: payload?.email?.missing || [],
+                });
+                return {
+                    success: false,
+                    status: 'MISSING_CONFIG',
+                    provider: payload?.email?.provider || null,
+                    configured: Boolean(payload?.email?.configured),
+                    missing: Array.isArray(payload?.email?.missing) ? payload.email.missing : [],
+                    allowedSenders: Array.isArray(payload?.email?.allowedSenders) ? payload.email.allowedSenders : [],
+                    raw: payload,
+                };
+            }
+
+            return {
+                success: true,
+                status: 'ACTIVE',
+                provider: payload?.email?.provider || null,
+                configured: Boolean(payload?.email?.configured),
+                missing: Array.isArray(payload?.email?.missing) ? payload.email.missing : [],
+                allowedSenders: Array.isArray(payload?.email?.allowedSenders) ? payload.email.allowedSenders : [],
+                raw: payload,
+            };
+        } catch (error) {
+            orbiTalkGatewayLogger.error('orbi_talk_gateway.email_health_exception', { endpoint }, error);
+            return {
+                success: false,
+                status: 'UNREACHABLE',
+                missing: [],
+            };
+        }
+    }
+
     async sendPush(fcmToken: string, title: string, body: string, data: Record<string, any> = {}, language: string = 'en', ownerUid?: string, ownerEmail?: string, requestId?: string): Promise<boolean> {
         if (!this.apiKey || !this.baseUrl) {
             orbiTalkGatewayLogger.error('orbi_talk_gateway.push_missing_configuration', { channel: 'push' });

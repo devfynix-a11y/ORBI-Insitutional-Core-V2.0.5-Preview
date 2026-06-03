@@ -242,12 +242,30 @@ export const registerInternalRoutes = (internal: Router) => {
     }
   });
 
-  internal.post('/email/test', requireWorkerScope(['email:test']), async (_req, res) => {
-    res.status(403).json({ success: false, error: 'EMAIL_SERVICE_DISABLED' });
+  internal.post('/email/test', requireWorkerScope(['email:test']), async (req, res) => {
+    const to = String(req.body?.to || '').trim();
+    if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      return res.status(400).json({
+        success: false,
+        error: 'EMAIL_RECIPIENT_INVALID',
+      });
+    }
+
+    try {
+      const result = await LogicCore.testEmail(to);
+      return res.status(result.success ? 200 : 502).json(result);
+    } catch (e: any) {
+      return res.status(500).json({ success: false, error: e.message || 'EMAIL_TEST_FAILED' });
+    }
   });
 
   internal.get('/email/verify', requireWorkerScope(['email:verify']), async (_req, res) => {
-    res.status(403).json({ success: false, error: 'EMAIL_SERVICE_DISABLED' });
+    try {
+      const result = await LogicCore.verifyEmailConfig();
+      return res.status(result.success ? 200 : 503).json(result);
+    } catch (e: any) {
+      return res.status(500).json({ success: false, error: e.message || 'EMAIL_VERIFY_FAILED' });
+    }
   });
 };
 

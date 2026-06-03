@@ -4,6 +4,7 @@ import { RedisManager } from '../enterprise/infrastructure/RedisManager.js';
 import { RedisClusterFactory } from '../infrastructure/RedisClusterFactory.js';
 import { getAdminSupabase } from '../../services/supabaseClient.js';
 import { orbiTalkGatewayService } from '../infrastructure/orbiTalkGatewayService.js';
+import { firebasePushService } from '../infrastructure/firebasePushService.js';
 import parsePhoneNumber from 'libphonenumber-js';
 import { logger } from '../infrastructure/logger.js';
 import crypto from 'crypto';
@@ -330,12 +331,21 @@ export class OTPService {
                 }, { messageType: 'transactional', language, fcmToken, channel: 'email', requestId });
             } else if (actualType === 'push' && fcmToken) {
                 otpLogger.info('otp.dispatch_channel_selected', { actor_id: userId, action, delivery_type: 'push', contact: actualContact, request_id: requestId });
-                await orbiTalkGatewayService.sendTemplate('OTP_Message', fcmToken, { 
-                    otp: code, 
-                    name: name,
-                    deviceName: deviceName || 'ORBI Mobile',
-                    androidHash: ANDROID_HASH 
-                }, { messageType: 'transactional', language, fcmToken, channel: 'push', requestId });
+                await firebasePushService.send({
+                    token: fcmToken,
+                    title: language === 'sw' ? 'Msimbo wa ORBI' : 'ORBI verification code',
+                    body: language === 'sw'
+                        ? `Msimbo wako wa ${deviceName || 'ORBI Mobile'} ni ${code}. Utaisha ndani ya dakika 5.`
+                        : `Your ${deviceName || 'ORBI Mobile'} verification code is ${code}. It expires in 5 minutes.`,
+                    data: {
+                        type: 'OTP_Message',
+                        action,
+                        requestId,
+                        deviceName: deviceName || 'ORBI Mobile',
+                        ...(ANDROID_HASH ? { androidHash: ANDROID_HASH } : {}),
+                    },
+                    requestId,
+                });
             }
             
             otpLogger.info('otp.dispatch_completed', { actor_id: userId, action, delivery_type: actualType, request_id: requestId });

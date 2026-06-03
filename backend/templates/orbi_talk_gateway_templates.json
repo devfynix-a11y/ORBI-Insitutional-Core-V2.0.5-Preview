@@ -18,6 +18,8 @@
     "channel": "email",
     "language": "en",
     "messageType": "transactional",
+    "subject": "Your ORBI verification code",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
     "body": "Hello {{name}}, your OTP for {{deviceName}} is {{otp}}. It expires in 5 minutes."
   },
   {
@@ -25,6 +27,8 @@
     "channel": "email",
     "language": "sw",
     "messageType": "transactional",
+    "subject": "Msimbo wako wa uthibitisho wa ORBI",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
     "body": "Habari {{name}}, OTP yako kwa kifaa {{deviceName}} ni {{otp}}. Itaisha ndani ya dakika 5."
   },
 
@@ -42,6 +46,24 @@
     "messageType": "promotional",
     "body": "ORBI Financial Technologies:\n\nHabari {{name}}, karibu ORBI! Akaunti yako imeamilishwa.\n\nEndelea kufurahia huduma zetu, ORBI tunathamini sana malengo yako!"
   },
+  {
+    "name": "Welcome_Message",
+    "channel": "email",
+    "language": "en",
+    "messageType": "transactional",
+    "subject": "Welcome to ORBI",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
+    "body": "Hello {{name}}, welcome to ORBI. Your account is now active and ready for secure financial services."
+  },
+  {
+    "name": "Welcome_Message",
+    "channel": "email",
+    "language": "sw",
+    "messageType": "transactional",
+    "subject": "Karibu ORBI",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
+    "body": "Habari {{name}}, karibu ORBI. Akaunti yako sasa imewashwa na iko tayari kwa huduma salama za kifedha."
+  },
 
   {
     "name": "Transfer_Sent",
@@ -56,6 +78,24 @@
     "language": "sw",
     "messageType": "transactional",
     "body": "ORBI Financial Technologies:\n\nKumb: {{refId}}. Umetuma {{currency}} {{amount}}/= kwenda kwa {{recipientName}} saa {{timestamp}}.\n\nEndelea kufurahia huduma zetu, ORBI tunathamini sana malengo yako!"
+  },
+  {
+    "name": "Transfer_Sent",
+    "channel": "email",
+    "language": "en",
+    "messageType": "transactional",
+    "subject": "ORBI transaction sent - {{refId}}",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
+    "body": "Ref: {{refId}}. You sent {{currency}} {{amount}}/= to {{recipientName}} at {{timestamp}}."
+  },
+  {
+    "name": "Transfer_Sent",
+    "channel": "email",
+    "language": "sw",
+    "messageType": "transactional",
+    "subject": "Muamala wa ORBI umetumwa - {{refId}}",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
+    "body": "Kumb: {{refId}}. Umetuma {{currency}} {{amount}}/= kwenda kwa {{recipientName}} saa {{timestamp}}."
   },
 
   {
@@ -72,6 +112,24 @@
     "messageType": "transactional",
     "body": "ORBI Financial Technologies:\n\nKumb: {{refId}}. Umepokea {{currency}} {{amount}}/= kutoka kwa {{senderName}} saa {{timestamp}}.\n\nEndelea kufurahia huduma zetu, ORBI tunathamini sana malengo yako!"
   },
+  {
+    "name": "Transfer_Received",
+    "channel": "email",
+    "language": "en",
+    "messageType": "transactional",
+    "subject": "ORBI funds received - {{refId}}",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
+    "body": "Ref: {{refId}}. You received {{currency}} {{amount}}/= from {{senderName}} at {{timestamp}}."
+  },
+  {
+    "name": "Transfer_Received",
+    "channel": "email",
+    "language": "sw",
+    "messageType": "transactional",
+    "subject": "Fedha za ORBI zimepokelewa - {{refId}}",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
+    "body": "Kumb: {{refId}}. Umepokea {{currency}} {{amount}}/= kutoka kwa {{senderName}} saa {{timestamp}}."
+  },
 
   {
     "name": "Security_Alert_Message",
@@ -86,6 +144,24 @@
     "language": "sw",
     "messageType": "transactional",
     "body": "ORBI Financial Technologies:\n\nKumb: {{refId}}. Tahadhari ya Usalama: {{subject}}\n\n{{body}}\n\nWasiliana nasi: +255764258114"
+  },
+  {
+    "name": "Security_Alert_Message",
+    "channel": "email",
+    "language": "en",
+    "messageType": "transactional",
+    "subject": "ORBI security alert - {{subject}}",
+    "fromEmail": "ORBI Security <security@orbifinancial.com>",
+    "body": "Ref: {{refId}}. Security Alert: {{subject}}\n\n{{body}}\n\nIf this was not you, contact ORBI support immediately."
+  },
+  {
+    "name": "Security_Alert_Message",
+    "channel": "email",
+    "language": "sw",
+    "messageType": "transactional",
+    "subject": "Tahadhari ya usalama ya ORBI - {{subject}}",
+    "fromEmail": "ORBI Security <security@orbifinancial.com>",
+    "body": "Kumb: {{refId}}. Tahadhari ya Usalama: {{subject}}\n\n{{body}}\n\nKama hukuwa wewe, wasiliana na ORBI mara moja."
   },
 
   {
@@ -173,6 +249,15 @@
   },
   {
     "name": "Escrow_Created",
+    "channel": "email",
+    "language": "en",
+    "messageType": "transactional",
+    "subject": "ORBI escrow created - {{refId}}",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
+    "body": "Ref: {{refId}}. Escrow of {{currency}} {{amount}}/= has been created for {{recipientName}}."
+  },
+  {
+    "name": "Escrow_Created",
     "channel": "whatsapp",
     "language": "en",
     "components": [
@@ -192,6 +277,15 @@
     "language": "en",
     "messageType": "transactional",
     "body": "ORBI Financial Technologies:\n\nRef: {{refId}}. Escrow of {{currency}} {{amount}}/= has been released to {{recipientName}}."
+  },
+  {
+    "name": "Escrow_Released",
+    "channel": "email",
+    "language": "en",
+    "messageType": "transactional",
+    "subject": "ORBI escrow released - {{refId}}",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
+    "body": "Ref: {{refId}}. Escrow of {{currency}} {{amount}}/= has been released to {{recipientName}}."
   },
   {
     "name": "Escrow_Released",
@@ -217,6 +311,15 @@
   },
   {
     "name": "Salary_Received",
+    "channel": "email",
+    "language": "en",
+    "messageType": "transactional",
+    "subject": "ORBI salary credited - {{month}}",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
+    "body": "Hello {{employeeName}}, your salary of {{currency}} {{amount}}/= for {{month}} has been credited to your ORBI account at {{timestamp}}. Ref: {{refId}}."
+  },
+  {
+    "name": "Salary_Received",
     "channel": "whatsapp",
     "language": "en",
     "components": [
@@ -236,6 +339,15 @@
     "language": "en",
     "messageType": "transactional",
     "body": "ORBI Financial Technologies:\n\nWithdrawal request of {{currency}} {{amount}}/= by {{employeeName}}. Reason: {{reason}}."
+  },
+  {
+    "name": "Treasury_Withdrawal_Request",
+    "channel": "email",
+    "language": "en",
+    "messageType": "transactional",
+    "subject": "ORBI treasury withdrawal request",
+    "fromEmail": "ORBI Admin <admin@orbifinancial.com>",
+    "body": "Treasury withdrawal request of {{currency}} {{amount}}/= by {{employeeName}}. Reason: {{reason}}."
   },
   {
     "name": "Treasury_Withdrawal_Request",
@@ -261,6 +373,15 @@
   },
   {
     "name": "Promo_Message",
+    "channel": "email",
+    "language": "en",
+    "messageType": "promotional",
+    "subject": "ORBI update",
+    "fromEmail": "ORBI Info <info@orbifinancial.com>",
+    "body": "{{body}}"
+  },
+  {
+    "name": "Promo_Message",
     "channel": "whatsapp",
     "language": "en",
     "components": [
@@ -283,6 +404,15 @@
   },
   {
     "name": "Transactional_Message",
+    "channel": "email",
+    "language": "en",
+    "messageType": "transactional",
+    "subject": "ORBI notification - {{refId}}",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
+    "body": "Ref: {{refId}}. {{body}}"
+  },
+  {
+    "name": "Transactional_Message",
     "channel": "whatsapp",
     "language": "en",
     "components": [
@@ -302,6 +432,15 @@
     "language": "en",
     "messageType": "transactional",
     "body": "Ref: {{refId}}. ORBI Financial Technologies:\n\nSecurity Alert: A new device '{{deviceName}}' has been used to access your account.\n\nIf this was not you, please contact support immediately: +255764258114"
+  },
+  {
+    "name": "New_Device_Alert",
+    "channel": "email",
+    "language": "en",
+    "messageType": "transactional",
+    "subject": "ORBI new device alert",
+    "fromEmail": "ORBI Security <security@orbifinancial.com>",
+    "body": "Ref: {{refId}}. A new device '{{deviceName}}' has been used to access your ORBI account.\n\nIf this was not you, please contact support immediately."
   },
   {
     "name": "New_Device_Alert",
@@ -351,6 +490,8 @@
     "channel": "email",
     "language": "en",
     "messageType": "transactional",
+    "subject": "ORBI merchant payment update - {{refId}}",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
     "body": "Ref: {{refId}}. Merchant payment update: {{status}} payment of {{currency}} {{amount}} in {{actorLabel}}."
   },
   {
@@ -358,6 +499,8 @@
     "channel": "email",
     "language": "sw",
     "messageType": "transactional",
+    "subject": "Taarifa ya malipo ya merchant - {{refId}}",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
     "body": "Kumb: {{refId}}. Taarifa ya malipo ya merchant: malipo ya {{currency}} {{amount}} katika {{actorLabel}} yako yapo kwenye hali ya {{status}}."
   },
   {
@@ -393,6 +536,8 @@
     "channel": "email",
     "language": "en",
     "messageType": "transactional",
+    "subject": "ORBI agent cash update - {{refId}}",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
     "body": "Ref: {{refId}}. Agent {{direction}} update: {{status}} amount {{currency}} {{amount}} in {{actorLabel}}."
   },
   {
@@ -400,6 +545,8 @@
     "channel": "email",
     "language": "sw",
     "messageType": "transactional",
+    "subject": "Taarifa ya fedha ya agent - {{refId}}",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
     "body": "Kumb: {{refId}}. Taarifa ya agent {{direction}}: kiasi cha {{currency}} {{amount}} katika {{actorLabel}} yako kiko kwenye hali ya {{status}}."
   },
   {
@@ -435,6 +582,8 @@
     "channel": "email",
     "language": "en",
     "messageType": "transactional",
+    "subject": "ORBI payment update - {{refId}}",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
     "body": "Ref: {{refId}}. Your payment of {{currency}} {{amount}} through {{actorLabel}} is {{status}}."
   },
   {
@@ -442,6 +591,8 @@
     "channel": "email",
     "language": "sw",
     "messageType": "transactional",
+    "subject": "Taarifa ya malipo ya ORBI - {{refId}}",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
     "body": "Kumb: {{refId}}. Malipo yako ya {{currency}} {{amount}} kupitia {{actorLabel}} yako kwenye hali ya {{status}}."
   },
   {
@@ -477,6 +628,8 @@
     "channel": "email",
     "language": "en",
     "messageType": "transactional",
+    "subject": "ORBI cash request update - {{refId}}",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
     "body": "Ref: {{refId}}. Your {{direction}} request of {{currency}} {{amount}} through {{actorLabel}} is {{status}}."
   },
   {
@@ -484,6 +637,8 @@
     "channel": "email",
     "language": "sw",
     "messageType": "transactional",
+    "subject": "Taarifa ya ombi la fedha - {{refId}}",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
     "body": "Kumb: {{refId}}. Ombi lako la {{direction}} la {{currency}} {{amount}} kupitia {{actorLabel}} yako kwenye hali ya {{status}}."
   },
   {
@@ -519,6 +674,8 @@
     "channel": "email",
     "language": "en",
     "messageType": "transactional",
+    "subject": "ORBI commission paid - {{refId}}",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
     "body": "Ref: {{refId}}. Commission paid: {{currency}} {{amount}} has been credited to {{actorLabel}}."
   },
   {
@@ -526,6 +683,8 @@
     "channel": "email",
     "language": "sw",
     "messageType": "transactional",
+    "subject": "Kamisheni ya ORBI imelipwa - {{refId}}",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
     "body": "Kumb: {{refId}}. Kamisheni imelipwa: {{currency}} {{amount}} imeingizwa kwenye {{actorLabel}}."
   },
   {
@@ -561,6 +720,8 @@
     "channel": "email",
     "language": "en",
     "messageType": "transactional",
+    "subject": "ORBI service customer registered - {{refId}}",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
     "body": "Ref: {{refId}}. {{customerName}} was registered successfully through {{actorLabel}}."
   },
   {
@@ -568,6 +729,8 @@
     "channel": "email",
     "language": "sw",
     "messageType": "transactional",
+    "subject": "Mteja wa huduma ya ORBI amesajiliwa - {{refId}}",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
     "body": "Kumb: {{refId}}. {{customerName}} amesajiliwa kwa mafanikio kupitia {{actorLabel}}."
   },
   {
@@ -603,6 +766,8 @@
     "channel": "email",
     "language": "en",
     "messageType": "transactional",
+    "subject": "ORBI service access approved - {{refId}}",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
     "body": "Ref: {{refId}}. Your ORBI service access has been approved. {{actorLabel}} is now enabled."
   },
   {
@@ -610,6 +775,8 @@
     "channel": "email",
     "language": "sw",
     "messageType": "transactional",
+    "subject": "Ufikiaji wa huduma ya ORBI umeidhinishwa - {{refId}}",
+    "fromEmail": "ORBI Financial <no-reply@orbifinancial.com>",
     "body": "Kumb: {{refId}}. Ufikiaji wako wa huduma za ORBI umeidhinishwa. {{actorLabel}} sasa imewezeshwa."
   }
 ]

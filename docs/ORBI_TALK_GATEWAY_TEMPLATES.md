@@ -1,6 +1,6 @@
 # ORBI Talk Gateway Message Templates
 
-This document outlines all the message templates used by the ORBI backend system, along with their required variables. These templates must be configured in your ORBI Talk Gateway to ensure SMS, push, and email notifications are formatted correctly.
+This document outlines all the message templates used by the ORBI backend system, along with their required variables. These templates must be configured in your ORBI Talk Gateway to ensure SMS, WhatsApp, and email notifications are formatted correctly.
 
 ## Architecture
 
@@ -10,12 +10,44 @@ This document outlines all the message templates used by the ORBI backend system
 
 ## How to Sync to ORBI Talk Gateway
 
-To update the templates on the ORBI Talk Gateway, copy the contents of `/docs/orbi_talk_gateway_templates.json` and import it into the ORBI Talk Gateway database. The gateway will automatically match the `name`, `channel`, and `language` fields when a request is received.
+To update the templates on the ORBI Talk Gateway, copy the contents of `/backend/templates/orbi_talk_gateway_templates.json` and import it into the ORBI Talk Gateway database. The gateway will automatically match the `name`, `channel`, and `language` fields when a request is received.
 
 > **⚠️ Important Naming Convention Note:**
 > There is a strict distinction between how templates are *stored* versus how they are *requested*:
 > * **Template Creation/Import (JSON):** When importing templates into the ORBI Talk Gateway database, the identifier field must be called `"name"` (e.g., `"name": "OTP_Message"`).
 > * **API Requests (POST):** When the backend sends a request to the ORBI Talk Gateway `/api/send-template` endpoint, the identifier field in the JSON payload must be called `"templateName"` (e.g., `"templateName": "OTP_Message"`).
+
+## Production Verification
+
+Before depending on email delivery from ORBI Core, verify the Talk Gateway email provider:
+
+```bash
+curl -X GET https://api.orbifinancial.com/api/internal/email/verify \
+  -H "x-worker-id: email-ops" \
+  -H "x-worker-scopes: email:verify" \
+  -H "x-worker-request-id: email-verify-$(date +%s)" \
+  -H "x-worker-timestamp: $(date -u +%s)" \
+  -H "x-worker-nonce: $(openssl rand -hex 16)" \
+  -H "x-worker-signature: <hmac-sha256-signature>"
+```
+
+Then send one controlled test email:
+
+```bash
+curl -X POST https://api.orbifinancial.com/api/internal/email/test \
+  -H "Content-Type: application/json" \
+  -H "x-worker-id: email-ops" \
+  -H "x-worker-scopes: email:test" \
+  -H "x-worker-request-id: email-test-$(date +%s)" \
+  -H "x-worker-timestamp: $(date -u +%s)" \
+  -H "x-worker-nonce: $(openssl rand -hex 16)" \
+  -H "x-worker-signature: <hmac-sha256-signature>" \
+  -d '{"to":"admin@orbifinancial.com"}'
+```
+
+For temporary non-production compatibility only, when `ORBI_ALLOW_LEGACY_INTERNAL_WORKER_AUTH=true` and mTLS policy allows the caller, the same endpoints may use `x-worker-secret` or `x-orbi-worker-secret` with `x-worker-id` and `x-worker-scopes`.
+
+Core uses Firebase Admin for mobile push notifications and ORBI Talk Gateway for SMS, WhatsApp, email, and template rendering. Do not route mobile push through ORBI Talk.
 
 ## Available Templates
 

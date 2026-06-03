@@ -187,19 +187,7 @@ class OrbiServer {
 
     async verifyEmailConfig() {
         console.info(`[OrbiServer] Email config verification via ORBI Talk Gateway.`);
-        const hasLegacyMessagingGatewayKey = Boolean(process.env.ORBI_GATEWAY_API_KEY);
-        const isConfigured = Boolean(
-            (process.env.ORBI_TALK_GATEWAY_API_KEY || process.env.ORBI_COMMUNICATIONS_GATEWAY_API_KEY || hasLegacyMessagingGatewayKey) &&
-            (
-                process.env.ORBI_TALK_GATEWAY_URL ||
-                process.env.ORBI_TALK_GATEWAY_BASE_URL ||
-                process.env.ORBI_COMMUNICATIONS_GATEWAY_URL ||
-                process.env.ORBI_COMMUNICATIONS_GATEWAY_BASE_URL ||
-                process.env.ORBI_GATEWAY_URL ||
-                (hasLegacyMessagingGatewayKey && process.env.ORBI_GATEWAY_BASE_URL)
-            )
-        );
-        return { status: isConfigured ? 'ACTIVE' : 'MISSING_CONFIG' };
+        return orbiTalkGatewayService.getEmailHealth();
     }
 
     // --- SENSITIVE ACTIONS & OTP ---
