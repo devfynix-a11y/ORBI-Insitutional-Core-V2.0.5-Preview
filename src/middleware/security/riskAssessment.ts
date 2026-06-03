@@ -1,12 +1,15 @@
 import { NextFunction, Request, Response } from 'express';
 import { RiskEngine } from '../../../backend/security/RiskEngine.js';
+import { SecurityOperationsEngine } from '../../../backend/security/SecurityOperationsEngine.js';
 
 export const riskAssessment = async (req: Request, res: Response, next: NextFunction) => {
   if (req.path === '/health' || req.path.startsWith('/public')) return next();
 
+  const profile = SecurityOperationsEngine.classify(req);
+
   try {
     const context = {
-      userId: (req as any).user?.sub,
+      userId: (req as any).session?.sub || (req as any).user?.sub,
       ip: req.ip || '0.0.0.0',
       appId: ((req.headers['x-orbi-app-id'] as string) || 'anonymous-node'),
     };
@@ -19,6 +22,7 @@ export const riskAssessment = async (req: Request, res: Response, next: NextFunc
         error: 'SECURITY_BLOCK',
         message: 'Request blocked by Risk Engine',
         score: risk.score,
+        operationClass: profile.class,
       });
     }
 
@@ -26,6 +30,19 @@ export const riskAssessment = async (req: Request, res: Response, next: NextFunc
     next();
   } catch (err: any) {
     console.error('[RiskEngine] Evaluation Fault:', err.message);
+    if (profile.failClosed) {
+      await SecurityOperationsEngine.alertSecurityBlock(req, profile, {
+        reason: 'RISK_ENGINE_FAULT',
+        errorMessage: err?.message || 'Unknown risk engine fault',
+      });
+      return res.status(503).json({
+        success: false,
+        error: 'RISK_ENGINE_UNAVAILABLE',
+        code: 'SECURITY_FAIL_CLOSED',
+        message: 'Security controls are temporarily unavailable for this sensitive operation. Please retry later or escalate to operations.',
+        operationClass: profile.class,
+      });
+    }
     next();
   }
 };

@@ -3,6 +3,7 @@ import { RedisManager } from '../enterprise/infrastructure/RedisManager.js';
 import { WAF } from './waf.js';
 import { Sentinel } from './sentinel.js';
 import { Audit } from './audit.js';
+import { SecurityOperationsEngine } from './SecurityOperationsEngine.js';
 
 export interface RiskSignal {
     type: string;
@@ -42,18 +43,36 @@ export class RiskEngine {
             totalScore += 50;
         }
 
+        const operationProfile = SecurityOperationsEngine.classify(req);
+        const velocity = await SecurityOperationsEngine.recordVelocity(req, operationProfile);
+
         // 2. Rate Behavior (Velocity Signals)
-        const rateKey = `risk:rate:${context.ip}`;
-        const rateCount = await RedisManager.get(rateKey) || 0;
-        if (rateCount > 50) {
-            signals.push({ type: 'HIGH_VELOCITY', score: 30, detail: `${rateCount} requests in window` });
-            totalScore += 30;
+        if (velocity.score > 0) {
+            signals.push({
+                type: 'HIGH_VELOCITY',
+                score: velocity.score,
+                detail: `${velocity.count} ${operationProfile.class} requests in current window`,
+            });
+            totalScore += velocity.score;
         }
 
         // 3. Device Trust
         if (context && context.appId === 'anonymous-node') {
             signals.push({ type: 'UNKNOWN_DEVICE', score: 40, detail: 'Request from unregistered client' });
             totalScore += 40;
+        }
+
+        if (!SecurityOperationsEngine.hasRequiredReason(req, operationProfile)) {
+            signals.push({ type: 'MISSING_GOVERNANCE_REASON', score: 70, detail: `${operationProfile.class} requires a readable reason.` });
+            totalScore += 70;
+        }
+
+        if (operationProfile.requiresIdempotency) {
+            const idempotencyKey = req.get?.('Idempotency-Key') || req.get?.('x-idempotency-key') || req.headers?.['idempotency-key'] || req.headers?.['x-idempotency-key'];
+            if (!idempotencyKey) {
+                signals.push({ type: 'MISSING_IDEMPOTENCY_KEY', score: 65, detail: `${operationProfile.class} requires an idempotency key.` });
+                totalScore += 65;
+            }
         }
 
         // 4. Sentinel AI Insight
@@ -70,8 +89,20 @@ export class RiskEngine {
         if (finalScore >= this.THRESHOLDS.TEMP_BLOCK) action = 'BLOCK';
         else if (finalScore >= this.THRESHOLDS.CHALLENGE) action = 'CHALLENGE';
 
+        if (action === 'CHALLENGE' && operationProfile.failClosed) {
+            signals.push({ type: 'FAIL_CLOSED_OPERATION', score: 0, detail: `${operationProfile.class} cannot proceed on challenge state.` });
+            action = 'BLOCK';
+        }
+
         // Log Risk Event
         await this.logRiskEvent(context.userId || 'anonymous', context.ip, finalScore, signals, action);
+        if (action === 'BLOCK') {
+            await SecurityOperationsEngine.alertSecurityBlock(req, operationProfile, {
+                reason: 'RISK_SCORE_BLOCK',
+                score: finalScore,
+                signals,
+            }).catch(() => {});
+        }
 
         return { score: finalScore, action, signals };
     }

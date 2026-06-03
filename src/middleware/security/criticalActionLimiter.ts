@@ -40,7 +40,7 @@ const criticalRules: LimitRule[] = [
     limit: 5,
     windowMs: 5 * minute,
     methods: ['POST'],
-    match: (path) => /^\/auth\/(verify|otp\/initiate|password\/reset\/(?:initiate|complete))$/.test(path),
+    match: (path) => /^\/auth\/(verify|otp\/initiate|password\/reset\/(?:initiate|complete)|account\/confirmation\/(?:initiate|complete))$/.test(path),
   },
   {
     name: 'financial_preview',
