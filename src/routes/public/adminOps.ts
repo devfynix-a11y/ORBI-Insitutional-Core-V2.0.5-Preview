@@ -3,6 +3,13 @@ import { z } from 'zod';
 import { Audit } from '../../../backend/security/audit.js';
 import { getAdminSupabase, getSupabase } from '../../../backend/supabaseClient.js';
 import { ServiceActorOps } from '../../../backend/features/ServiceActorOps.js';
+import {
+  agentFloatControlService,
+  b2bRiskDashboardService,
+  commissionDisputeService,
+  merchantSettlementReportsService,
+  organizationLimitsService,
+} from '../../../backend/features/b2b/index.js';
 import { Messaging } from '../../../backend/features/MessagingService.js';
 import { staffMessagingAdminService } from '../../../backend/features/StaffMessagingAdminService.js';
 import { SocketRegistry } from '../../../backend/infrastructure/SocketRegistry.js';
@@ -91,6 +98,63 @@ const StaffSystemSmsSchema = z.object({
   filters: MessageAudienceFiltersSchema.optional(),
   category: z.enum(['security', 'update', 'promo', 'info']).optional(),
   maxRecipients: z.coerce.number().int().min(1).max(500).optional(),
+});
+
+const B2B_READ_ROLES = [
+  'ADMIN',
+  'SUPER_ADMIN',
+  'AUDIT',
+  'ACCOUNTANT',
+  'CUSTOMER_CARE',
+  'RISK_OFFICER',
+  'FRAUD',
+] as const;
+
+const B2B_OPERATE_ROLES = [
+  'ADMIN',
+  'SUPER_ADMIN',
+  'ACCOUNTANT',
+  'RISK_OFFICER',
+] as const;
+
+const MerchantSettlementReportGenerateSchema = z.object({
+  merchantId: z.string().uuid(),
+  periodStart: z.string().min(1),
+  periodEnd: z.string().min(1),
+  currency: z.string().trim().length(3).optional(),
+});
+
+const AgentFloatControlSchema = z.object({
+  agentId: z.string().uuid(),
+  currency: z.string().trim().length(3).optional(),
+  minFloat: z.coerce.number().min(0).optional(),
+  maxFloat: z.coerce.number().min(0).optional(),
+  dailyCashInLimit: z.coerce.number().min(0).optional(),
+  dailyCashOutLimit: z.coerce.number().min(0).optional(),
+  status: z.enum(['active', 'paused', 'locked']).optional(),
+  reason: z.string().trim().min(5).max(500),
+});
+
+const CommissionDisputeOpenSchema = z.object({
+  commissionId: z.string().uuid(),
+  reason: z.string().trim().min(5).max(500),
+});
+
+const CommissionDisputeResolveSchema = z.object({
+  decision: z.enum(['resolved', 'rejected']),
+  resolutionNote: z.string().trim().min(5).max(1000),
+});
+
+const OrganizationLimitSchema = z.object({
+  organizationId: z.string().uuid(),
+  currency: z.string().trim().length(3).optional(),
+  maxAmountPerTx: z.coerce.number().min(0).optional(),
+  dailyLimit: z.coerce.number().min(0).optional(),
+  monthlyLimit: z.coerce.number().min(0).optional(),
+  makerCheckerThreshold: z.coerce.number().min(0).optional(),
+  autoFreezeThreshold: z.coerce.number().min(0).optional(),
+  status: z.enum(['active', 'paused', 'locked']).optional(),
+  reason: z.string().trim().min(5).max(500),
 });
 
 const AdminUserSearchSchema = z.object({
@@ -1050,6 +1114,161 @@ export const registerAdminOpsRoutes = (v1: Router, deps: Deps) => {
       res.json({ success: true, data: result });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.get('/admin/b2b/risk-dashboard', authenticate, async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, [...B2B_READ_ROLES])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const data = await b2bRiskDashboardService.summary(req.query as Record<string, unknown>);
+      res.json({ success: true, data });
+    } catch (e: any) {
+      res.status(e.message === 'DB_OFFLINE' ? 503 : 500).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.get('/admin/b2b/merchant-settlement-reports', authenticate, async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, [...B2B_READ_ROLES])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const data = await merchantSettlementReportsService.list(req.query as Record<string, unknown>);
+      res.json({ success: true, data });
+    } catch (e: any) {
+      res.status(e.message === 'DB_OFFLINE' ? 503 : 500).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.post('/admin/b2b/merchant-settlement-reports/generate', authenticate, validate(MerchantSettlementReportGenerateSchema), async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, [...B2B_OPERATE_ROLES])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const data = await merchantSettlementReportsService.generate({ ...req.body, actorId: session.sub });
+      res.json({ success: true, data });
+    } catch (e: any) {
+      res.status(e.message === 'DB_OFFLINE' ? 503 : 400).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.get('/admin/b2b/agent-float-controls', authenticate, async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, [...B2B_READ_ROLES])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const data = await agentFloatControlService.list(req.query as Record<string, unknown>);
+      res.json({ success: true, data });
+    } catch (e: any) {
+      res.status(e.message === 'DB_OFFLINE' ? 503 : 500).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.post('/admin/b2b/agent-float-controls', authenticate, validate(AgentFloatControlSchema), async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, [...B2B_OPERATE_ROLES])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const data = await agentFloatControlService.upsert({ ...req.body, actorId: session.sub });
+      res.json({ success: true, data });
+    } catch (e: any) {
+      res.status(e.message === 'DB_OFFLINE' ? 503 : 400).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.get('/admin/b2b/agent-float-dashboard', authenticate, async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, [...B2B_READ_ROLES])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const data = await agentFloatControlService.dashboard(req.query as Record<string, unknown>);
+      res.json({ success: true, data });
+    } catch (e: any) {
+      res.status(e.message === 'DB_OFFLINE' ? 503 : 500).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.get('/admin/b2b/commission-disputes', authenticate, async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, [...B2B_READ_ROLES])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const data = await commissionDisputeService.list(req.query as Record<string, unknown>);
+      res.json({ success: true, data });
+    } catch (e: any) {
+      res.status(e.message === 'DB_OFFLINE' ? 503 : 500).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.post('/admin/b2b/commission-disputes', authenticate, validate(CommissionDisputeOpenSchema), async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, [...B2B_OPERATE_ROLES])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const data = await commissionDisputeService.open({ ...req.body, actorId: session.sub });
+      res.json({ success: true, data });
+    } catch (e: any) {
+      res.status(e.message === 'DB_OFFLINE' ? 503 : 400).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.patch('/admin/b2b/commission-disputes/:id', authenticate, validate(CommissionDisputeResolveSchema), async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, [...B2B_OPERATE_ROLES])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const disputeId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const data = await commissionDisputeService.resolve(disputeId, { ...req.body, actorId: session.sub });
+      res.json({ success: true, data });
+    } catch (e: any) {
+      res.status(e.message === 'DB_OFFLINE' ? 503 : 400).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.get('/admin/b2b/organization-limits', authenticate, async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, [...B2B_READ_ROLES])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const data = await organizationLimitsService.list(req.query as Record<string, unknown>);
+      res.json({ success: true, data });
+    } catch (e: any) {
+      res.status(e.message === 'DB_OFFLINE' ? 503 : 500).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.post('/admin/b2b/organization-limits', authenticate, validate(OrganizationLimitSchema), async (req, res) => {
+    const session = (req as any).session;
+    if (!sessionHasAnyRole(session, [...B2B_OPERATE_ROLES])) {
+      return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
+    }
+
+    try {
+      const data = await organizationLimitsService.upsert(req.body, session.sub);
+      res.json({ success: true, data });
+    } catch (e: any) {
+      res.status(e.message === 'DB_OFFLINE' ? 503 : 400).json({ success: false, error: e.message });
     }
   });
 
