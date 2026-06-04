@@ -8,6 +8,7 @@ This index defines the canonical ORBI Institutional Core documentation set. Olde
 | :--- | :--- | :--- |
 | Business and operating model | [ORBI Business Operational Playbook](./ORBI_BUSINESS_OPERATIONAL_PLAYBOOK.md) | Business model, B2C/B2B/B2B2C operations, merchant/agent/customer flows, operational controls, revenue model, and control-room playbook. |
 | Production deployment | [Production Deployment](./PRODUCTION_DEPLOYMENT.md) | Active production deployment requirements, environment variables, TLS, migrations, background workers, rollback, and release automation. |
+| System separation | [ORBI System Separation](./ORBI_SYSTEM_SEPARATION.md) | Boundary between ORBI Core, ORBI Pay Gateway, and ORBI Talk Gateway. |
 | Environment variables | [Environment Variables Reference](./ENVIRONMENT_VARIABLES_REFERENCE.md) | Complete variable catalog for production and staging environments. |
 | Admin portal and SDK | [ORBI Admin Frontend API SDK](./ORBI_ADMIN_FRONTEND_API_SDK.md) | Admin frontend API contract, failover behavior, activity accounting, and SDK usage. |
 | Configuration studio | [Admin Config Setup UI Contract](./ADMIN_CONFIG_SETUP_UI_CONTRACT.md) | Provider, FX, routing, fee, and bootstrap configuration contracts. |

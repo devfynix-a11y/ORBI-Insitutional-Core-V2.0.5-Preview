@@ -137,7 +137,7 @@ export const mountProviderRoutes = (
         success: false,
         error: 'CORE_PROVIDER_GATEWAY_ROUTES_DISABLED',
         message:
-          'External payment provider execution is isolated in ORBI Payment Gateway. Use ORBI_GATEWAY_BASE_URL/gateway.orbifinancial.com for provider collections, payouts, refunds, and provider webhooks.',
+          'External payment provider execution is isolated in ORBI Pay Gateway. Use ORBI_PAY_GATEWAY_BASE_URL/pay.orbifinancial.com for provider collections, payouts, refunds, and provider webhooks.',
       });
     };
 

@@ -2,6 +2,12 @@
 
 ORBI Core is the banking engine and ledger authority. ORBI Pay Gateway is a separate external-rail service hosted outside this repository.
 
+It is separate from ORBI Talk Gateway:
+
+- ORBI Pay Gateway handles external money rails and provider callbacks.
+- ORBI Talk Gateway handles SMS, email, push, message templates, and delivery queues.
+- ORBI Core remains the banking, ledger, risk, and control authority.
+
 Standalone gateway folder during local development:
 
 ```txt
@@ -61,7 +67,7 @@ When the standalone gateway is used, Core must not run legacy provider-gateway e
 ```env
 ORBI_ENABLE_CORE_PROVIDER_GATEWAY_ROUTES=false
 ORBI_ALLOW_STUB_PROVIDER_RECONCILIATION=false
-ORBI_GATEWAY_BASE_URL=https://gateway.orbifinancial.com
+ORBI_PAY_GATEWAY_BASE_URL=https://pay.orbifinancial.com
 ```
 
 Live settlement must require trusted provider proof from ORBI Pay Gateway, a verified provider webhook, provider API reconciliation, or admin dual-control evidence before Core posts ledger entries.
@@ -74,7 +80,7 @@ Admin Portal reads Core gateway readiness through:
 GET /api/admin/payment-gateway/readiness
 ```
 
-Core checks `ORBI_GATEWAY_BASE_URL` and reports gateway reachability/readiness without exposing provider secrets.
+Core checks `ORBI_PAY_GATEWAY_BASE_URL` and reports ORBI Pay Gateway reachability/readiness without exposing provider secrets.
 
 ## Internal mTLS Roadmap
 

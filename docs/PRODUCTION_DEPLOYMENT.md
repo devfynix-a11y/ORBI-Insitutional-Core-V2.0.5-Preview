@@ -43,7 +43,7 @@
 - `REDIS_ALLOW_INSECURE_TLS=false`
 - `ORBI_TLS_ENABLED=true` with valid `ORBI_TLS_CERT_PATH` and `ORBI_TLS_KEY_PATH` when terminating TLS directly on the Node server
 - `ORBI_TALK_GATEWAY_API_KEY` and `ORBI_TALK_GATEWAY_URL` for SMS/email/push/template delivery
-- `ORBI_GATEWAY_BASE_URL` only for the payment gateway/payment bridge, if enabled
+- `ORBI_PAY_GATEWAY_BASE_URL` only for ORBI Pay Gateway, if enabled
 - `ORBI_WEBHOOK_MAX_AGE_SECONDS`
 - `ORBI_WEBHOOK_REPLAY_WINDOW_SECONDS`
 - `ORBI_PROVIDER_TIMEOUT_MS`

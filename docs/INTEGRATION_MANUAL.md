@@ -129,7 +129,7 @@ The IAM system enforces **Zero-Trust Identity Quarantine (DIQ)**. New nodes star
 | `GET` | `/v1/admin/transactions/:id/ledger` | Admin/Audit | Detailed forensic ledger legs for a transaction. |
 | `PATCH` | `/v1/admin/users/{id}/status` | Admin/HR | Update user account status (active/blocked/frozen). |
 | `PATCH` | `/v1/admin/users/{id}/profile` | Admin/HR | Update user profile details (KYC, Name, etc). |
-| `POST` | `/v1/messaging/email` | Admin | Send system email notifications via ORBI Gateway. |
+| `POST` | `/v1/messaging/email` | Admin | Send system email notifications via ORBI Talk Gateway. |
 | `GET` | `/v1/service-access/requests/my` | Protected | List the current public user's merchant/agent access requests. |
 | `POST` | `/v1/service-access/requests` | Protected | Create a merchant or agent access request for ORBI review. |
 | `GET` | `/v1/admin/service-access/requests` | Admin/Customer Care/HR | Review queue for pending merchant/agent access requests. |

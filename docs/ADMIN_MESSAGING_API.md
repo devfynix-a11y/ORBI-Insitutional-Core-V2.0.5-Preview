@@ -4,10 +4,10 @@ This note documents the new staff/admin messaging flow for ORBI Backend.
 
 ## Principles
 
-- Official ORBI notifications are template-driven from ORBI Gateway.
+- Official ORBI notifications are template-driven from ORBI Talk Gateway.
 - ORBI Backend does not define a second custom template system.
-- Staff search and select available gateway templates by name.
-- Backend resolves the audience and dispatches the selected gateway template.
+- Staff search and select available ORBI Talk templates by name.
+- Backend resolves the audience and dispatches the selected ORBI Talk template.
 - Only system custom SMS may bypass templates.
 
 ## Auth
@@ -300,10 +300,10 @@ Staff-created/custom templates should be treated as staff outreach templates. Th
 
 ## Notes
 
-- Official notifications continue to prefer gateway templates.
-- Older backend dispatch calls now fall back to gateway-safe defaults:
+- Official notifications continue to prefer ORBI Talk templates.
+- Older backend dispatch calls now fall back to ORBI Talk-safe defaults:
   - `Security_Alert_Message`
   - `Transactional_Message`
   - `Promo_Message`
 - Mobile push to client apps is handled directly by ORBI Backend via Firebase Admin.
-- Gateway remains the source of truth for message templates.
+- ORBI Talk Gateway remains the source of truth for message templates.

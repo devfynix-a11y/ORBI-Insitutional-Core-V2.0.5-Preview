@@ -103,13 +103,13 @@ Send a POST request to `/v1/transactions/settle`.
 Send a POST request to `/v1/messaging/email`.
 *   **Requires**: `ADMIN` or `SUPER_ADMIN` role.
 *   **Payload**: `{ "to": "user@example.com", "subject": "Hello", "text": "Welcome to Orbi" }`
-*   **Note**: All messaging is handled via the internal **ORBI Gateway**.
+*   **Note**: All messaging is handled via **ORBI Talk Gateway**.
 
 ### Step 6: Admin Partner Registry API
 Manage external payment providers dynamically without code changes.
 *   **Requires**: `ADMIN`, `SUPER_ADMIN`, or `IT` role.
 *   **Base Endpoint**: `/api/admin/partners`
-*   **Alerts**: The system automatically sends alerts via the **ORBI Gateway** to the `ADMIN_ALERT_EMAIL` and `ADMIN_ALERT_PHONE` (configured in environment) when a reconciliation discrepancy is detected between internal vaults and external partners.
+*   **Alerts**: The system automatically sends alerts via **ORBI Talk Gateway** to the `ADMIN_ALERT_EMAIL` and `ADMIN_ALERT_PHONE` (configured in environment) when a reconciliation discrepancy is detected between internal vaults and external partners.
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |

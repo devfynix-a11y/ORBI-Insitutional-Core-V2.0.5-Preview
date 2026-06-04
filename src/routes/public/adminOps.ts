@@ -502,7 +502,7 @@ const envNumber = (key: string, fallback: number): number => {
 const complianceNodeZones = (): ComplianceNodeZone[] => {
   const primaryUrl = envString('ORBI_ORACLE_CORE_BASE_URL', envString('ORBI_PRIMARY_CORE_BASE_URL', 'https://api.orbifinancial.com'));
   const googleUrl = envString('ORBI_GOOGLE_CORE_BASE_URL', envString('ORBI_FALLBACK_CORE_BASE_URL', 'https://go-api.orbifinancial.com'));
-  const gatewayUrl = envString('ORBI_GATEWAY_BASE_URL', 'https://gateway.orbifinancial.com');
+  const gatewayUrl = envString('ORBI_PAY_GATEWAY_BASE_URL', envString('ORBI_GATEWAY_BASE_URL', 'https://pay.orbifinancial.com'));
 
   return [
     {

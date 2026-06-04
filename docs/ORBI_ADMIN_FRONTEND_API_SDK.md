@@ -20,10 +20,10 @@ Google fallback ORBI Core:
 VITE_ORBI_FALLBACK_API_BASE_URL=https://go-api.orbifinancial.com
 ```
 
-Gateway backend:
+ORBI Pay Gateway:
 
 ```env
-VITE_ORBI_GATEWAY_BASE_URL=https://gateway.orbifinancial.com
+VITE_ORBI_PAY_GATEWAY_BASE_URL=https://pay.orbifinancial.com
 ```
 
 App identity:
@@ -70,7 +70,7 @@ import { OrbiAdminSdk } from './orbi-admin-sdk';
 export const orbi = new OrbiAdminSdk({
   apiBaseUrl: import.meta.env.VITE_ORBI_API_BASE_URL,
   fallbackApiBaseUrl: import.meta.env.VITE_ORBI_FALLBACK_API_BASE_URL,
-  gatewayBaseUrl: import.meta.env.VITE_ORBI_GATEWAY_BASE_URL,
+  payGatewayBaseUrl: import.meta.env.VITE_ORBI_PAY_GATEWAY_BASE_URL,
   appId: import.meta.env.VITE_ORBI_APP_ID,
   appOrigin: import.meta.env.VITE_ORBI_APP_ORIGIN,
   enableSafeReadFallback: import.meta.env.VITE_ORBI_ENABLE_SAFE_READ_FALLBACK === 'true',
@@ -96,7 +96,7 @@ Expected live endpoints:
 ```txt
 https://api.orbifinancial.com/health
 https://go-api.orbifinancial.com/health
-https://gateway.orbifinancial.com/health
+https://pay.orbifinancial.com/health
 ```
 
 If `health.diagnose()` works in Node but fails in the browser, the likely issue is CORS or frontend origin configuration, not the SDK request path. Add the admin frontend origin to `ORBI_ALLOWED_ORIGINS` on the backend and restart the backend container.
@@ -289,7 +289,7 @@ Use this for the Risk/IT Ops dashboard timeline that shows operational complianc
 
 - `ORBI-PRIMARY-CORE`: `https://api.orbifinancial.com`, primary core API. This can run on Oracle or another primary VM provider.
 - `ORBI-GCP-CORE-FALLBACK`: `https://go-api.orbifinancial.com`, fallback core API.
-- `ORBI-GATEWAY-EDGE`: `https://gateway.orbifinancial.com`, gateway/provider edge.
+- `ORBI-PAY-GATEWAY-EDGE`: `https://pay.orbifinancial.com`, external provider/payment rail edge.
 - `ORBI-LEDGER-AUTHORITY`: ledger/audit/balance authority.
 - `ORBI-ADMIN-OPS`: staff/admin control plane.
 - `ORBI-PROVIDER-RAILS`: external provider rails and callback network.
