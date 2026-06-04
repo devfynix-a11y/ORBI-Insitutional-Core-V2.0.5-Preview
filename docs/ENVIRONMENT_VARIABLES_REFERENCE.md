@@ -102,7 +102,7 @@ This reference is for maintainability only. It intentionally does not store secr
 | `ORBI_GATEWAY_BASE_URL` | Runtime | Non-secret | Yes | Yes | Base URL for the payment gateway/payment bridge, not for SMS/email templates. |
 | `PAYMENT_GATEWAY_PORT` | Runtime | Non-secret | No | Payment gateway only | Local port for the standalone ORBI Payment Gateway service. |
 | `PAYMENT_GATEWAY_PUBLIC_BASE_URL` | Runtime | Non-secret | No | Payment gateway only | Public base URL for external payment provider traffic, commonly `https://gateway.orbifinancial.com`. |
-| `PAYMENT_GATEWAY_PROVIDER_MODE` | Runtime | Non-secret | No | Payment gateway only | Gateway provider mode. Use `mock` for sandbox and explicit provider codes for live adapters. |
+| `PAYMENT_GATEWAY_PROVIDER_MODE` | Runtime | Non-secret | No | Payment gateway only | Gateway provider mode. Use `live` for production provider adapters. |
 | `ORBI_CORE_INTERNAL_BASE_URL` | Runtime | Non-secret | No | Payment gateway only | Private or localhost Core URL used by the payment gateway for signed callbacks. |
 | `ORBI_CORE_TRUSTED_GATEWAY_EVENT_PATH` | Runtime | Non-secret | No | Payment gateway only | Core internal route for normalized trusted provider events. |
 | `PAYMENT_GATEWAY_WORKER_ID` | Runtime | Non-secret | No | Payment gateway only | Internal worker identity sent to Core by the payment gateway. |

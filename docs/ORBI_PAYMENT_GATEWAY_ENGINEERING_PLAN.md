@@ -55,15 +55,13 @@ payment-gateway/
   src/core/orbiCoreClient.ts
   src/security/internalSigner.ts
   src/adapters/AdapterRegistry.ts
-  src/adapters/mock/MockProviderAdapter.ts
   src/adapters/selcom/SelcomAdapter.ts
   src/adapters/mpesa-tanzania/MpesaTanzaniaAdapter.ts
   tests/internalSigner.test.ts
 ```
 
-The first adapters are scaffolded to keep the production contract stable:
+The first real adapter slots are scaffolded to keep the production contract stable:
 
-- `mock`: local/sandbox simulation.
 - `selcom`: Tanzania payment rail placeholder awaiting final provider contract mapping.
 - `mpesa-tanzania`: M-Pesa Tanzania placeholder awaiting final provider contract mapping.
 
@@ -235,7 +233,7 @@ Gateway:
 ```env
 PAYMENT_GATEWAY_PORT=3100
 PAYMENT_GATEWAY_PUBLIC_BASE_URL=https://gateway.orbifinancial.com
-PAYMENT_GATEWAY_PROVIDER_MODE=mock
+PAYMENT_GATEWAY_PROVIDER_MODE=live
 ORBI_CORE_INTERNAL_BASE_URL=http://127.0.0.1:3000
 ORBI_CORE_TRUSTED_GATEWAY_EVENT_PATH=/api/internal/gateway/provider-events
 PAYMENT_GATEWAY_WORKER_ID=orbi-payment-gateway
@@ -302,11 +300,11 @@ location /gateway/ {
 
 ## Rollout
 
-1. Run gateway locally with `mock`.
+1. Run gateway locally with provider credentials disabled and confirm it reports adapter readiness accurately.
 2. Confirm `/health`, `/ready`, and `/v1/providers`.
 3. Configure Core `WORKER_SIGNING_SECRET`.
 4. Configure gateway with the same `WORKER_SIGNING_SECRET`.
-5. Test `POST /v1/webhooks/mock` against a known Core reference.
+5. Test a signed provider webhook with a known Core reference after a real adapter contract is configured.
 6. Put Nginx in front of `127.0.0.1:3100`.
 7. Enable provider credentials one rail at a time.
 8. Add proxy mTLS, then direct mTLS once cert lifecycle is stable.

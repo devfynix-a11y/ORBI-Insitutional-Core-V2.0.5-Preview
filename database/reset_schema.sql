@@ -5189,14 +5189,54 @@ END $$;
 -- 7B. PAYMENT PROVIDER BOOTSTRAP (IDEMPOTENT)
 DO $$
 BEGIN
-    -- Provider registry seeds are placeholders only; production operators must configure real providers before activation.
+    -- Production safety: do not seed placeholder payment providers.
+    -- Operators must create real providers, settlement accounts, routing, and fee rules from the Admin Configuration Studio.
+    DELETE FROM public.provider_routing_rules
+    WHERE provider_id IN (
+        '10000000-0000-0000-0000-000000000101',
+        '10000000-0000-0000-0000-000000000102',
+        '10000000-0000-0000-0000-000000000103',
+        '10000000-0000-0000-0000-000000000104'
+    )
+    OR id IN (
+        '10000000-0000-0000-0000-000000000301',
+        '10000000-0000-0000-0000-000000000302',
+        '10000000-0000-0000-0000-000000000303',
+        '10000000-0000-0000-0000-000000000304',
+        '10000000-0000-0000-0000-000000000305',
+        '10000000-0000-0000-0000-000000000306',
+        '10000000-0000-0000-0000-000000000307'
+    );
+
+    DELETE FROM public.institutional_payment_accounts
+    WHERE provider_id IN (
+        '10000000-0000-0000-0000-000000000101',
+        '10000000-0000-0000-0000-000000000102',
+        '10000000-0000-0000-0000-000000000103',
+        '10000000-0000-0000-0000-000000000104'
+    )
+    OR id BETWEEN '10000000-0000-0000-0000-000000000201'::uuid
+          AND '10000000-0000-0000-0000-000000000212'::uuid;
+
+    DELETE FROM public.financial_partners
+    WHERE id IN (
+        '10000000-0000-0000-0000-000000000101',
+        '10000000-0000-0000-0000-000000000102',
+        '10000000-0000-0000-0000-000000000103',
+        '10000000-0000-0000-0000-000000000104'
+    )
+    OR api_base_url LIKE 'https://api.example.com/%';
+
+    RETURN;
+
+    -- Legacy placeholder seeds intentionally disabled below. Keep the historical block unreachable for migration diff traceability.
     INSERT INTO public.financial_partners (
         id, name, type, supported_currencies, icon, color, api_base_url,
         provider_metadata, mapping_config, logic_type, status
     ) VALUES
     (
         '10000000-0000-0000-0000-000000000101',
-        'ORBI M-Pesa Tanzania',
+        'DISABLED_LEGACY_MOBILE_MONEY_PLACEHOLDER',
         'mobile_money',
         ARRAY['TZS']::TEXT[],
         'smartphone',
@@ -5226,7 +5266,7 @@ BEGIN
     ),
     (
         '10000000-0000-0000-0000-000000000102',
-        'ORBI Bank Transfer Tanzania',
+        'DISABLED_LEGACY_BANK_PLACEHOLDER',
         'bank',
         ARRAY['TZS', 'USD']::TEXT[],
         'account_balance',
@@ -5256,7 +5296,7 @@ BEGIN
     ),
     (
         '10000000-0000-0000-0000-000000000103',
-        'ORBI Card Gateway',
+        'DISABLED_LEGACY_CARD_PLACEHOLDER',
         'card',
         ARRAY['TZS', 'USD']::TEXT[],
         'credit_card',
@@ -5285,7 +5325,7 @@ BEGIN
     ),
     (
         '10000000-0000-0000-0000-000000000104',
-        'ORBI Crypto Gateway',
+        'DISABLED_LEGACY_CRYPTO_PLACEHOLDER',
         'crypto',
         ARRAY['USDT', 'BTC', 'ETH']::TEXT[],
         'currency_bitcoin',

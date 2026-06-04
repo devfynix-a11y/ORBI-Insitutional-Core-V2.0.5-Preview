@@ -17,7 +17,7 @@ export const config = {
   env: process.env.NODE_ENV || 'development',
   port: Number(process.env.PAYMENT_GATEWAY_PORT || 3100),
   publicBaseUrl: process.env.PAYMENT_GATEWAY_PUBLIC_BASE_URL || 'https://gateway.orbifinancial.com',
-  providerMode: process.env.PAYMENT_GATEWAY_PROVIDER_MODE || 'mock',
+  providerMode: process.env.PAYMENT_GATEWAY_PROVIDER_MODE || 'live',
   core: {
     baseUrl: process.env.ORBI_CORE_INTERNAL_BASE_URL || 'http://127.0.0.1:3000',
     trustedGatewayEventPath:

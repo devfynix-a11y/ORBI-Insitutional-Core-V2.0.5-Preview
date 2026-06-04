@@ -1,5 +1,4 @@
 import type { PaymentProviderAdapter } from '../types.js';
-import { MockProviderAdapter } from './mock/MockProviderAdapter.js';
 import { MpesaTanzaniaAdapter } from './mpesa-tanzania/MpesaTanzaniaAdapter.js';
 import { SelcomAdapter } from './selcom/SelcomAdapter.js';
 
@@ -7,7 +6,7 @@ export class AdapterRegistry {
   private readonly adapters = new Map<string, PaymentProviderAdapter>();
 
   constructor() {
-    [new MockProviderAdapter(), new SelcomAdapter(), new MpesaTanzaniaAdapter()].forEach((adapter) => {
+    [new SelcomAdapter(), new MpesaTanzaniaAdapter()].forEach((adapter) => {
       this.adapters.set(adapter.code, adapter);
     });
   }
