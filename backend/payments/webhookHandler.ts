@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { TransactionService } from '../../ledger/transactionService.js';
 import { Audit } from '../security/audit.js';
 import { getAdminSupabase, getSupabase } from '../../services/supabaseClient.js';
@@ -238,6 +239,116 @@ class WebhookHandler {
                 eventLedgerId: receipt.record.id,
                 message: String(applicationError?.message || applicationError),
             });
+            throw applicationError;
+        }
+    }
+
+    public async handleTrustedGatewayEvent(input: {
+        providerId: string;
+        reference: string;
+        status: 'completed' | 'failed' | 'processing' | 'pending';
+        message: string;
+        providerEventId?: string;
+        rawStatus?: string;
+        payload?: any;
+        sourceIp?: string;
+        headers?: Record<string, string | undefined>;
+    }) {
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) throw new Error('DB_OFFLINE');
+
+        const partner = await this.resolvePartner(sb, input.providerId);
+        if (!partner) {
+            webhookLogger.error('trusted_gateway.partner_unknown', { provider_id: input.providerId });
+            throw new Error('PROVIDER_NOT_FOUND');
+        }
+
+        const payload = input.payload || {
+            reference: input.reference,
+            status: input.status,
+            message: input.message,
+            providerEventId: input.providerEventId,
+            rawStatus: input.rawStatus,
+        };
+        const providerEventId = input.providerEventId || `${input.providerId}:${input.reference}:${input.status}`;
+        const dedupeKey = `${partner.id}:trusted-gateway:${providerEventId}`;
+        const replayKey = `${dedupeKey}:${input.status}`;
+        const payloadSha256 = crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+
+        const receipt = await providerWebhookEventLedger.recordReceipt({
+            partner_id: partner.id,
+            provider_event_id: providerEventId,
+            dedupe_key: dedupeKey,
+            replay_key: replayKey,
+            event_timestamp: new Date().toISOString(),
+            timestamp_source: 'trusted_gateway',
+            signature_status: 'trusted_gateway',
+            freshness_status: 'fresh',
+            verification_status: 'verified',
+            payload_sha256: payloadSha256,
+            payload,
+            raw_headers: input.headers || {},
+            source_ip: input.sourceIp || null,
+        });
+
+        if (receipt.duplicate && ['applied', 'processing', 'rejected'].includes(receipt.record.application_status)) {
+            await Audit.log('FINANCIAL', 'SYSTEM', 'TRUSTED_GATEWAY_DUPLICATE_IGNORED', {
+                partnerId: partner.id,
+                providerEventId,
+                dedupeKey,
+                applicationStatus: receipt.record.application_status,
+            });
+            return { duplicate: true, eventId: receipt.record.id };
+        }
+
+        await providerWebhookEventLedger.markParsed(receipt.record.id, {
+            reference: input.reference,
+            normalized_status: input.status,
+            raw_status: input.rawStatus || input.status,
+            provider_event_id: providerEventId,
+        });
+
+        const claimed = await providerWebhookEventLedger.claimForApplication(receipt.record.id);
+        if (!claimed) {
+            await Audit.log('FINANCIAL', 'SYSTEM', 'TRUSTED_GATEWAY_DUPLICATE_IGNORED', {
+                partnerId: partner.id,
+                providerEventId,
+                dedupeKey,
+                reference: input.reference,
+            });
+            return { duplicate: true, eventId: receipt.record.id };
+        }
+
+        try {
+            const result = await this.applyNormalizedCallback(
+                sb,
+                partner,
+                {
+                    reference: input.reference,
+                    status: input.status,
+                    message: input.message,
+                    providerEventId,
+                },
+                payload,
+            );
+            await providerWebhookEventLedger.markApplied(receipt.record.id);
+            await Audit.log('FINANCIAL', 'SYSTEM', 'TRUSTED_GATEWAY_EVENT_PROCESSED', {
+                partnerId: partner.id,
+                provider: partner.name,
+                reference: input.reference,
+                status: input.status,
+                providerEventId,
+                eventLedgerId: receipt.record.id,
+                route: result?.route || 'TRANSACTION',
+                movementId: result?.movementId || null,
+            });
+            return result;
+        } catch (applicationError: any) {
+            await providerWebhookEventLedger.markFailed(
+                receipt.record.id,
+                applicationError?.message || 'TRUSTED_GATEWAY_APPLICATION_FAILED',
+                String(applicationError?.message || applicationError),
+            );
             throw applicationError;
         }
     }

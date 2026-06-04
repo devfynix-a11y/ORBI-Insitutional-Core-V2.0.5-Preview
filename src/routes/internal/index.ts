@@ -1,8 +1,10 @@
 import type { Express, NextFunction, Request, Response, Router } from 'express';
+import { z } from 'zod';
 import { getAdminSupabase, getSupabase } from '../../../backend/supabaseClient.js';
 import { BankingEngineService } from '../../../backend/ledger/transactionEngine.js';
 import { Audit } from '../../../backend/security/audit.js';
 import { Server as LogicCore } from '../../../backend/server.js';
+import { Webhooks } from '../../../backend/payments/webhookHandler.js';
 import {
   createInternalWorkerMiddleware,
   getInternalAuditMetadata,
@@ -21,6 +23,24 @@ const requireWorkerScope = (requiredScopes: string[]) =>
     }
     return next();
   };
+
+const TrustedGatewayEventSchema = z.object({
+  providerId: z.string().min(1),
+  reference: z.string().min(1),
+  status: z.enum(['completed', 'failed', 'processing', 'pending']),
+  message: z.string().min(1).max(1000),
+  providerEventId: z.string().min(1).optional(),
+  rawStatus: z.string().min(1).optional(),
+  payload: z.record(z.string(), z.unknown()).optional(),
+});
+
+const flattenHeaders = (headers: Request['headers']): Record<string, string | undefined> =>
+  Object.fromEntries(
+    Object.entries(headers).map(([key, value]) => [
+      key,
+      Array.isArray(value) ? value.join(',') : value === undefined ? undefined : String(value),
+    ]),
+  );
 
 export const registerInternalRoutes = (internal: Router) => {
   internal.use(createInternalWorkerMiddleware());
@@ -220,6 +240,52 @@ export const registerInternalRoutes = (internal: Router) => {
       res.json({ success: true, data: result });
     } catch (e: any) {
       res.status(400).json({ success: false, error: e.message });
+    }
+  });
+
+  internal.post('/gateway/provider-events', requireWorkerScope(['gateway:events:write']), async (req, res) => {
+    const parsed = TrustedGatewayEventSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        error: 'TRUSTED_GATEWAY_EVENT_INVALID',
+        issues: parsed.error.issues.map((issue) => ({
+          path: issue.path.join('.'),
+          message: issue.message,
+        })),
+      });
+    }
+
+    const workerId = String((req as any).internalWorker?.id || req.get('x-worker-id') || 'payment-gateway');
+
+    try {
+      const result = await Webhooks.handleTrustedGatewayEvent({
+        ...parsed.data,
+        sourceIp: req.ip,
+        headers: flattenHeaders(req.headers),
+      });
+
+      await Audit.log('FINANCIAL', workerId, 'TRUSTED_GATEWAY_EVENT_RECEIVED', {
+        providerId: parsed.data.providerId,
+        reference: parsed.data.reference,
+        status: parsed.data.status,
+        providerEventId: parsed.data.providerEventId || null,
+        rawStatus: parsed.data.rawStatus || null,
+        ...getInternalAuditMetadata(req),
+      });
+
+      return res.json({ success: true, data: result });
+    } catch (e: any) {
+      const message = String(e?.message || e || 'TRUSTED_GATEWAY_EVENT_FAILED');
+      const statusCode = message === 'PROVIDER_NOT_FOUND' ? 404 : message === 'DB_OFFLINE' ? 503 : 500;
+      await Audit.log('FINANCIAL', workerId, 'TRUSTED_GATEWAY_EVENT_FAILED', {
+        providerId: parsed.data.providerId,
+        reference: parsed.data.reference,
+        status: parsed.data.status,
+        error: message,
+        ...getInternalAuditMetadata(req),
+      });
+      return res.status(statusCode).json({ success: false, error: message });
     }
   });
 

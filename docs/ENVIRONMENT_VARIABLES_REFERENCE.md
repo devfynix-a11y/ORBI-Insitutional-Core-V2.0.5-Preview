@@ -100,6 +100,25 @@ This reference is for maintainability only. It intentionally does not store secr
 | Variable | Type | Secret | In Shared Env | In `.env.example` | Purpose |
 | --- | --- | --- | --- | --- | --- |
 | `ORBI_GATEWAY_BASE_URL` | Runtime | Non-secret | Yes | Yes | Base URL for the payment gateway/payment bridge, not for SMS/email templates. |
+| `PAYMENT_GATEWAY_PORT` | Runtime | Non-secret | No | Payment gateway only | Local port for the standalone ORBI Payment Gateway service. |
+| `PAYMENT_GATEWAY_PUBLIC_BASE_URL` | Runtime | Non-secret | No | Payment gateway only | Public base URL for external payment provider traffic, commonly `https://gateway.orbifinancial.com`. |
+| `PAYMENT_GATEWAY_PROVIDER_MODE` | Runtime | Non-secret | No | Payment gateway only | Gateway provider mode. Use `mock` for sandbox and explicit provider codes for live adapters. |
+| `ORBI_CORE_INTERNAL_BASE_URL` | Runtime | Non-secret | No | Payment gateway only | Private or localhost Core URL used by the payment gateway for signed callbacks. |
+| `ORBI_CORE_TRUSTED_GATEWAY_EVENT_PATH` | Runtime | Non-secret | No | Payment gateway only | Core internal route for normalized trusted provider events. |
+| `PAYMENT_GATEWAY_WORKER_ID` | Runtime | Non-secret | No | Payment gateway only | Internal worker identity sent to Core by the payment gateway. |
+| `PAYMENT_GATEWAY_WORKER_SCOPES` | Runtime | Non-secret | No | Payment gateway only | Comma-separated worker scopes. Must include `gateway:events:write`. |
+| `WORKER_KEY_ID` | Runtime | Non-secret | No | Payment gateway only | Optional key id label for signed internal worker callbacks. |
+| `PAYMENT_GATEWAY_INTERNAL_MTLS_ENABLED` | Runtime | Non-secret | No | Payment gateway only | Enables direct client-certificate mTLS for gateway-to-Core HTTPS callbacks. |
+| `PAYMENT_GATEWAY_INTERNAL_MTLS_CERT_PATH` | Runtime | Non-secret | No | Payment gateway only | Payment gateway client certificate path for direct mTLS. |
+| `PAYMENT_GATEWAY_INTERNAL_MTLS_KEY_PATH` | Runtime | Secret path | No | Payment gateway only | Payment gateway client private key path for direct mTLS. |
+| `PAYMENT_GATEWAY_INTERNAL_MTLS_CA_PATH` | Runtime | Non-secret | No | Payment gateway only | Internal CA path used to validate Core during direct mTLS. |
+| `PAYMENT_GATEWAY_INTERNAL_MTLS_REJECT_UNAUTHORIZED` | Runtime | Non-secret | No | Payment gateway only | Keeps Core certificate validation strict for direct mTLS. |
+| `SELCOM_API_BASE_URL` | Runtime | Non-secret | No | Payment gateway only | Selcom adapter API base URL. |
+| `SELCOM_API_KEY` | Runtime | Secret | No | Payment gateway only | Selcom adapter API key. |
+| `SELCOM_API_SECRET` | Runtime | Secret | No | Payment gateway only | Selcom adapter API secret. |
+| `MPESA_TZ_API_BASE_URL` | Runtime | Non-secret | No | Payment gateway only | M-Pesa Tanzania adapter API base URL. |
+| `MPESA_TZ_API_KEY` | Runtime | Secret | No | Payment gateway only | M-Pesa Tanzania adapter API key. |
+| `MPESA_TZ_API_SECRET` | Runtime | Secret | No | Payment gateway only | M-Pesa Tanzania adapter API secret. |
 
 ## Monitoring And Alerts
 
