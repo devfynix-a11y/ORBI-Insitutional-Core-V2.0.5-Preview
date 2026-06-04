@@ -121,6 +121,12 @@
   - `ORBI_INTERNAL_MTLS_CA_PATH=/path/to/internal-ca.pem`
   - workers must connect directly to Node and present valid client certs
   - use this only where infrastructure allows direct TLS connectivity to the service
+- Next payment gateway hardening milestone:
+  - start with signed HMAC callbacks while `ORBI_INTERNAL_MTLS_MODE=optional`
+  - deploy internal CA and gateway/Core service certificates outside Git
+  - verify gateway callbacks with both mTLS evidence and HMAC signatures in staging
+  - switch production to `ORBI_INTERNAL_MTLS_MODE=required` only after callback smoke tests pass
+  - keep HMAC signatures enabled permanently because mTLS proves service identity while HMAC proves request integrity
 
 ## Database Migration Order
 1. Apply core schema: `database/reset_schema.sql`

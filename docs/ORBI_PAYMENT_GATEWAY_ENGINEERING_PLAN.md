@@ -234,6 +234,87 @@ ORBI_INTERNAL_MTLS_CA_PATH=/etc/orbi/certs/orbi-internal-ca.crt
 
 HMAC signatures remain enabled even after mTLS. mTLS proves service identity at transport level; HMAC proves request integrity and replay safety at application level.
 
+## Next Development: Internal mTLS Rollout
+
+This is the next security-hardening milestone after the payment gateway bridge is stable with signed HMAC callbacks. Do not remove HMAC when mTLS is introduced; the two controls protect different layers.
+
+### Target Outcome
+
+Core and Payment Gateway must only accept internal money-movement callbacks from authenticated ORBI services:
+
+```txt
+Payment Gateway client certificate
++ trusted internal CA
++ HMAC request signature
++ timestamp freshness
++ nonce/idempotency replay protection
+= trusted internal provider event
+```
+
+### Development Tasks
+
+1. Certificate authority setup
+   - Create an ORBI internal service CA outside Git.
+   - Store the CA private key in a restricted secrets vault or offline operator store.
+   - Define certificate naming such as `orbi-core.internal` and `orbi-payment-gateway.internal`.
+   - Document certificate expiry, rotation owner, and emergency revocation procedure.
+
+2. Gateway-to-Core mTLS
+   - Add Payment Gateway HTTPS client support for:
+     - `PAYMENT_GATEWAY_INTERNAL_MTLS_CERT_PATH`
+     - `PAYMENT_GATEWAY_INTERNAL_MTLS_KEY_PATH`
+     - `PAYMENT_GATEWAY_INTERNAL_MTLS_CA_PATH`
+     - `PAYMENT_GATEWAY_INTERNAL_MTLS_REJECT_UNAUTHORIZED=true`
+   - Keep `WORKER_SIGNING_SECRET` enabled for every callback.
+   - Keep `x-worker-id`, `x-worker-scopes`, timestamp, nonce, body hash, and request signature validation.
+
+3. Core mTLS verification
+   - Start with proxy-attested mTLS if Nginx or a service mesh terminates TLS.
+   - Move to direct mTLS only when Core has a private HTTPS listener and certificate lifecycle is proven.
+   - Set `ORBI_INTERNAL_MTLS_MODE=required` only after smoke tests pass.
+
+4. Deployment sequencing
+   - Deploy certificates first.
+   - Enable gateway mTLS client configuration in staging.
+   - Confirm Core still accepts signed HMAC callbacks.
+   - Turn on mTLS verification in `optional` mode.
+   - Verify mTLS evidence appears in audit/operator logs.
+   - Switch production to `required`.
+
+5. Operator visibility
+   - Add readiness output showing:
+     - mTLS mode
+     - certificate paths configured/not configured
+     - certificate expiry days remaining, without exposing certificate material
+     - last successful mTLS-authenticated gateway callback
+   - Surface failed mTLS verification as a high-priority operator alert.
+
+### Acceptance Criteria
+
+- Gateway cannot call Core internal callback endpoint without a valid client certificate when mTLS is required.
+- A valid client certificate without a valid HMAC signature is still rejected.
+- A valid HMAC signature without mTLS is rejected once `ORBI_INTERNAL_MTLS_MODE=required`.
+- Replayed callback nonce/idempotency keys are rejected.
+- Operator logs show why a request was rejected without exposing secrets.
+- `/health` and public admin/mobile routes remain unaffected.
+
+### Rollback Plan
+
+If mTLS causes production callback failure:
+
+1. Keep HMAC validation enabled.
+2. Temporarily set `ORBI_INTERNAL_MTLS_MODE=optional`.
+3. Restart/reload Core and Gateway.
+4. Confirm provider callbacks recover.
+5. Investigate certificate path, CA mismatch, expired certificate, proxy headers, or private listener routing before returning to `required`.
+
+### Do Not Do Yet
+
+- Do not expose internal mTLS endpoints publicly.
+- Do not put CA keys, service private keys, or generated certificates in Git.
+- Do not remove HMAC signatures after mTLS.
+- Do not enable account-crediting callbacks from the gateway until Core verifies both service identity and request integrity.
+
 ## Environment Variables
 
 Gateway:
