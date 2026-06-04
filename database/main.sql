@@ -304,7 +304,100 @@ BEGIN
     ) THEN
         ALTER TABLE public.platform_vaults ADD COLUMN lock_reason TEXT;
     END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema='public' AND table_name='platform_vaults' AND column_name='metadata'
+    ) THEN
+        ALTER TABLE public.platform_vaults ADD COLUMN metadata JSONB DEFAULT '{}'::jsonb;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema='public' AND table_name='platform_vaults' AND column_name='updated_at'
+    ) THEN
+        ALTER TABLE public.platform_vaults ADD COLUMN updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+    END IF;
 END $$;
+
+COMMENT ON COLUMN public.platform_vaults.metadata IS
+  'JSON metadata. External reconciliation reads provider_id, providerId, provider_code, providerCode, partner_id, partnerId, partner_code, or partnerCode from this object.';
+
+CREATE INDEX IF NOT EXISTS idx_platform_vaults_metadata_provider_id
+  ON public.platform_vaults ((metadata->>'provider_id'));
+
+CREATE INDEX IF NOT EXISTS idx_platform_vaults_metadata_provider_code
+  ON public.platform_vaults ((metadata->>'provider_code'));
+
+CREATE OR REPLACE FUNCTION public.set_platform_vault_partner_mapping(
+  p_vault_id UUID,
+  p_provider_id UUID DEFAULT NULL,
+  p_provider_code TEXT DEFAULT NULL
+)
+RETURNS public.platform_vaults
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_partner RECORD;
+  v_vault public.platform_vaults%ROWTYPE;
+  v_provider_code TEXT;
+BEGIN
+  IF p_provider_id IS NULL AND BTRIM(COALESCE(p_provider_code, '')) = '' THEN
+    RAISE EXCEPTION 'PROVIDER_MAPPING_REQUIRED';
+  END IF;
+
+  IF p_provider_id IS NOT NULL THEN
+    SELECT * INTO v_partner FROM public.financial_partners WHERE id = p_provider_id LIMIT 1;
+  ELSE
+    SELECT *
+      INTO v_partner
+      FROM public.financial_partners
+     WHERE BTRIM(LOWER(provider_metadata->>'provider_code')) = BTRIM(LOWER(p_provider_code))
+     LIMIT 1;
+  END IF;
+
+  IF v_partner.id IS NULL THEN
+    RAISE EXCEPTION 'FINANCIAL_PARTNER_NOT_FOUND';
+  END IF;
+
+  v_provider_code := BTRIM(COALESCE(v_partner.provider_metadata->>'provider_code', p_provider_code, v_partner.name));
+
+  UPDATE public.platform_vaults
+     SET metadata = COALESCE(metadata, '{}'::jsonb)
+       || jsonb_build_object(
+            'provider_id', v_partner.id,
+            'provider_code', v_provider_code,
+            'partner_id', v_partner.id,
+            'partner_code', v_provider_code,
+            'provider_mapping_updated_at', NOW()
+          ),
+         updated_at = NOW()
+   WHERE id = p_vault_id
+   RETURNING * INTO v_vault;
+
+  IF v_vault.id IS NULL THEN
+    RAISE EXCEPTION 'PLATFORM_VAULT_NOT_FOUND';
+  END IF;
+
+  RETURN v_vault;
+END;
+$$;
+
+CREATE OR REPLACE VIEW public.platform_vault_provider_mapping_gaps AS
+SELECT
+  pv.id,
+  pv.name,
+  pv.vault_role,
+  pv.currency,
+  pv.status,
+  pv.metadata,
+  pv.created_at,
+  pv.updated_at
+FROM public.platform_vaults pv
+WHERE COALESCE(pv.status, 'active') = 'active'
+  AND (
+    NULLIF(BTRIM(COALESCE(pv.metadata->>'provider_id', pv.metadata->>'providerId', pv.metadata->>'partner_id', pv.metadata->>'partnerId')), '') IS NULL
+    AND NULLIF(BTRIM(COALESCE(pv.metadata->>'provider_code', pv.metadata->>'providerCode', pv.metadata->>'partner_code', pv.metadata->>'partnerCode')), '') IS NULL
+  );
 
 CREATE TABLE IF NOT EXISTS public.transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -5348,6 +5441,72 @@ BEGIN
         status = EXCLUDED.status,
         updated_at = NOW();
 END $$;
+
+WITH base_fee_configs(flow_code, transaction_model, operation_type, direction, rail) AS (
+  VALUES
+    ('CORE_TRANSACTION', 'CORE_LEDGER', 'CORE_TRANSACTION', 'INTERNAL_TO_INTERNAL', 'WALLET'),
+    ('INTERNAL_TRANSFER', 'WALLET_TRANSFER', 'LEDGER_TRANSFER', 'INTERNAL_TO_INTERNAL', 'WALLET'),
+    ('EXTERNAL_PAYMENT', 'EXTERNAL_MOBILE_MONEY', 'DISBURSEMENT_REQUEST', 'INTERNAL_TO_EXTERNAL', 'MOBILE_MONEY'),
+    ('BILL_PAYMENT', 'BILL_PAYMENT', 'DISBURSEMENT_REQUEST', 'INTERNAL_TO_EXTERNAL', 'MOBILE_MONEY'),
+    ('WITHDRAWAL', 'EXTERNAL_MOBILE_MONEY', 'DISBURSEMENT_REQUEST', 'INTERNAL_TO_EXTERNAL', 'MOBILE_MONEY'),
+    ('DEPOSIT', 'EXTERNAL_MOBILE_MONEY', 'COLLECTION_REQUEST', 'EXTERNAL_TO_INTERNAL', 'MOBILE_MONEY'),
+    ('EXTERNAL_TO_INTERNAL', 'EXTERNAL_MOBILE_MONEY', 'COLLECTION_REQUEST', 'EXTERNAL_TO_INTERNAL', 'MOBILE_MONEY'),
+    ('INTERNAL_TO_EXTERNAL', 'EXTERNAL_MOBILE_MONEY', 'DISBURSEMENT_REQUEST', 'INTERNAL_TO_EXTERNAL', 'MOBILE_MONEY'),
+    ('EXTERNAL_TO_EXTERNAL', 'EXTERNAL_MOBILE_MONEY', 'TRANSFER_REQUEST', 'EXTERNAL_TO_EXTERNAL', 'MOBILE_MONEY'),
+    ('MERCHANT_PAYMENT', 'MERCHANT_PAYMENT', 'DISBURSEMENT_REQUEST', 'INTERNAL_TO_EXTERNAL', 'MOBILE_MONEY'),
+    ('AGENT_CASH_DEPOSIT', 'AGENT_CASH', 'COLLECTION_REQUEST', 'EXTERNAL_TO_INTERNAL', 'MOBILE_MONEY'),
+    ('AGENT_CASH_WITHDRAWAL', 'AGENT_CASH', 'DISBURSEMENT_REQUEST', 'INTERNAL_TO_EXTERNAL', 'MOBILE_MONEY'),
+    ('AGENT_REFERRAL_COMMISSION', 'SERVICE_COMMISSION', 'COMMISSION_POSTING', 'INTERNAL_TO_INTERNAL', 'WALLET'),
+    ('AGENT_CASH_COMMISSION', 'SERVICE_COMMISSION', 'COMMISSION_POSTING', 'INTERNAL_TO_INTERNAL', 'WALLET'),
+    ('CARD_SETTLEMENT', 'CARD_SETTLEMENT', 'SETTLEMENT', 'EXTERNAL_TO_INTERNAL', 'CARD_GATEWAY'),
+    ('GATEWAY_SETTLEMENT', 'GATEWAY_SETTLEMENT', 'SETTLEMENT', 'EXTERNAL_TO_INTERNAL', 'WALLET'),
+    ('FX_CONVERSION', 'FX_CONVERSION', 'FX_CONVERSION', 'INTERNAL_TO_INTERNAL', 'WALLET'),
+    ('TENANT_SETTLEMENT_PAYOUT', 'TENANT_SETTLEMENT_PAYOUT', 'DISBURSEMENT_REQUEST', 'INTERNAL_TO_EXTERNAL', 'BANK'),
+    ('SYSTEM_OPERATION', 'SYSTEM_OPERATION', 'SYSTEM_OPERATION', 'INTERNAL_TO_INTERNAL', 'WALLET')
+)
+INSERT INTO public.platform_fee_configs (
+  name,
+  flow_code,
+  transaction_model,
+  operation_type,
+  direction,
+  rail,
+  percentage_rate,
+  fixed_amount,
+  minimum_fee,
+  tax_rate,
+  gov_fee_rate,
+  stamp_duty_fixed,
+  priority,
+  status,
+  metadata
+)
+SELECT
+  'Base ' || flow_code || ' fee policy',
+  flow_code,
+  transaction_model,
+  operation_type,
+  direction,
+  rail,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  1000,
+  'ACTIVE',
+  jsonb_build_object(
+    'seeded_by', 'database/main.sql',
+    'purpose', 'base production fee policy; update rates in admin/config before monetized launch'
+  )
+FROM base_fee_configs seed
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM public.platform_fee_configs existing
+  WHERE existing.flow_code = seed.flow_code
+    AND existing.name = 'Base ' || seed.flow_code || ' fee policy'
+);
 
 -- 8. EVENT SOURCING LAYER
 CREATE TABLE IF NOT EXISTS public.financial_events (
