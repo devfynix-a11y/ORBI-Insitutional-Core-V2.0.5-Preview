@@ -12,7 +12,7 @@ This index defines the canonical ORBI Institutional Core documentation set. Olde
 | Admin portal and SDK | [ORBI Admin Frontend API SDK](./ORBI_ADMIN_FRONTEND_API_SDK.md) | Admin frontend API contract, failover behavior, activity accounting, and SDK usage. |
 | Configuration studio | [Admin Config Setup UI Contract](./ADMIN_CONFIG_SETUP_UI_CONTRACT.md) | Provider, FX, routing, fee, and bootstrap configuration contracts. |
 | Messaging templates | [ORBI Talk Gateway Templates](./ORBI_TALK_GATEWAY_TEMPLATES.md) | Official ORBI Talk template model, template families, variables, channels, and import guidance. |
-| Payment gateway | [ORBI Payment Gateway Engineering Plan](./ORBI_PAYMENT_GATEWAY_ENGINEERING_PLAN.md) | External payment rail gateway architecture, Core callback trust boundary, provider adapters, and internal mTLS rollout. |
+| Payment gateway integration | [ORBI Pay Gateway Integration](./ORBI_PAYMENT_GATEWAY_INTEGRATION.md) | Core-side trust boundary for the standalone ORBI Pay Gateway service, callback signing, readiness, and production safety rules. |
 | Provider routing | [Provider Registry Contract](./PROVIDER_REGISTRY_CONTRACT.md) | Financial partner registry contract and routing metadata. |
 | Provider adapters | [Provider Adapter Architecture](./PROVIDER_ADAPTER_ARCHITECTURE.md) | Provider execution, adapter contracts, retry/failover hooks, and compatibility boundaries. |
 | Financial core | [Core Banking Architecture](./CORE_BANKING_ARCHITECTURE.md) | Core ledger, tenants, security, escrow, treasury, messaging, and FX model. |

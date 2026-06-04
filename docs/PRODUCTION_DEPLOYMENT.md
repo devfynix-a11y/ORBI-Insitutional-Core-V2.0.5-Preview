@@ -131,6 +131,12 @@
 ## Payment Gateway Production Safety Rule
 When the standalone ORBI Payment Gateway is used for external provider collections, payouts, refunds, and webhooks, Core must not run legacy provider-gateway execution routes.
 
+Gateway source and deployment docs live outside this Core repository:
+
+```txt
+D:\FYNIX\ORBI\ORBI CORE\ORBI PAY GATEWAY
+```
+
 Keep these unset or explicitly false in production:
 
 ```env
