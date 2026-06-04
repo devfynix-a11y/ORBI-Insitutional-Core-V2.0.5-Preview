@@ -87,13 +87,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_phone_unique
 ON public.users (phone)
 WHERE phone IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_users_pending_activation_expiry
-ON public.users (activation_expires_at)
-WHERE account_status IN ('pending_confirmation', 'unconfirmed', 'inactive');
-
-CREATE INDEX IF NOT EXISTS idx_users_account_status_reason
-ON public.users(account_status, status_reason_code, status_changed_at DESC);
-
 DO $$
 BEGIN
     ALTER TABLE public.users ALTER COLUMN email DROP NOT NULL;
@@ -129,6 +122,13 @@ BEGIN
         ALTER TABLE public.users ADD COLUMN status_changed_by TEXT;
     END IF;
 END $$;
+
+CREATE INDEX IF NOT EXISTS idx_users_pending_activation_expiry
+ON public.users (activation_expires_at)
+WHERE account_status IN ('pending_confirmation', 'unconfirmed', 'inactive');
+
+CREATE INDEX IF NOT EXISTS idx_users_account_status_reason
+ON public.users(account_status, status_reason_code, status_changed_at DESC);
 
 -- Compatibility View for user_profiles
 CREATE OR REPLACE VIEW public.user_profiles AS SELECT * FROM public.users;

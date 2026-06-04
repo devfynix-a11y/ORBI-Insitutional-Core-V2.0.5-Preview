@@ -3,6 +3,16 @@
 -- unconfirmed identities are terminated by backend cleanup.
 
 ALTER TABLE public.users
+    ADD COLUMN IF NOT EXISTS auth_confirmed_at TIMESTAMP WITH TIME ZONE,
+    ADD COLUMN IF NOT EXISTS activation_expires_at TIMESTAMP WITH TIME ZONE,
+    ADD COLUMN IF NOT EXISTS activation_method TEXT;
+
+ALTER TABLE public.staff
+    ADD COLUMN IF NOT EXISTS auth_confirmed_at TIMESTAMP WITH TIME ZONE,
+    ADD COLUMN IF NOT EXISTS activation_expires_at TIMESTAMP WITH TIME ZONE,
+    ADD COLUMN IF NOT EXISTS activation_method TEXT;
+
+ALTER TABLE public.users
     ALTER COLUMN activation_expires_at SET DEFAULT (NOW() + INTERVAL '24 hours');
 
 ALTER TABLE public.staff
