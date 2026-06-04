@@ -128,6 +128,20 @@
   - switch production to `ORBI_INTERNAL_MTLS_MODE=required` only after callback smoke tests pass
   - keep HMAC signatures enabled permanently because mTLS proves service identity while HMAC proves request integrity
 
+## Payment Gateway Production Safety Rule
+When the standalone ORBI Payment Gateway is used for external provider collections, payouts, refunds, and webhooks, Core must not run legacy provider-gateway execution routes.
+
+Keep these unset or explicitly false in production:
+
+```env
+ORBI_ENABLE_CORE_PROVIDER_GATEWAY_ROUTES=false
+ORBI_ALLOW_STUB_PROVIDER_RECONCILIATION=false
+```
+
+- `ORBI_ENABLE_CORE_PROVIDER_GATEWAY_ROUTES` is only a temporary migration switch for old Core `/v1/gateway/*` provider-execution routes.
+- `ORBI_ALLOW_STUB_PROVIDER_RECONCILIATION` is only for non-production settlement lab tests.
+- Live settlement must require trusted provider proof from ORBI Payment Gateway, a verified provider webhook, provider API reconciliation, or admin dual-control evidence before Core posts ledger entries.
+
 ## Database Migration Order
 1. Apply core schema: `database/reset_schema.sql`
 2. Apply main schema updates: `database/main.sql`
