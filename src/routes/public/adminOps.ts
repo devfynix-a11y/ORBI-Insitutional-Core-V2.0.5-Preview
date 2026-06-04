@@ -264,8 +264,8 @@ type RiskGeoBucket = {
 type ComplianceNodeZone = {
   id: string;
   name: string;
-  provider: 'oracle' | 'gcp' | 'gateway' | 'supabase' | 'admin' | 'external';
-  role: 'core_api_primary' | 'core_api_fallback' | 'gateway_edge' | 'ledger_authority' | 'admin_ops' | 'provider_rails';
+  provider: 'oracle' | 'gcp' | 'orbi_pay' | 'supabase' | 'admin' | 'external';
+  role: 'core_api_primary' | 'core_api_fallback' | 'pay_gateway_edge' | 'ledger_authority' | 'admin_ops' | 'provider_rails';
   baseUrl?: string;
   healthEndpoint?: string;
   regionCode: string;
@@ -502,7 +502,7 @@ const envNumber = (key: string, fallback: number): number => {
 const complianceNodeZones = (): ComplianceNodeZone[] => {
   const primaryUrl = envString('ORBI_ORACLE_CORE_BASE_URL', envString('ORBI_PRIMARY_CORE_BASE_URL', 'https://api.orbifinancial.com'));
   const googleUrl = envString('ORBI_GOOGLE_CORE_BASE_URL', envString('ORBI_FALLBACK_CORE_BASE_URL', 'https://go-api.orbifinancial.com'));
-  const gatewayUrl = envString('ORBI_PAY_GATEWAY_BASE_URL', envString('ORBI_GATEWAY_BASE_URL', 'https://pay.orbifinancial.com'));
+  const payGatewayUrl = envString('ORBI_PAY_GATEWAY_BASE_URL', 'https://pay.orbifinancial.com');
 
   return [
     {
@@ -540,21 +540,21 @@ const complianceNodeZones = (): ComplianceNodeZone[] => {
       active: true,
     },
     {
-      id: 'ORBI-GATEWAY-EDGE',
-      name: 'Gateway Edge',
-      provider: 'gateway',
-      role: 'gateway_edge',
-      baseUrl: gatewayUrl,
-      healthEndpoint: `${gatewayUrl}/health`,
-      regionCode: envString('ORBI_GATEWAY_REGION', 'edge-global'),
-      jurisdiction: envString('ORBI_GATEWAY_JURISDICTION', 'GLOBAL'),
+      id: 'ORBI-PAY-GATEWAY-EDGE',
+      name: 'ORBI Pay Gateway Edge',
+      provider: 'orbi_pay',
+      role: 'pay_gateway_edge',
+      baseUrl: payGatewayUrl,
+      healthEndpoint: `${payGatewayUrl}/health`,
+      regionCode: envString('ORBI_PAY_GATEWAY_REGION', 'edge-global'),
+      jurisdiction: envString('ORBI_PAY_GATEWAY_JURISDICTION', 'GLOBAL'),
       coordinates: {
-        lat: envNumber('ORBI_GATEWAY_LAT', 40.7128),
-        lng: envNumber('ORBI_GATEWAY_LNG', -74.0060),
+        lat: envNumber('ORBI_PAY_GATEWAY_LAT', 40.7128),
+        lng: envNumber('ORBI_PAY_GATEWAY_LNG', -74.0060),
       },
-      competencies: ['payment_gateway', 'provider_webhooks', 'external_settlement', 'provider_callback_monitoring'],
-      baseRisk: envNumber('ORBI_GATEWAY_BASE_RISK', 35),
-      active: Boolean(gatewayUrl),
+      competencies: ['pay_gateway', 'provider_webhooks', 'external_settlement', 'provider_callback_monitoring'],
+      baseRisk: envNumber('ORBI_PAY_GATEWAY_BASE_RISK', 35),
+      active: Boolean(payGatewayUrl),
     },
     {
       id: 'ORBI-LEDGER-AUTHORITY',

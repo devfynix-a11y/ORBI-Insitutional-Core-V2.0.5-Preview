@@ -41,19 +41,12 @@ const OPTIONAL_ENV = [
   'ORBI_TALK_GATEWAY_API_KEY',
   'ORBI_TALK_GATEWAY_USER_ID',
   'ORBI_TALK_GATEWAY_USER_EMAIL',
-  'ORBI_COMMUNICATIONS_GATEWAY_URL',
-  'ORBI_COMMUNICATIONS_GATEWAY_BASE_URL',
-  'ORBI_COMMUNICATIONS_GATEWAY_API_KEY',
-  'ORBI_COMMUNICATIONS_GATEWAY_USER_ID',
-  'ORBI_COMMUNICATIONS_GATEWAY_USER_EMAIL',
   'ORBI_PAY_GATEWAY_BASE_URL',
-  'ORBI_GATEWAY_URL',
-  'ORBI_GATEWAY_BASE_URL',
-  'ORBI_GATEWAY_API_KEY',
-  'ORBI_GATEWAY_USER_ID',
-  'ORBI_GATEWAY_USER_EMAIL',
-  'OBI_GATEWAY_USER_ID',
-  'OBI_GATEWAY_USER_EMAIL',
+  'ORBI_PAY_GATEWAY_REGION',
+  'ORBI_PAY_GATEWAY_JURISDICTION',
+  'ORBI_PAY_GATEWAY_LAT',
+  'ORBI_PAY_GATEWAY_LNG',
+  'ORBI_PAY_GATEWAY_BASE_RISK',
   'REDIS_CLUSTER_NODES',
   'REDIS_URL',
   'REDIS_HOST',
@@ -240,19 +233,10 @@ export const validateStartupEnvironment = () => {
 };
 
 const validateProviderSecretDependencies = (isProd: boolean) => {
-  const hasLegacyMessagingGatewayKey = Boolean(process.env.ORBI_GATEWAY_API_KEY);
-  const hasOrbiTalkGatewayKey = Boolean(
-    process.env.ORBI_TALK_GATEWAY_API_KEY ||
-    process.env.ORBI_COMMUNICATIONS_GATEWAY_API_KEY ||
-    hasLegacyMessagingGatewayKey
-  );
+  const hasOrbiTalkGatewayKey = Boolean(process.env.ORBI_TALK_GATEWAY_API_KEY);
   const hasOrbiTalkGatewayUrl = Boolean(
     process.env.ORBI_TALK_GATEWAY_URL ||
-    process.env.ORBI_TALK_GATEWAY_BASE_URL ||
-    process.env.ORBI_COMMUNICATIONS_GATEWAY_URL ||
-    process.env.ORBI_COMMUNICATIONS_GATEWAY_BASE_URL ||
-    process.env.ORBI_GATEWAY_URL ||
-    (hasLegacyMessagingGatewayKey && process.env.ORBI_GATEWAY_BASE_URL)
+    process.env.ORBI_TALK_GATEWAY_BASE_URL
   );
 
   if (hasOrbiTalkGatewayKey !== hasOrbiTalkGatewayUrl) {

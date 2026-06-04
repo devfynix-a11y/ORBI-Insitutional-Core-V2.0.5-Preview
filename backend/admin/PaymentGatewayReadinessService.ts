@@ -28,13 +28,13 @@ const fetchJsonWithTimeout = async (url: string) => {
 
 export class PaymentGatewayReadinessService {
   static async inspect() {
-    const baseUrl = normalizeBaseUrl(String(process.env.ORBI_GATEWAY_BASE_URL || '').trim());
+    const baseUrl = normalizeBaseUrl(String(process.env.ORBI_PAY_GATEWAY_BASE_URL || '').trim());
     if (!baseUrl) {
       return {
         configured: false,
         reachable: false,
         baseUrl: null,
-        message: 'ORBI_GATEWAY_BASE_URL is not configured.',
+        message: 'ORBI_PAY_GATEWAY_BASE_URL is not configured.',
         providers: [],
       };
     }

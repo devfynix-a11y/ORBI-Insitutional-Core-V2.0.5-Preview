@@ -41,8 +41,6 @@ export type OrbiSdkConfig = {
   apiBaseUrl?: string;
   fallbackApiBaseUrl?: string;
   payGatewayBaseUrl?: string;
-  /** @deprecated Use payGatewayBaseUrl for ORBI Pay Gateway. */
-  gatewayBaseUrl?: string;
   appId: string;
   appOrigin: string;
   getToken?: () => string | null | Promise<string | null>;
@@ -100,7 +98,7 @@ export type SupportTicketUpdatePayload = {
 
 const DEFAULT_API_BASE_URL = 'https://api.orbifinancial.com';
 const DEFAULT_FALLBACK_API_BASE_URL = 'https://go-api.orbifinancial.com';
-const DEFAULT_GATEWAY_BASE_URL = 'https://pay.orbifinancial.com';
+const DEFAULT_PAY_GATEWAY_BASE_URL = 'https://pay.orbifinancial.com';
 
 const makeTraceId = () => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
@@ -143,8 +141,7 @@ export class OrbiAdminSdk {
     this.config = {
       apiBaseUrl: DEFAULT_API_BASE_URL,
       fallbackApiBaseUrl: DEFAULT_FALLBACK_API_BASE_URL,
-      payGatewayBaseUrl: DEFAULT_GATEWAY_BASE_URL,
-      gatewayBaseUrl: DEFAULT_GATEWAY_BASE_URL,
+      payGatewayBaseUrl: DEFAULT_PAY_GATEWAY_BASE_URL,
       enableSafeReadFallback: false,
       includeRoleHeader: true,
       timeoutMs: 15000,
@@ -182,7 +179,7 @@ export class OrbiAdminSdk {
   }
 
   private async request<T>(method: string, path: string, options: RequestOptions = {}): Promise<T> {
-    const baseUrl = options.gateway ? (this.config.payGatewayBaseUrl || this.config.gatewayBaseUrl)! : this.config.apiBaseUrl!;
+    const baseUrl = options.gateway ? this.config.payGatewayBaseUrl! : this.config.apiBaseUrl!;
     const url = buildUrl(baseUrl, path, options.query);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.config.timeoutMs);

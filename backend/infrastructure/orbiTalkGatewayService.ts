@@ -17,19 +17,12 @@ class OrbiTalkGatewayService {
     private baseUrl: string | undefined;
 
     constructor() {
-        this.apiKey = envFirst(
-            'ORBI_TALK_GATEWAY_API_KEY',
-            'ORBI_COMMUNICATIONS_GATEWAY_API_KEY',
-            'ORBI_GATEWAY_API_KEY'
-        );
+        this.apiKey = envFirst('ORBI_TALK_GATEWAY_API_KEY');
         this.baseUrl = this.normalizeBaseUrl(
             envFirst(
                 'ORBI_TALK_GATEWAY_URL',
-                'ORBI_TALK_GATEWAY_BASE_URL',
-                'ORBI_COMMUNICATIONS_GATEWAY_URL',
-                'ORBI_COMMUNICATIONS_GATEWAY_BASE_URL',
-                'ORBI_GATEWAY_URL'
-            ) || (process.env.ORBI_GATEWAY_API_KEY ? envFirst('ORBI_GATEWAY_BASE_URL') : undefined)
+                'ORBI_TALK_GATEWAY_BASE_URL'
+            )
         );
         
         if (!this.apiKey) {
@@ -59,21 +52,11 @@ class OrbiTalkGatewayService {
     }
 
     private ownerUid(ownerUid?: string): string | undefined {
-        return ownerUid || envFirst(
-            'ORBI_TALK_GATEWAY_USER_ID',
-            'ORBI_COMMUNICATIONS_GATEWAY_USER_ID',
-            'ORBI_GATEWAY_USER_ID',
-            'OBI_GATEWAY_USER_ID'
-        );
+        return ownerUid || envFirst('ORBI_TALK_GATEWAY_USER_ID');
     }
 
     private ownerEmail(ownerEmail?: string): string | undefined {
-        return ownerEmail || envFirst(
-            'ORBI_TALK_GATEWAY_USER_EMAIL',
-            'ORBI_COMMUNICATIONS_GATEWAY_USER_EMAIL',
-            'ORBI_GATEWAY_USER_EMAIL',
-            'OBI_GATEWAY_USER_EMAIL'
-        );
+        return ownerEmail || envFirst('ORBI_TALK_GATEWAY_USER_EMAIL');
     }
 
     private normalizeTemplateData<T extends TemplateName>(templateName: T, data: TemplatePayloads[T]): TemplatePayloads[T] {
