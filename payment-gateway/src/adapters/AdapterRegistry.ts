@@ -18,6 +18,16 @@ export class AdapterRegistry {
     }));
   }
 
+  async readiness() {
+    return Promise.all(
+      [...this.adapters.values()].map(async (adapter) => ({
+        code: adapter.code,
+        displayName: adapter.displayName,
+        health: await adapter.health(),
+      })),
+    );
+  }
+
   get(providerCode: string): PaymentProviderAdapter {
     const adapter = this.adapters.get(String(providerCode || '').trim().toLowerCase());
     if (!adapter) {

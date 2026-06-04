@@ -386,6 +386,7 @@ export class OrbiAdminSdk {
     },
     providers: {
       partners: () => this.get<OrbiApiResult<unknown[]>>('/api/admin/partners'),
+      gatewayReadiness: () => this.get<OrbiApiResult<unknown>>('/api/admin/payment-gateway/readiness'),
       createPartner: (body: unknown) => this.post<OrbiApiResult<unknown>>('/api/admin/partners', body),
       updatePartner: (id: string, body: unknown) => this.put<OrbiApiResult<unknown>>(`/api/admin/partners/${id}`, body),
       deletePartner: (id: string) => this.delete<OrbiApiResult<unknown>>(`/api/admin/partners/${id}`),

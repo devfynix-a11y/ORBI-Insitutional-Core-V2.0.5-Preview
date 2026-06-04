@@ -394,6 +394,7 @@ The UI must always call `bootstrapPreview` before `bootstrapCommit`.
 
 ```ts
 orbi.admin.providers.partners()
+orbi.admin.providers.gatewayReadiness()
 orbi.admin.providers.createPartner(body)
 orbi.admin.providers.updatePartner(providerId, body)
 orbi.admin.providers.deletePartner(providerId)

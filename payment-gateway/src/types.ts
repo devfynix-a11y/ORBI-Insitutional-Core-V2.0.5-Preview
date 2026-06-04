@@ -36,6 +36,13 @@ export type ProviderHealth = {
   providerCode: string;
   status: 'UP' | 'DOWN' | 'DEGRADED';
   message: string;
+  configured: boolean;
+  rail: 'MOBILE_MONEY' | 'BANK' | 'CARD_GATEWAY' | 'CRYPTO';
+  countries: string[];
+  currencies: string[];
+  operations: PaymentDirection[];
+  missingEnv: string[];
+  nextAction?: string;
 };
 
 export interface PaymentProviderAdapter {

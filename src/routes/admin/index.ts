@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getAdminSupabase, getSupabase } from '../../../backend/supabaseClient.js';
 import { PartnerRegistry } from '../../../backend/admin/partnerRegistry.js';
 import { AdminConfigBootstrapService } from '../../../backend/admin/AdminConfigBootstrapService.js';
+import { PaymentGatewayReadinessService } from '../../../backend/admin/PaymentGatewayReadinessService.js';
 import { TransactionService } from '../../../ledger/transactionService.js';
 import { Server as LogicCore } from '../../../backend/server.js';
 import {
@@ -201,6 +202,15 @@ export const registerAdminRoutes = (admin: Router, authenticate: RequestHandler)
     } catch (e: any) {
       console.error(`[Admin] Delete Partner Error:`, e);
       res.status(500).json({ success: false, error: 'INTERNAL_SERVER_ERROR', message: e.message });
+    }
+  });
+
+  admin.get('/payment-gateway/readiness', requireSessionPermission(['provider.read', 'provider.write'], ['ADMIN', 'SUPER_ADMIN', 'IT', 'AUDIT']), async (_req, res) => {
+    try {
+      const data = await PaymentGatewayReadinessService.inspect();
+      res.json({ success: true, data });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message || 'PAYMENT_GATEWAY_READINESS_FAILED' });
     }
   });
 

@@ -40,13 +40,29 @@ export class MpesaTanzaniaAdapter implements PaymentProviderAdapter {
   }
 
   async health(): Promise<ProviderHealth> {
-    const configured = Boolean(config.providers.mpesaTanzania.baseUrl && config.providers.mpesaTanzania.apiKey);
+    const missingEnv = [
+      ['MPESA_TZ_API_BASE_URL', config.providers.mpesaTanzania.baseUrl],
+      ['MPESA_TZ_API_KEY', config.providers.mpesaTanzania.apiKey],
+      ['MPESA_TZ_API_SECRET', config.providers.mpesaTanzania.apiSecret],
+    ]
+      .filter(([, value]) => !value)
+      .map(([key]) => key);
+    const configured = missingEnv.length === 0;
     return {
       providerCode: this.code,
       status: configured ? 'DEGRADED' : 'DOWN',
       message: configured
         ? 'M-Pesa credentials are present; live operation contract still requires final adapter mapping.'
         : 'M-Pesa Tanzania credentials are not configured.',
+      configured,
+      rail: 'MOBILE_MONEY',
+      countries: ['TZ'],
+      currencies: ['TZS'],
+      operations: ['collection', 'payout', 'refund'],
+      missingEnv,
+      nextAction: configured
+        ? 'Complete M-Pesa Tanzania live API request signing and callback verification from the official provider contract.'
+        : 'Set M-Pesa Tanzania credentials in the payment gateway environment, then restart the gateway.',
     };
   }
 

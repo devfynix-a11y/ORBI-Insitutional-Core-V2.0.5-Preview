@@ -40,13 +40,29 @@ export class SelcomAdapter implements PaymentProviderAdapter {
   }
 
   async health(): Promise<ProviderHealth> {
-    const configured = Boolean(config.providers.selcom.baseUrl && config.providers.selcom.apiKey);
+    const missingEnv = [
+      ['SELCOM_API_BASE_URL', config.providers.selcom.baseUrl],
+      ['SELCOM_API_KEY', config.providers.selcom.apiKey],
+      ['SELCOM_API_SECRET', config.providers.selcom.apiSecret],
+    ]
+      .filter(([, value]) => !value)
+      .map(([key]) => key);
+    const configured = missingEnv.length === 0;
     return {
       providerCode: this.code,
       status: configured ? 'DEGRADED' : 'DOWN',
       message: configured
         ? 'Selcom credentials are present; live operation contract still requires final adapter mapping.'
         : 'Selcom credentials are not configured.',
+      configured,
+      rail: 'MOBILE_MONEY',
+      countries: ['TZ'],
+      currencies: ['TZS'],
+      operations: ['collection', 'payout', 'refund'],
+      missingEnv,
+      nextAction: configured
+        ? 'Complete Selcom live API request signing and callback verification from the official provider contract.'
+        : 'Set Selcom credentials in the payment gateway environment, then restart the gateway.',
     };
   }
 

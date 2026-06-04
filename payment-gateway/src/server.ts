@@ -59,22 +59,20 @@ app.get('/health', (_req, res) => {
 });
 
 app.get('/ready', async (_req, res) => {
-  const providers = await Promise.all(adapterRegistry.list().map(({ code }) => adapterRegistry.get(code).health()));
+  const providers = await adapterRegistry.readiness();
   res.json({
     success: true,
     data: {
       coreTarget: config.core.baseUrl,
       mtlsEnabled: config.mtls.enabled,
+      providerMode: config.providerMode,
       providers,
     },
   });
 });
 
 app.get('/v1/providers', async (_req, res) => {
-  const providers = await Promise.all(adapterRegistry.list().map(async (provider) => ({
-    ...provider,
-    health: await adapterRegistry.get(provider.code).health(),
-  })));
+  const providers = await adapterRegistry.readiness();
   res.json({ success: true, data: providers });
 });
 

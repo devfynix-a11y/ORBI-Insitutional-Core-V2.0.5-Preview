@@ -76,6 +76,14 @@ GET /v1/providers
 GET /v1/providers/:providerCode/health
 ```
 
+Core exposes the gateway readiness view to the Admin Portal through:
+
+```http
+GET /api/admin/payment-gateway/readiness
+```
+
+The response is read-only and safe for operators. It includes gateway reachability, mTLS mode, provider adapter codes, supported operations, and missing environment variable names, but never returns API keys or provider secrets.
+
 ### Collections
 
 ```http
