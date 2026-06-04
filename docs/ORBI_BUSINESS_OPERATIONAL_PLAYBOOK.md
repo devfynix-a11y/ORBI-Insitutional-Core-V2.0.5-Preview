@@ -112,7 +112,183 @@ Forbidden actions:
 - provider config commit without preview/diff
 - exposing provider or monitor secrets in browser state
 
-## 6. ORBI Operational Accounts
+## 6. External Rails, Central Switches, And Pay Gateway Connectivity
+
+ORBI separates financial authority from external rail execution.
+
+```txt
+Customer / Merchant / Agent
+  -> ORBI Core
+  -> ORBI Pay Gateway
+  -> Bank / Mobile Money / Card Switch / External Provider
+  -> ORBI Pay Gateway callback
+  -> signed event to ORBI Core
+  -> ledger settlement and customer history
+```
+
+### Service Boundary
+
+ORBI Core is the financial heart of the platform.
+
+- authenticates customers, merchants, agents, and staff
+- creates the approved transaction intent
+- applies risk, limits, fees, tax, quote, and compliance controls
+- reserves or posts ledger entries where applicable
+- owns transaction state, reconciliation, support evidence, and audit history
+- sends customer, merchant, agent, and operator notifications through ORBI Talk
+
+ORBI Pay Gateway is the external rail gatekeeper.
+
+- executes provider API calls only after Core approves the intent
+- owns provider manifest loading, provider token references, provider callback parsing, and provider health/readiness
+- connects to external banks, card switches, mobile money switches, and payment processors
+- normalizes provider responses and sends signed results back to Core
+- never directly edits wallet balances or posts ledger entries
+
+The governing rule:
+
+```txt
+No Core-approved intent = no Pay Gateway provider execution.
+```
+
+### Connection Options To Banks, Switches, And Providers
+
+The selected connection option depends on the provider or central switch contract.
+
+| Connection Option | Use Case | ORBI Position |
+| :--- | :--- | :--- |
+| HTTPS/TLS JSON API | Modern payment APIs, aggregators, mobile money APIs, bank API endpoints. | Minimum supported secure transport. |
+| mTLS over HTTPS | Banks, regulated processors, and high-trust provider APIs requiring mutual certificate identity. | Preferred where provider supports certificate-based service identity. |
+| VPN/IPSec tunnel | Bank/switch private network connectivity and regulated rails that should not traverse the public internet directly. | Recommended for direct bank or national-switch integrations. |
+| Private leased link / private interconnect | High-volume or highly regulated institutional connectivity. | Future enterprise option for strategic banking partners. |
+| ISO 8583 over TCP/TLS | Card, ATM, POS, and traditional bank-switch rails. | Supported as a planned adapter family behind ORBI Pay Gateway. |
+| Provider SDK or signed REST API | Providers with official SDKs or HMAC/JWT-signed APIs. | Wrapped by provider manifest and adapter contract. |
+
+Initial ORBI Pay Gateway production foundation uses HTTPS/TLS, signed Core callbacks, tokenized credentials, provider webhook signing, and SCA/3DS proof contracts. VPN, direct mTLS to providers, private interconnect, and ISO 8583 are added per partner contract.
+
+### Provider API Call Security
+
+Every provider execution request must be bound to a Core-approved intent.
+
+Required controls:
+
+- immutable ORBI reference or movement id
+- idempotency key to prevent duplicate debit or payout
+- amount, currency, source, destination, provider, route, and expiry locked by Core
+- tokenized provider credential reference, not raw provider secrets in payloads
+- provider-specific request signing, for example HMAC, JWT, certificate signing, or mTLS identity
+- timeout, retry, circuit-breaker, and reconciliation strategy per provider
+- no raw card PAN, CVV, OTP, PIN, password, KYC file, or provider secret in request payloads
+
+For card-style rails, Pay Gateway requires redacted Strong Customer Authentication or 3D Secure evidence from Core before execution:
+
+```json
+{
+  "rail": "CARD_GATEWAY",
+  "sca": {
+    "status": "authenticated",
+    "protocol": "3DS2",
+    "challengeId": "core-issued-challenge-id",
+    "dsTransactionId": "directory-server-transaction-id",
+    "eci": "05",
+    "liabilityShift": true
+  }
+}
+```
+
+### Inbound Provider Webhook Security
+
+External providers and switches may complete asynchronously. They call Pay Gateway webhooks, not arbitrary Core settlement routes.
+
+```txt
+Provider / Switch
+  -> POST /v1/webhooks/:providerCode on ORBI Pay Gateway
+  -> raw body signature verification
+  -> timestamp freshness and replay strategy
+  -> normalized provider event
+  -> signed callback to ORBI Core
+```
+
+Webhook controls:
+
+- raw body captured before JSON parsing
+- provider signature verified against the provider manifest contract
+- timestamp tolerance enforced where provider supports timestamps
+- provider event id/reference extracted for dedupe and reconciliation
+- tampered, unsigned, stale, or unknown-reference callbacks rejected before reaching Core
+- raw provider payload retained only as audit evidence and never treated as final ledger truth by itself
+
+### Gateway-To-Core Trust
+
+Pay Gateway reports normalized provider evidence to Core through a private service route:
+
+```http
+POST /api/internal/gateway/provider-events
+```
+
+Every Gateway-to-Core callback includes signed worker headers:
+
+- `x-worker-id`
+- `x-worker-scopes`
+- `x-worker-request-id`
+- `x-worker-timestamp`
+- `x-worker-nonce`
+- `x-worker-signature`
+- optional `x-worker-key-id`
+
+Core validates:
+
+- worker identity and scope
+- timestamp freshness
+- nonce replay protection
+- body hash
+- HMAC signature
+- transaction reference, amount, currency, provider, and expected lifecycle state
+
+HMAC remains mandatory even after mTLS. mTLS proves service identity at transport level; HMAC proves payload integrity and replay safety.
+
+### External-To-External Movement
+
+For flows such as bank to mobile money, ORBI can safely orchestrate external-to-external movement if Core remains the authority.
+
+```txt
+Core approves exact external-to-external intent
+Pay Gateway executes source rail debit
+Pay Gateway executes destination rail credit
+Provider callbacks confirm state
+Core records operational ledger, history, fees, tax, and reconciliation evidence
+No ORBI customer wallet balance is changed unless an ORBI wallet is source or destination
+```
+
+This creates auditability without pretending external funds are held in a customer ORBI wallet.
+
+### Merchant Callback And Customer Notifications
+
+Merchant callback URLs and customer messages are Core responsibilities after trusted provider evidence is accepted.
+
+```txt
+Provider -> Pay Gateway -> signed event -> Core
+Core -> merchant callback_url
+Core -> ORBI Talk Gateway -> SMS/email/push/WhatsApp
+```
+
+This keeps payment execution, ledger authority, and communications separated.
+
+### Third-Party, Bank, And Investor Assurance Points
+
+ORBI can present the following assurances to banks, switches, investors, and integration partners:
+
+- Core is the ledger and financial authority; Pay Gateway is only the external rail executor.
+- Provider credentials are tokenized and isolated inside the gateway boundary.
+- Intercepted transaction payloads do not contain usable provider credentials.
+- Provider callbacks are signature-verified on raw body before normalization.
+- Gateway-to-Core callbacks are signed and replay-protected.
+- Core rejects provider events that do not match the original approved intent.
+- No staff or gateway process can manually mutate wallet balances outside ledger controls.
+- External-to-external movements are still recorded for audit, fees, compliance, and reconciliation.
+- mTLS, VPN/IPSec, private interconnect, or ISO 8583 can be enabled per partner rail requirements.
+
+## 7. ORBI Operational Accounts
 
 Operational ORBI accounts represent platform-owned money positions used for controlled flows such as:
 
@@ -130,7 +306,7 @@ Rules:
 - Operational account movements must still be double-entry.
 - Every platform funding action requires actor, reason, source, target, and ledger evidence.
 
-## 7. Merchant Operations
+## 8. Merchant Operations
 
 Merchant operations are business-payment projections over the canonical ledger.
 
@@ -157,7 +333,7 @@ Merchant payment flow:
 5. Settlement lifecycle handles payout readiness.
 6. ORBI Talk sends transactional messages to relevant parties.
 
-## 8. Agent Operations
+## 9. Agent Operations
 
 Agents are service actors for field operations, especially customer onboarding and cash-in/cash-out workflows.
 
@@ -184,7 +360,7 @@ Control room duties:
 - handle commission disputes
 - freeze/suspend agent access with reasons when risk exceeds threshold
 
-## 9. Commission And Fee Model
+## 10. Commission And Fee Model
 
 All merchant, agent, and system fees should resolve through `platform_fee_configs`.
 
@@ -203,7 +379,7 @@ Commission lifecycle:
 4. Disputes are opened in `service_commission_disputes`.
 5. Payout is a separate ledger-backed transaction.
 
-## 10. Organization-Level Controls
+## 11. Organization-Level Controls
 
 Organizations are the root for B2B tenants.
 
@@ -230,7 +406,7 @@ Enterprise operations:
 - auto-sweep reserves
 - enforcing hard limits
 
-## 11. Risk And Security Operations
+## 12. Risk And Security Operations
 
 ORBI risk operations combine automated and human controls.
 
@@ -258,7 +434,7 @@ Every freeze/deactivation/lock must include:
 - affected entity
 - resolution path
 
-## 12. Support And Case Management
+## 13. Support And Case Management
 
 Support must be able to resolve user, merchant, agent, and organization cases without database access.
 
@@ -279,7 +455,7 @@ Support standards:
 - use approved templates for customer messages
 - keep internal notes separate from customer-facing copy
 
-## 13. Messaging And ORBI Talk
+## 14. Messaging And ORBI Talk
 
 ORBI Core sends messages through ORBI Talk Gateway.
 
@@ -303,7 +479,7 @@ Template rules:
 - automated backend flows must supply variables
 - staff portal sends should use templates suitable for staff-initiated support, marketing, or case updates
 
-## 14. Admin Portal Operating Model
+## 15. Admin Portal Operating Model
 
 The ORBI Platform Admin Portal is the control plane for:
 
@@ -328,7 +504,7 @@ Portal rules:
 - no final financial truth calculated only in frontend
 - all backend errors should show operator-readable context plus original code
 
-## 15. B2B Operations Dashboard
+## 16. B2B Operations Dashboard
 
 The B2B operations dashboard should answer:
 
@@ -353,7 +529,7 @@ Core backend surfaces:
 - `GET /v1/admin/b2b/organization-limits`
 - `POST /v1/admin/b2b/organization-limits`
 
-## 16. Daily Operating Rhythm
+## 17. Daily Operating Rhythm
 
 Morning:
 - confirm health/readiness
@@ -380,7 +556,7 @@ Always:
 - resolve alerts with evidence
 - avoid manual balance intervention
 
-## 17. API Gateway Security Operations
+## 18. API Gateway Security Operations
 
 The ORBI API Gateway is the first backend control point for protected traffic.
 
@@ -396,7 +572,7 @@ Operator response:
 - treat `API_GATEWAY_QUARANTINED` as a high-priority security event
 - release or resolve only with evidence and a readable reason
 
-## 18. Escalation Matrix
+## 19. Escalation Matrix
 
 | Incident | First Owner | Escalation |
 | :--- | :--- | :--- |
@@ -410,13 +586,14 @@ Operator response:
 | KMS or secret event | IT/Ops | Super Admin, Security |
 | Database incident | Engineering | DR owner, Audit |
 
-## 19. Canonical References
+## 20. Canonical References
 
 - Technical architecture: [Core Banking Architecture](./CORE_BANKING_ARCHITECTURE.md)
 - Production deployment: [Production Deployment](./PRODUCTION_DEPLOYMENT.md)
 - Environment variables: [Environment Variables Reference](./ENVIRONMENT_VARIABLES_REFERENCE.md)
 - Admin SDK: [ORBI Admin Frontend API SDK](./ORBI_ADMIN_FRONTEND_API_SDK.md)
 - Provider registry: [Provider Registry Contract](./PROVIDER_REGISTRY_CONTRACT.md)
+- Pay Gateway integration: [ORBI Pay Gateway Integration](./ORBI_PAYMENT_GATEWAY_INTEGRATION.md)
 - ORBI Talk templates: [ORBI Talk Gateway Templates](./ORBI_TALK_GATEWAY_TEMPLATES.md)
 - Reconciliation: [Reconciliation Engine](./RECONCILIATION_ENGINE.md)
 - Disaster recovery: [Disaster Recovery Runbook](./DISASTER_RECOVERY_RUNBOOK.md)
