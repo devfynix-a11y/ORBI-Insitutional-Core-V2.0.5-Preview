@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 import { RedisStore } from 'rate-limit-redis';
 import { appTrustMiddleware } from '../../../backend/middleware/appTrust.js';
+import { apiGatewaySecurity } from './apiGatewaySecurity.js';
 import { createIdempotencyMiddleware } from './idempotency.js';
 import { requestHardening } from './requestHardening.js';
 import { wafInspect } from './wafInspect.js';
@@ -119,6 +120,7 @@ export const configureCoreSecurityMiddleware = (app: Express, options: SecurityS
 
   app.use(appTrustMiddleware);
   app.use(requestHardening());
+  app.use(apiGatewaySecurity);
 
   app.use(express.json({
     limit: '20mb',

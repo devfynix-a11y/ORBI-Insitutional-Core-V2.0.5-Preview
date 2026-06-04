@@ -195,6 +195,12 @@ This reference is for maintainability only. It intentionally does not store secr
 | `ORBI_REQUIRE_API_CONTENT_TYPE` | Runtime | Non-secret | No | Yes | Requires approved content types for API requests with mutation bodies. |
 | `ORBI_REQUIRE_ADMIN_TRACE` | Runtime | Non-secret | No | Yes | Requires `x-orbi-trace` on admin mutations for audit correlation. Defaults on in production. |
 | `ORBI_REQUIRE_ADMIN_DEVICE_ID` | Runtime | Non-secret | No | Yes | Requires `x-orbi-device-id` or `x-orbi-fingerprint` on admin mutations when enabled. |
+| `ORBI_API_GATEWAY_ENABLED` | Runtime | Non-secret | No | Yes | Enables the in-process ORBI API Gateway security decision layer. |
+| `ORBI_API_GATEWAY_FAIL_CLOSED` | Runtime | Non-secret | No | Yes | Blocks protected traffic if the API Gateway security check faults. |
+| `ORBI_API_GATEWAY_REDIS_REQUIRED` | Runtime | Non-secret | No | Yes | Requires Redis-backed distributed gateway counters in production. |
+| `ORBI_API_GATEWAY_AI_MODE` | Runtime | Non-secret | No | Yes | Selects gateway AI scoring mode. Use `adapter` now; `python` calls the external scorer URL. |
+| `ORBI_AI_SECURITY_SCORER_URL` | Runtime | Non-secret | No | Yes | Optional future Python/FastAPI security scorer base URL. |
+| `ORBI_AI_SECURITY_SCORER_TIMEOUT_MS` | Runtime | Non-secret | No | Yes | Timeout for the future AI security scorer call before deterministic fallback. |
 | `ORBI_WEBHOOK_REPLAY_WINDOW_SECONDS` | Runtime | Non-secret | No | Yes | Webhook replay protection window. |
 | `ORBI_ALLOW_PROCESS_LOCAL_WEBHOOK_REPLAY_STORE` | Runtime | Non-secret | No | Yes | Debug-only local replay store fallback. |
 

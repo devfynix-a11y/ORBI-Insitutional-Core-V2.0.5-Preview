@@ -380,7 +380,23 @@ Always:
 - resolve alerts with evidence
 - avoid manual balance intervention
 
-## 17. Escalation Matrix
+## 17. API Gateway Security Operations
+
+The ORBI API Gateway is the first backend control point for protected traffic.
+
+- It classifies traffic as auth, financial, admin, provider webhook, monitor/internal, or general.
+- It applies progressive defense: throttle first, then attempt-lock, then quarantine, then account freeze only when confirmed critical risk requires it.
+- It records security evidence in audit logs, operator alerts, gateway security events, and gateway quarantine records.
+- It uses deterministic scoring now and is ready for a future Python Sentinel AI/ML scorer.
+- The Python scorer must receive only redacted request features, never secrets, OTPs, passwords, card data, provider secrets, or raw KYC files.
+
+Operator response:
+- review `API_GATEWAY_THROTTLED` for noisy clients or integration bugs
+- review `API_GATEWAY_ATTEMPT_LOCKED` for suspected brute force or automation
+- treat `API_GATEWAY_QUARANTINED` as a high-priority security event
+- release or resolve only with evidence and a readable reason
+
+## 18. Escalation Matrix
 
 | Incident | First Owner | Escalation |
 | :--- | :--- | :--- |
@@ -394,7 +410,7 @@ Always:
 | KMS or secret event | IT/Ops | Super Admin, Security |
 | Database incident | Engineering | DR owner, Audit |
 
-## 18. Canonical References
+## 19. Canonical References
 
 - Technical architecture: [Core Banking Architecture](./CORE_BANKING_ARCHITECTURE.md)
 - Production deployment: [Production Deployment](./PRODUCTION_DEPLOYMENT.md)

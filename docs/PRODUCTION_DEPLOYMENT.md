@@ -49,6 +49,10 @@
 - `ORBI_PROVIDER_TIMEOUT_MS`
 - `ORBI_PROVIDER_MAX_ATTEMPTS`
 - `ORBI_PROVIDER_RETRY_DELAY_MS`
+- `ORBI_API_GATEWAY_ENABLED=true`
+- `ORBI_API_GATEWAY_FAIL_CLOSED=true`
+- `ORBI_API_GATEWAY_REDIS_REQUIRED=true`
+- `ORBI_API_GATEWAY_AI_MODE=adapter`
 
 ### Optional / Feature Flags
 - `ORBI_ENABLE_GATEWAY_BACKGROUND_JOBS`
@@ -56,6 +60,8 @@
 - `ORBI_ENABLE_LEGACY_API_GATEWAY`
 - `ORBI_ENABLE_SANDBOX_ROUTES`
 - `ORBI_ENABLE_MESSAGING_TEST_ROUTES`
+- `ORBI_AI_SECURITY_SCORER_URL` for the future Python/FastAPI security scorer
+- `ORBI_AI_SECURITY_SCORER_TIMEOUT_MS=750`
 
 ## Pre-Flight Checklist
 1. Confirm required production env vars are present (see above).
@@ -75,9 +81,17 @@
    - `repair_wallet_balance_emergency`
 7. Validate Redis connectivity (or accept degraded mode if intentionally disabled).
 8. Verify provider registry readiness for active partners (mapping config, webhook callback config).
-9. Run `/health` and `/api/admin/monitor/operational-health` before opening traffic.
-10. Run the automated smoke test:
+9. Confirm the ORBI API Gateway security layer is enabled and Redis-backed in production.
+10. Run `/health` and `/api/admin/monitor/operational-health` before opening traffic.
+11. Run the automated smoke test:
    - `ORBI_BASE_URL=https://target-host ORBI_MONITOR_API_KEY=... node scripts/release-smoke.mjs`
+
+## ORBI API Gateway Security Layer
+- The in-process API Gateway runs before business routes and centralizes route policy, velocity limits, progressive attempt-locking, quarantine, audit events, and operator alerts.
+- Production should keep `ORBI_API_GATEWAY_REDIS_REQUIRED=true`; process-local fallback is only appropriate for local development.
+- Current AI mode should remain `ORBI_API_GATEWAY_AI_MODE=adapter`. When the Python Sentinel model is deployed, set `ORBI_API_GATEWAY_AI_MODE=python` and `ORBI_AI_SECURITY_SCORER_URL=https://...`.
+- Gateway scoring must only receive redacted request features. Never forward passwords, OTPs, tokens, card PAN/CVV, KYC files, or provider secrets to an AI service.
+- Gateway blocks are visible through `audit_trail`, `operator_alerts`, `api_gateway_security_events`, and `api_gateway_quarantines`.
 
 ## TLS / SSL
 - If you are behind a managed edge such as Nginx, Apache, or OCI Load Balancer, keep:
