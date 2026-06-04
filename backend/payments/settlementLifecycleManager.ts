@@ -23,6 +23,7 @@ export enum SettlementPhase {
 export enum SettlementFailureReason {
   RECONCILIATION_TRANSITION_DENIED = 'RECONCILIATION_TRANSITION_DENIED',
   RECONCILIATION_VERIFICATION_FAILED = 'RECONCILIATION_VERIFICATION_FAILED',
+  PROVIDER_CONFIRMATION_REQUIRED = 'PROVIDER_CONFIRMATION_REQUIRED',
   PROVIDER_CONFIRMATION_ALREADY_APPLIED = 'PROVIDER_CONFIRMATION_ALREADY_APPLIED',
   INTERNAL_COMMIT_TRANSITION_DENIED = 'INTERNAL_COMMIT_TRANSITION_DENIED',
   INTERNAL_COMMIT_ALREADY_IN_PROGRESS = 'INTERNAL_COMMIT_ALREADY_IN_PROGRESS',
@@ -80,6 +81,57 @@ export class SettlementLifecycleManager {
 
   private getProviderConfirmationKey(settlement: any): string {
     return `${SettlementLifecycleManager.providerConfirmationKeyPrefix}:${settlement.provider_id}:${settlement.external_settlement_id}`;
+  }
+
+  private allowStubProviderReconciliation(): boolean {
+    return process.env.NODE_ENV !== 'production' && process.env.ORBI_ALLOW_STUB_PROVIDER_RECONCILIATION === 'true';
+  }
+
+  private getTrustedProviderProof(settlement: any, providerConfirmationKey: string): { verified: boolean; source?: string; notes: string } {
+    const metadata = settlement?.metadata || {};
+    const source = String(
+      metadata.provider_confirmation_source ||
+        metadata.provider_proof_source ||
+        metadata.trusted_gateway_event_source ||
+        '',
+    ).trim().toUpperCase();
+    const trustedSources = new Set([
+      'TRUSTED_GATEWAY',
+      'VERIFIED_PROVIDER_WEBHOOK',
+      'PROVIDER_API_RECONCILIATION',
+      'ADMIN_DUAL_CONTROL',
+    ]);
+    const confirmationKey = String(metadata.provider_confirmation_key || '').trim();
+    const keyMatches = !confirmationKey || confirmationKey === providerConfirmationKey;
+    const hasTrustedTimestamp = Boolean(
+      metadata.provider_confirmation_applied_at ||
+        metadata.trusted_gateway_event_applied_at ||
+        metadata.verified_provider_webhook_at ||
+        metadata.provider_api_reconciled_at,
+    );
+
+    if (trustedSources.has(source) && keyMatches && hasTrustedTimestamp) {
+      return {
+        verified: true,
+        source,
+        notes: `Trusted provider proof accepted from ${source}.`,
+      };
+    }
+
+    if (this.allowStubProviderReconciliation()) {
+      return {
+        verified: true,
+        source: 'NON_PRODUCTION_STUB',
+        notes: 'Non-production stub reconciliation override accepted.',
+      };
+    }
+
+    return {
+      verified: false,
+      source: source || 'MISSING',
+      notes:
+        'Provider proof is required before internal ledger commit. Expected trusted gateway, verified provider webhook, provider API reconciliation, or admin dual-control confirmation metadata.',
+    };
   }
 
   private buildInternalCommitReference(settlementId: string): string {
@@ -311,17 +363,12 @@ export class SettlementLifecycleManager {
           reconciliation_id: reconciliationId,
           metadata: {
             ...(settlement.metadata || {}),
-            provider_confirmation_key: providerConfirmationKey,
-            provider_confirmation_applied_at: new Date().toISOString(),
+            reconciliation_started_at: new Date().toISOString(),
           },
         },
       );
 
-      const reconciliationResult = await this.performReconciliation(
-        settlement.provider_id,
-        settlement.external_settlement_id,
-        settlement.amount,
-      );
+      const reconciliationResult = await this.performReconciliation(settlement, providerConfirmationKey);
 
       const { error: reconError } = await this.client
         .from('settlement_lifecycle')
@@ -342,7 +389,7 @@ export class SettlementLifecycleManager {
             metadata: {
               ...(settlement.metadata || {}),
               provider_confirmation_key: providerConfirmationKey,
-              provider_confirmation_applied_at: new Date().toISOString(),
+              provider_confirmation_source: reconciliationResult.source,
               reconciliation_verified_at: new Date().toISOString(),
             },
           },
@@ -364,12 +411,15 @@ export class SettlementLifecycleManager {
 
       await this.recordFailure(
         settlementId,
-        SettlementFailureReason.RECONCILIATION_VERIFICATION_FAILED,
+        reconciliationResult.reason === SettlementFailureReason.PROVIDER_CONFIRMATION_REQUIRED
+          ? SettlementFailureReason.PROVIDER_CONFIRMATION_REQUIRED
+          : SettlementFailureReason.RECONCILIATION_VERIFICATION_FAILED,
         reconciliationResult.notes || 'Reconciliation verification failed',
         {
           discrepancy: reconciliationResult.discrepancy,
           reconciliationId,
           providerConfirmationKey,
+          proofSource: reconciliationResult.source || null,
         },
       );
 
@@ -393,23 +443,34 @@ export class SettlementLifecycleManager {
   }
 
   private async performReconciliation(
-    providerId: string,
-    externalTransactionId: string,
-    expectedAmount: number,
-  ): Promise<{ verified: boolean; discrepancy?: number; notes?: string }> {
+    settlement: any,
+    providerConfirmationKey: string,
+  ): Promise<{ verified: boolean; discrepancy?: number; notes?: string; source?: string; reason?: SettlementFailureReason }> {
     try {
       console.info(
-        `[Reconciliation] Verifying ${providerId} transaction ${externalTransactionId}`,
+        `[Reconciliation] Verifying ${settlement.provider_id} transaction ${settlement.external_settlement_id}`,
       );
+
+      const providerProof = this.getTrustedProviderProof(settlement, providerConfirmationKey);
+      if (!providerProof.verified) {
+        return {
+          verified: false,
+          discrepancy: Number(settlement.amount || 0),
+          notes: providerProof.notes,
+          source: providerProof.source,
+          reason: SettlementFailureReason.PROVIDER_CONFIRMATION_REQUIRED,
+        };
+      }
 
       return {
         verified: true,
-        notes: `${providerId} transaction verified`,
+        source: providerProof.source,
+        notes: providerProof.notes,
       };
     } catch (error: any) {
       return {
         verified: false,
-        discrepancy: expectedAmount,
+        discrepancy: Number(settlement?.amount || 0),
         notes: `Verification failed: ${error.message}`,
       };
     }

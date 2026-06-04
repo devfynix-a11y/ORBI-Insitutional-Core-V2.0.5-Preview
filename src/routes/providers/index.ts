@@ -54,6 +54,10 @@ const IncomingDepositIntentSchema = ExternalFundMovementSchema.omit({ direction:
   targetWalletId: z.string().uuid(),
 });
 
+const coreProviderGatewayRoutesEnabled = (): boolean =>
+  process.env.ORBI_ENABLE_CORE_PROVIDER_GATEWAY_ROUTES === 'true' ||
+  process.env.ORBI_ENABLE_LEGACY_PROVIDER_GATEWAY_ROUTES === 'true';
+
 export const registerProviderRoutes = (v1: Router, authenticate: RequestHandler) => {
   v1.post('/external-funds/preview', authenticate, async (req, res) => {
     try {
@@ -127,6 +131,22 @@ export const mountProviderRoutes = (
   gatewayRoutes: Router,
   authenticate: RequestHandler,
 ) => {
+  if (!coreProviderGatewayRoutesEnabled()) {
+    const disabledHandler: RequestHandler = (_req, res) => {
+      res.status(410).json({
+        success: false,
+        error: 'CORE_PROVIDER_GATEWAY_ROUTES_DISABLED',
+        message:
+          'External payment provider execution is isolated in ORBI Payment Gateway. Use ORBI_GATEWAY_BASE_URL/gateway.orbifinancial.com for provider collections, payouts, refunds, and provider webhooks.',
+      });
+    };
+
+    gatewayV1.all(/^\/gateway(?:\/.*)?$/, disabledHandler);
+    gatewayV1.all(/^\/webhooks\/gateway\/[^/]+$/, disabledHandler);
+    v1.use(gatewayV1);
+    return;
+  }
+
   gatewayV1.use((req, res, next) => {
     if (req.path.startsWith('/webhooks/gateway/')) {
       return next();

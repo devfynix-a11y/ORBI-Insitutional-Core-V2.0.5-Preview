@@ -100,6 +100,8 @@ This reference is for maintainability only. It intentionally does not store secr
 | Variable | Type | Secret | In Shared Env | In `.env.example` | Purpose |
 | --- | --- | --- | --- | --- | --- |
 | `ORBI_GATEWAY_BASE_URL` | Runtime | Non-secret | Yes | Yes | Base URL for the payment gateway/payment bridge, not for SMS/email templates. |
+| `ORBI_ENABLE_CORE_PROVIDER_GATEWAY_ROUTES` | Runtime | Non-secret | No | No | Temporary migration switch for legacy Core `/v1/gateway/*` provider-execution routes. Keep unset/false in production when using the separate Payment Gateway service. |
+| `ORBI_ALLOW_STUB_PROVIDER_RECONCILIATION` | Runtime | Non-secret | No | No | Non-production-only settlement lab override. Never enable in production; live settlement requires trusted provider proof before ledger commit. |
 | `PAYMENT_GATEWAY_PORT` | Runtime | Non-secret | No | Payment gateway only | Local port for the standalone ORBI Payment Gateway service. |
 | `PAYMENT_GATEWAY_PUBLIC_BASE_URL` | Runtime | Non-secret | No | Payment gateway only | Public base URL for external payment provider traffic, commonly `https://gateway.orbifinancial.com`. |
 | `PAYMENT_GATEWAY_PROVIDER_MODE` | Runtime | Non-secret | No | Payment gateway only | Gateway provider mode. Use `live` for production provider adapters. |

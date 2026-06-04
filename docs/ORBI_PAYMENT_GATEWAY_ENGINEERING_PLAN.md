@@ -175,6 +175,27 @@ Core validates:
 - HMAC signature
 - optional internal mTLS identity
 
+## Core Boundary Controls
+
+ORBI Core remains the ledger authority and should not run as the live external provider gateway after the standalone Payment Gateway is deployed.
+
+Production defaults:
+
+```env
+ORBI_ENABLE_CORE_PROVIDER_GATEWAY_ROUTES=false
+ORBI_ALLOW_STUB_PROVIDER_RECONCILIATION=false
+```
+
+Behavior:
+
+- `/v1/external-funds/*` remains a Core-owned intent, preview, movement, and ledger-settlement surface.
+- `/api/internal/gateway/provider-events` remains the trusted signed callback surface from ORBI Payment Gateway.
+- Legacy Core `/v1/gateway/*` and `/v1/webhooks/gateway/:providerId` provider-execution routes are disabled unless `ORBI_ENABLE_CORE_PROVIDER_GATEWAY_ROUTES=true`.
+- Settlement lifecycle reconciliation fails closed unless the settlement has trusted provider proof from the Payment Gateway, a verified provider webhook, a provider API reconciliation result, or an admin dual-control confirmation record.
+- Stub reconciliation is allowed only outside production when `ORBI_ALLOW_STUB_PROVIDER_RECONCILIATION=true`.
+
+This prevents Core from accidentally crediting wallets based on placeholder provider verification. Core can record intents and post double-entry ledger entries only after external proof is normalized, signed, and accepted through the trusted boundary.
+
 ## Internal mTLS Plan
 
 ### Phase 1: Current Production-Safe Mode
