@@ -5845,6 +5845,14 @@ CREATE TABLE IF NOT EXISTS public.fraud_checks (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+ALTER TABLE public.fraud_checks
+    ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    ADD COLUMN IF NOT EXISTS transaction_id UUID REFERENCES public.transactions(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS payload JSONB DEFAULT '{}'::jsonb,
+    ADD COLUMN IF NOT EXISTS risk_score NUMERIC DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'PENDING',
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+
 CREATE INDEX IF NOT EXISTS idx_fraud_checks_transaction_id ON public.fraud_checks(transaction_id);
 CREATE INDEX IF NOT EXISTS idx_fraud_checks_user_created ON public.fraud_checks(user_id, created_at DESC);
 
