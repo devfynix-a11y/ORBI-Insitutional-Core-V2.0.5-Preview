@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "target": "ESNext",
+    "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "node",
     "outDir": "dist",
@@ -10,7 +10,8 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "lib": ["ESNext", "DOM", "DOM.Iterable"]
+    "types": ["node"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
   "include": [
     "server.ts",
@@ -26,6 +27,7 @@
   ],
   "exclude": [
     "node_modules",
+    "dist",
     "components",
     "hooks",
     "**/*.test.ts"
