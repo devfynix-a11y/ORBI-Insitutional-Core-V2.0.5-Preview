@@ -429,10 +429,14 @@ export const registerAuthUserRoutes = (v1: Router, deps: Deps) => {
 
   v1.post('/auth/account/confirmation/initiate', async (req, res) => {
     try {
-      const { identifier, contact, replacementContact, newContact } = req.body;
+      const { identifier, contact, replacementContact, newContact, registryType, registry_type } = req.body;
       if (!identifier) return res.status(400).json({ success: false, error: 'MISSING_IDENTIFIER' });
 
-      const result = await LogicCore.initiateAccountConfirmation(identifier, replacementContact || newContact || contact);
+      const result = await LogicCore.initiateAccountConfirmation(
+        identifier,
+        replacementContact || newContact || contact,
+        registryType || registry_type,
+      );
       if (result.error) return res.status(400).json({ success: false, error: result.error });
 
       res.json({
@@ -448,12 +452,12 @@ export const registerAuthUserRoutes = (v1: Router, deps: Deps) => {
 
   v1.post('/auth/account/confirmation/complete', async (req, res) => {
     try {
-      const { identifier, requestId, code } = req.body;
+      const { identifier, requestId, code, registryType, registry_type } = req.body;
       if (!identifier || !requestId || !code) {
         return res.status(400).json({ success: false, error: 'MISSING_FIELDS' });
       }
 
-      const result = await LogicCore.confirmAccount(identifier, requestId, code);
+      const result = await LogicCore.confirmAccount(identifier, requestId, code, registryType || registry_type);
       if (!result.success) return res.status(400).json({ success: false, error: result.error || 'CONFIRMATION_FAILED' });
 
       res.json({ success: true, data: result });

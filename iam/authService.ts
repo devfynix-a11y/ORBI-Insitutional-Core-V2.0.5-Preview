@@ -255,7 +255,7 @@ export class AuthService {
         return value.startsWith('+') ? value : '+' + value.replace(/\s/g, '');
     }
 
-    private async resolveIdentityForChallenge(identifier: string): Promise<{
+    private async resolveIdentityForChallenge(identifier: string, preferredRegistryType?: string): Promise<{
         userId: string;
         table: 'users' | 'staff';
         email?: string | null;
@@ -280,7 +280,14 @@ export class AuthService {
                 { column: 'customer_id', operator: 'eq', value: rawIdentifier },
             ];
 
-        for (const table of ['users', 'staff'] as const) {
+        const preferred = String(preferredRegistryType || '').trim().toUpperCase();
+        const tables: Array<'users' | 'staff'> = preferred === 'STAFF'
+            ? ['staff', 'users']
+            : preferred === 'CONSUMER' || preferred === 'MERCHANT' || preferred === 'AGENT' || preferred === 'USER'
+                ? ['users', 'staff']
+                : ['users', 'staff'];
+
+        for (const table of tables) {
             const { data } = await sb
                 .from(table)
                 .select('id, full_name, email, phone, language, account_status, registry_type, customer_id')
@@ -1279,9 +1286,9 @@ export class AuthService {
         return { error: { message: "Cloud Node Offline" } };
     }
 
-    async initiateAccountConfirmation(identifier: string, replacementContact?: string) {
+    async initiateAccountConfirmation(identifier: string, replacementContact?: string, preferredRegistryType?: string) {
         await this.cleanupExpiredUnconfirmedAccounts();
-        const identity = await this.resolveIdentityForChallenge(identifier);
+        const identity = await this.resolveIdentityForChallenge(identifier, preferredRegistryType);
         if (!identity) return { success: true, confirmationRequired: true };
         if (this.isActiveStatus(identity.status)) {
             return { success: true, confirmationRequired: false, status: 'active' };
@@ -1293,9 +1300,9 @@ export class AuthService {
         return this.issueAccountActivationChallenge(identity, identifier, replacementContact);
     }
 
-    async confirmAccount(identifier: string, requestId: string, code: string) {
+    async confirmAccount(identifier: string, requestId: string, code: string, preferredRegistryType?: string) {
         await this.cleanupExpiredUnconfirmedAccounts();
-        const identity = await this.resolveIdentityForChallenge(identifier);
+        const identity = await this.resolveIdentityForChallenge(identifier, preferredRegistryType);
         if (!identity) return { success: false, error: 'IDENTITY_NOT_FOUND' };
         if (this.isActiveStatus(identity.status)) return { success: true, status: 'active', alreadyActive: true };
         if (!this.isConfirmationPendingStatus(identity.status)) {
