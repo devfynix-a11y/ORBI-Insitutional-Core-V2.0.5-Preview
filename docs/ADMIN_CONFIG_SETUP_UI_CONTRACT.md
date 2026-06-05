@@ -229,6 +229,86 @@ Routing rules editor should be repeatable. Each rule needs:
 - Priority
 - Status
 
+## Partner Bank / Sponsored Switch UI
+
+For production launch, ORBI should prefer a partner bank or sponsored switch profile instead of manually configuring every downstream provider. The partner bank owns or sponsors access to clearing networks such as TIPS, while ORBI Core remains the ledger and banking engine and ORBI Pay Gateway remains the payment execution boundary.
+
+Use `partnerBanks` when ORBI connects through a bank partner that can reach TIPS, mobile money networks, or other national/regional rails:
+
+```json
+{
+  "mode": "preview",
+  "partnerBanks": [
+    {
+      "partnerCode": "NMB_SPONSORED_TIPS",
+      "name": "NMB Sponsored TIPS Access",
+      "status": "INACTIVE",
+      "payGatewayProviderCode": "nmb-obp-sandbox",
+      "clearingNetwork": "TIPS",
+      "messageStandard": "PROVIDER_NATIVE",
+      "settlementModel": "SANDBOX",
+      "supportedCurrencies": ["TZS"],
+      "countries": ["TZ"],
+      "operations": [
+        "COLLECTION_REQUEST",
+        "DISBURSEMENT_REQUEST",
+        "REVERSAL_REQUEST"
+      ],
+      "priority": 40,
+      "metadata": {
+        "environment": "sandbox",
+        "sponsor_model": "partner_bank"
+      }
+    }
+  ]
+}
+```
+
+Production ISO 20022 partner profile example:
+
+```json
+{
+  "mode": "preview",
+  "partnerBanks": [
+    {
+      "partnerCode": "ORBI_TIPS_PARTNER",
+      "name": "ORBI Partner Bank TIPS Switch",
+      "status": "ACTIVE",
+      "payGatewayProviderCode": "tips-partner-bank",
+      "clearingNetwork": "TIPS",
+      "messageStandard": "ISO20022",
+      "iso20022Profile": "tips-iso20022-pacs-v1",
+      "settlementModel": "REALTIME_GROSS",
+      "participantId": "ORBI",
+      "sponsoredParticipantId": "PARTNER_BANK_PARTICIPANT_ID",
+      "supportedCurrencies": ["TZS"],
+      "countries": ["TZ"],
+      "operations": [
+        "COLLECTION_REQUEST",
+        "DISBURSEMENT_REQUEST",
+        "REVERSAL_REQUEST",
+        "BENEFICIARY_VALIDATE"
+      ],
+      "priority": 30
+    }
+  ]
+}
+```
+
+Backend normalization converts each `partnerBanks[]` item into:
+
+- A `financial_partners` record with `provider_metadata.registry_kind = UNIVERSAL_SWITCH`.
+- A `provider_config_versions` record that points to `ORBI_PAY_GATEWAY_BASE_URL`.
+- Auto-generated `provider_routing_rules` for every submitted country, currency, and operation.
+- Pay Gateway provider routing through `provider_metadata.pay_gateway_provider_code`.
+
+Operational rule:
+
+- Keep partner bank profiles `INACTIVE` until sandbox credentials, callback validation, settlement reconciliation, and risk controls are confirmed.
+- Use `messageStandard = PROVIDER_NATIVE` for early bank sandbox APIs that are not ISO 20022 yet.
+- Use `messageStandard = ISO20022` only when the Pay Gateway profile has certified ISO 20022 mapping and clearing-network rules.
+- Never store bank credentials in this bootstrap payload. Secrets belong in Pay Gateway environment/configuration and tokenized provider manifests.
+
 ## Preview Console UI
 
 The admin screen should have three panels:

@@ -67,6 +67,32 @@ const ProviderSchema = z.object({
   routingRules: z.array(RoutingRuleSchema).default([]),
 });
 
+const PartnerBankSchema = z.object({
+  partnerCode: z.string().min(2),
+  name: z.string().min(1),
+  status: z.enum(['ACTIVE', 'INACTIVE', 'MAINTENANCE']).default('INACTIVE'),
+  payGatewayProviderCode: z.string().min(2),
+  clearingNetwork: z.string().min(2).default('TIPS'),
+  messageStandard: z.enum(['PROVIDER_NATIVE', 'ISO20022', 'ISO8583', 'CUSTOM']).default('ISO20022'),
+  iso20022Profile: z.string().optional(),
+  settlementModel: z.enum(['REALTIME_GROSS', 'DEFERRED_NET', 'BATCH', 'HYBRID', 'SANDBOX']).default('REALTIME_GROSS'),
+  participantId: z.string().optional(),
+  sponsoredParticipantId: z.string().optional(),
+  apiBaseUrl: z.string().url().optional(),
+  supportedCurrencies: z.array(z.string().length(3)).default(['TZS']),
+  countries: z.array(z.string().min(2).max(3)).default(['TZ']),
+  operations: z.array(z.enum([
+    'COLLECTION_REQUEST',
+    'DISBURSEMENT_REQUEST',
+    'REVERSAL_REQUEST',
+    'BALANCE_INQUIRY',
+    'TRANSACTION_LOOKUP',
+    'BENEFICIARY_VALIDATE',
+  ])).default(['COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST', 'REVERSAL_REQUEST']),
+  priority: z.coerce.number().int().min(1).default(50),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+});
+
 export const AdminConfigBootstrapPayloadSchema = z.object({
   mode: z.enum(['preview', 'commit']).default('preview'),
   fx: z.object({
@@ -74,6 +100,7 @@ export const AdminConfigBootstrapPayloadSchema = z.object({
     fee: FxFeeSchema.optional(),
   }).optional(),
   providers: z.array(ProviderSchema).default([]),
+  partnerBanks: z.array(PartnerBankSchema).default([]),
 });
 
 type AdminConfigBootstrapPayload = z.infer<typeof AdminConfigBootstrapPayloadSchema>;
@@ -112,6 +139,9 @@ export class AdminConfigBootstrapService {
   }
 
   private static normalize(payload: AdminConfigBootstrapPayload) {
+    const partnerBankProviders = payload.partnerBanks.map((partnerBank) => this.partnerBankToProvider(partnerBank));
+    const allProviders = [...payload.providers, ...partnerBankProviders];
+
     return {
       ...payload,
       fx: payload.fx
@@ -128,7 +158,7 @@ export class AdminConfigBootstrapService {
               : undefined,
           }
         : undefined,
-      providers: payload.providers.map((provider) => ({
+      providers: allProviders.map((provider) => ({
         ...provider,
         providerCode: upperCode(provider.providerCode),
         supportedCurrencies: provider.supportedCurrencies.map(upperCode),
@@ -142,6 +172,95 @@ export class AdminConfigBootstrapService {
           currency: rule.currency ? upperCode(rule.currency) : undefined,
         })),
       })),
+    };
+  }
+
+  private static partnerBankToProvider(partnerBank: z.infer<typeof PartnerBankSchema>): z.infer<typeof ProviderSchema> {
+    const payGatewayBaseUrl = process.env.ORBI_PAY_GATEWAY_BASE_URL || 'https://pay.orbifinancial.com';
+    const operationContract: Record<string, { method: 'GET' | 'POST'; url: string }> = {
+      COLLECTION_REQUEST: { method: 'POST', url: '/v1/collections' },
+      DISBURSEMENT_REQUEST: { method: 'POST', url: '/v1/payouts' },
+      REVERSAL_REQUEST: { method: 'POST', url: '/v1/refunds' },
+      BALANCE_INQUIRY: { method: 'POST', url: '/v1/provider-operations/balance-inquiry' },
+      TRANSACTION_LOOKUP: { method: 'POST', url: '/v1/provider-operations/transaction-lookup' },
+      BENEFICIARY_VALIDATE: { method: 'POST', url: '/v1/provider-operations/beneficiary-validate' },
+    };
+    const rail = 'BANK' as const;
+    const providerCode = upperCode(partnerBank.partnerCode);
+    const countries = partnerBank.countries.map(upperCode);
+    const supportedCurrencies = partnerBank.supportedCurrencies.map(upperCode);
+
+    return {
+      providerCode,
+      name: partnerBank.name,
+      type: 'bank',
+      status: partnerBank.status,
+      logicType: 'REGISTRY',
+      apiBaseUrl: partnerBank.apiBaseUrl || payGatewayBaseUrl,
+      supportedCurrencies,
+      providerMetadata: {
+        ...partnerBank.metadata,
+        registry_kind: 'UNIVERSAL_SWITCH',
+        message_standard: partnerBank.messageStandard,
+        clearing_network: upperCode(partnerBank.clearingNetwork),
+        switch_profile_code: partnerBank.payGatewayProviderCode,
+        pay_gateway_provider_code: partnerBank.payGatewayProviderCode,
+        provider_code: partnerBank.payGatewayProviderCode,
+        rail,
+        countries,
+        operations: partnerBank.operations,
+        iso20022_profile: partnerBank.iso20022Profile,
+        settlement_model: partnerBank.settlementModel,
+        participant_id: partnerBank.participantId,
+        sponsored_participant_id: partnerBank.sponsoredParticipantId,
+        group: 'Bank',
+        checkout_mode: 'server_to_server',
+        channels: ['bank_transfer', 'bank_account'],
+      },
+      mappingConfig: {
+        service_root: partnerBank.apiBaseUrl || payGatewayBaseUrl,
+        operations: Object.fromEntries(partnerBank.operations.map((operationCode) => [
+          operationCode,
+          {
+            method: operationContract[operationCode]?.method || 'POST',
+            url: operationContract[operationCode]?.url || '/v1/collections',
+            payload_template: {
+              providerCode: partnerBank.payGatewayProviderCode,
+              reference: '{{reference}}',
+              amount: '{{amount}}',
+              currency: '{{currency}}',
+              accountNumber: '{{recipient.accountNumber}}',
+              description: '{{description}}',
+              metadata: {
+                clearingNetwork: upperCode(partnerBank.clearingNetwork),
+                messageStandard: partnerBank.messageStandard,
+              },
+            },
+            response_mapping: {
+              providerRef: 'data.providerReference',
+              status: 'data.status',
+              message: 'data.message',
+            },
+          },
+        ])),
+      },
+      routingRules: partnerBank.operations.flatMap((operationCode) =>
+        countries.flatMap((countryCode) =>
+          supportedCurrencies.map((currency) => ({
+            rail,
+            countryCode,
+            currency,
+            operationCode,
+            priority: partnerBank.priority,
+            status: partnerBank.status === 'ACTIVE' ? 'ACTIVE' as const : 'INACTIVE' as const,
+            conditions: {
+              registry_kind: 'UNIVERSAL_SWITCH',
+              clearing_network: upperCode(partnerBank.clearingNetwork),
+              pay_gateway_provider_code: partnerBank.payGatewayProviderCode,
+            },
+          })),
+        ),
+      ),
     };
   }
 

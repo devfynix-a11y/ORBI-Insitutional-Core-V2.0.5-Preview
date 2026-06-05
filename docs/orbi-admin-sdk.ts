@@ -74,6 +74,7 @@ export type AdminConfigBootstrapPayload = {
     fee?: Record<string, unknown>;
   };
   providers?: Array<Record<string, unknown>>;
+  partnerBanks?: Array<Record<string, unknown>>;
 };
 
 export type PaymentIntentPayload = Record<string, unknown>;

@@ -385,8 +385,11 @@ Payload:
     fee?: Record<string, unknown>,
   },
   providers?: Array<Record<string, unknown>>,
+  partnerBanks?: Array<Record<string, unknown>>,
 }
 ```
+
+Use `partnerBanks` for bank-sponsored switch access such as NMB/TIPS. The backend normalizes each partner bank into a universal switch provider profile, Pay Gateway route metadata, and routing rules. Use `providers` only for direct provider profiles that ORBI manages itself.
 
 The UI must always call `bootstrapPreview` before `bootstrapCommit`.
 
