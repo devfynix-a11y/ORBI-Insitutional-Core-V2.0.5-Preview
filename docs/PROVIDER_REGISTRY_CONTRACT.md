@@ -187,6 +187,41 @@ Example ISO 20022/TIPS universal switch profile:
 
 Core routes to this switch profile. ORBI Pay Gateway maps the request to ISO 20022 and communicates with the neighbor bank or clearing network.
 
+Example NMB OBP sandbox profile:
+
+```json
+{
+  "name": "NMB OBP Sandbox",
+  "type": "bank",
+  "logic_type": "REGISTRY",
+  "status": "ACTIVE",
+  "api_base_url": "https://pay.orbifinancial.com",
+  "supported_currencies": ["TZS"],
+  "provider_metadata": {
+    "registry_kind": "UNIVERSAL_SWITCH",
+    "message_standard": "PROVIDER_NATIVE",
+    "clearing_network": "NMB_OBP_SANDBOX",
+    "switch_profile_code": "nmb-obp-sandbox",
+    "pay_gateway_provider_code": "nmb-obp-sandbox",
+    "provider_code": "nmb-obp-sandbox",
+    "rail": "BANK",
+    "countries": ["TZ"],
+    "operations": ["COLLECTION_REQUEST", "DISBURSEMENT_REQUEST", "REVERSAL_REQUEST"],
+    "settlement_model": "SANDBOX"
+  },
+  "mapping_config": {
+    "service_root": "https://pay.orbifinancial.com",
+    "operations": {
+      "COLLECTION_REQUEST": { "method": "POST", "url": "/v1/collections" },
+      "DISBURSEMENT_REQUEST": { "method": "POST", "url": "/v1/payouts" },
+      "REVERSAL_REQUEST": { "method": "POST", "url": "/v1/refunds" }
+    }
+  }
+}
+```
+
+Use this for NMB sandbox validation only. Production TIPS/NMB sponsored participant access should use a separate ISO 20022 profile after bank certification.
+
 ## API Output
 
 `GET /v1/gateway/providers` returns normalized fields:
