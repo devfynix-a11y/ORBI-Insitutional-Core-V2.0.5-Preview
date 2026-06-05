@@ -8,6 +8,15 @@ export const riskAssessment = async (req: Request, res: Response, next: NextFunc
   const profile = SecurityOperationsEngine.classify(req);
 
   try {
+    if (!SecurityOperationsEngine.hasRequiredReason(req, profile)) {
+      return res.status(400).json({
+        success: false,
+        error: 'GOVERNANCE_REASON_REQUIRED',
+        message: `${profile.class} requires a readable governance reason before it can be committed.`,
+        operationClass: profile.class,
+      });
+    }
+
     const context = {
       userId: (req as any).session?.sub || (req as any).user?.sub,
       ip: req.ip || '0.0.0.0',

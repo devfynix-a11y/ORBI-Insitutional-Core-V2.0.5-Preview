@@ -62,11 +62,6 @@ export class RiskEngine {
             totalScore += 40;
         }
 
-        if (!SecurityOperationsEngine.hasRequiredReason(req, operationProfile)) {
-            signals.push({ type: 'MISSING_GOVERNANCE_REASON', score: 70, detail: `${operationProfile.class} requires a readable reason.` });
-            totalScore += 70;
-        }
-
         if (operationProfile.requiresIdempotency) {
             const idempotencyKey = req.get?.('Idempotency-Key') || req.get?.('x-idempotency-key') || req.headers?.['idempotency-key'] || req.headers?.['x-idempotency-key'];
             if (!idempotencyKey) {
@@ -77,9 +72,12 @@ export class RiskEngine {
 
         // 4. Sentinel AI Insight
         const sentinelReport = await Sentinel.inspectOperation(null, 'risk_audit', req.body);
-        if (sentinelReport.riskScore > 0) {
-            signals.push({ type: 'AI_ANOMALY', score: sentinelReport.riskScore, detail: sentinelReport.anomalies.join(', ') });
-            totalScore += sentinelReport.riskScore;
+        const sentinelScore = operationProfile.class === 'CONFIG_COMMIT'
+            ? (sentinelReport.riskScore >= 40 ? sentinelReport.riskScore : 0)
+            : sentinelReport.riskScore;
+        if (sentinelScore > 0) {
+            signals.push({ type: 'AI_ANOMALY', score: sentinelScore, detail: sentinelReport.anomalies.join(', ') });
+            totalScore += sentinelScore;
         }
 
         // Cap score at 100
