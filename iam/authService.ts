@@ -271,39 +271,55 @@ export class AuthService {
 
         const rawIdentifier = String(identifier || '').trim();
         if (!rawIdentifier) return null;
-        const normalizedIdentifier = this.normalizePhoneIdentifier(rawIdentifier);
         const isEmail = rawIdentifier.includes('@');
-        const filters: Array<{ column: string; operator: 'eq'; value: unknown }> = isEmail
-            ? [{ column: 'email', operator: 'eq', value: rawIdentifier.toLowerCase() }]
+        const normalizedIdentifier = this.normalizePhoneIdentifier(rawIdentifier);
+        const userFilters: Array<{ column: string; operator: 'eq' | 'ilike'; value: unknown }> = isEmail
+            ? [{ column: 'email', operator: 'ilike', value: rawIdentifier.toLowerCase() }]
             : [
                 { column: 'phone', operator: 'eq', value: normalizedIdentifier },
                 { column: 'customer_id', operator: 'eq', value: rawIdentifier },
             ];
+        const staffFilters: Array<{ column: string; operator: 'eq' | 'ilike'; value: unknown }> = isEmail
+            ? [{ column: 'email', operator: 'ilike', value: rawIdentifier.toLowerCase() }]
+            : [{ column: 'phone', operator: 'eq', value: normalizedIdentifier }];
 
         const preferred = String(preferredRegistryType || '').trim().toUpperCase();
         const tables: Array<'users' | 'staff'> = preferred === 'STAFF'
-            ? ['staff', 'users']
+            ? ['staff']
             : preferred === 'CONSUMER' || preferred === 'MERCHANT' || preferred === 'AGENT' || preferred === 'USER'
-                ? ['users', 'staff']
+                ? ['users']
                 : ['users', 'staff'];
 
         for (const table of tables) {
-            const { data } = await sb
-                .from(table)
-                .select('id, full_name, email, phone, language, account_status, registry_type, customer_id')
+            const selectColumns = table === 'staff'
+                ? 'id, full_name, email, phone, language, account_status, role'
+                : 'id, full_name, email, phone, language, account_status, registry_type, customer_id';
+            const filters = table === 'staff' ? staffFilters : userFilters;
+            const { data, error } = await (sb.from(table) as any)
+                .select(selectColumns)
                 .or(buildPostgrestOrFilter(filters))
-                .maybeSingle();
-            if (data) {
-                return {
-                    userId: data.id,
+                .limit(1);
+            if (error) {
+                console.warn('[AuthService] Identity challenge lookup failed', {
                     table,
-                    email: data.email,
-                    phone: data.phone,
-                    fullName: data.full_name,
-                    language: data.language,
-                    status: data.account_status,
-                    registryType: data.registry_type || (table === 'staff' ? 'STAFF' : 'CONSUMER'),
-                    customerId: data.customer_id,
+                    preferredRegistryType: preferred || 'AUTO',
+                    identifier: this.maskContact(rawIdentifier),
+                    error: error.message,
+                });
+                continue;
+            }
+            const row = Array.isArray(data) ? data[0] : data;
+            if (row) {
+                return {
+                    userId: row.id,
+                    table,
+                    email: row.email,
+                    phone: row.phone,
+                    fullName: row.full_name,
+                    language: row.language,
+                    status: row.account_status,
+                    registryType: table === 'staff' ? 'STAFF' : (row.registry_type || 'CONSUMER'),
+                    customerId: table === 'staff' ? null : row.customer_id,
                 };
             }
         }
