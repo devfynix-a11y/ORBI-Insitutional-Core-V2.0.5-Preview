@@ -152,19 +152,19 @@ export class OTPService {
         targets.push({ type, contact: normalizedContact });
     }
 
-    static async generateAndSend(userId: string, contact: string, action: string, type: OTPDeliveryType = 'sms', deviceName?: string): Promise<{ requestId: string, code?: string, deliveryType?: string, deliveryContact?: string }> {
+    static async generateAndSend(userId: string, contact: string, action: string, type: OTPDeliveryType = 'sms', deviceName?: string): Promise<{ requestId: string, code?: string, deliveryType?: string, deliveryContact?: string, deliverySent?: boolean }> {
         // 1. Throttling check (60 seconds)
         const throttleKey = this.THROTTLE_PREFIX + userId + ':' + action;
         const isThrottled = await RedisManager.get(throttleKey);
         if (isThrottled) {
             otpLogger.warn('otp.throttled', { actor_id: userId, action });
-            return { requestId: 'THROTTLED' };
+            return { requestId: 'THROTTLED', deliverySent: false };
         }
 
         // Validation
         if (!contact) {
             otpLogger.error('otp.missing_contact', { actor_id: userId, action });
-            return { requestId: 'ERROR_NO_CONTACT' };
+            return { requestId: 'ERROR_NO_CONTACT', deliverySent: false };
         }
 
         // Generate a 6-digit code
@@ -194,6 +194,7 @@ export class OTPService {
         let bestEmail = contact && contact.includes('@') ? contact : '';
         let responseDeliveryType: string = actualType;
         let responseDeliveryContact = actualContact;
+        let deliverySent = false;
 
         // Send via Provider
         try {
@@ -403,8 +404,16 @@ export class OTPService {
             }
 
             if (sentTargets.length > 0) {
+                deliverySent = true;
                 responseDeliveryType = sentTargets.map((target) => target.type).join('+');
                 responseDeliveryContact = sentTargets.map((target) => target.contact).join(',');
+            } else {
+                otpLogger.error('otp.dispatch_no_channels_delivered', {
+                    actor_id: userId,
+                    action,
+                    requested_delivery_type: type,
+                    request_id: requestId,
+                });
             }
             
             otpLogger.info('otp.dispatch_completed', { actor_id: userId, action, delivery_type: responseDeliveryType, request_id: requestId });
@@ -412,7 +421,7 @@ export class OTPService {
             otpLogger.error('otp.dispatch_failed', { actor_id: userId, action, delivery_type: actualType, request_id: requestId }, error);
         }
 
-        return { requestId, code, deliveryType: responseDeliveryType, deliveryContact: responseDeliveryContact };
+        return { requestId, code, deliveryType: responseDeliveryType, deliveryContact: responseDeliveryContact, deliverySent };
     }
 
     /**

@@ -387,6 +387,17 @@ export class AuthService {
             'ORBI Account Activation',
         );
 
+        if (!result.deliverySent) {
+            return {
+                success: false,
+                confirmationRequired: true,
+                error: 'OTP_DELIVERY_FAILED: ORBI could not deliver the activation code by SMS/email. Check ORBI Talk Gateway configuration and delivery logs.',
+                requestId: result.requestId,
+                deliveryType: result.deliveryType,
+                deliveryContact: this.maskContact(result.deliveryContact || challengeContact.contact),
+            };
+        }
+
         return {
             success: true,
             confirmationRequired: true,
