@@ -164,8 +164,12 @@ class OrbiServer {
         return this.auth.completePasswordReset(password, identifier, requestId, code);
     }
     async initiatePasswordReset(identifier: string) { return this.auth.initiatePasswordReset(identifier); }
-    async initiateAccountConfirmation(identifier: string) { return this.auth.initiateAccountConfirmation(identifier); }
-    async confirmAccount(identifier: string, requestId: string, code: string) { return this.auth.confirmAccount(identifier, requestId, code); }
+    async initiateAccountConfirmation(identifier: string, replacementContact?: string, preferredRegistryType?: string) {
+        return this.auth.initiateAccountConfirmation(identifier, replacementContact, preferredRegistryType);
+    }
+    async confirmAccount(identifier: string, requestId: string, code: string, preferredRegistryType?: string) {
+        return this.auth.confirmAccount(identifier, requestId, code, preferredRegistryType);
+    }
     async cleanupExpiredUnconfirmedAccounts() { return this.auth.cleanupExpiredUnconfirmedAccounts(); }
     async deleteAccount() { return this.auth.deleteAccount(); }
     async initiatePhoneLogin(phone: string) { return this.auth.initiatePhoneLogin(phone); }
