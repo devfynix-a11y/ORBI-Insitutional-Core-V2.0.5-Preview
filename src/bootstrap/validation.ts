@@ -422,6 +422,8 @@ const validateProviderRegistryReadiness = async (adminClient: any) => {
       const callback = registry.callback && typeof registry.callback === 'object'
         ? registry.callback
         : null;
+      const registryKind = String(metadata.registry_kind || 'EXTERNAL_PROVIDER').trim().toUpperCase();
+      const isUniversalSwitch = registryKind === 'UNIVERSAL_SWITCH' || registryKind === 'CLEARING_NETWORK';
       const hasBaseUrl =
         Boolean(String(partner.api_base_url || '').trim()) ||
         Boolean(String(registry.service_root || '').trim()) ||
@@ -429,16 +431,20 @@ const validateProviderRegistryReadiness = async (adminClient: any) => {
       const hasWebhookSecret =
         Boolean(String(partner.webhook_secret || '').trim()) ||
         Boolean(String(metadata?.secrets?.webhook_secret || '').trim());
+      const providerCode = String(metadata.provider_code || metadata.switch_profile_code || metadata.pay_gateway_provider_code || '').trim();
 
       const missing = [
-        !String(metadata.provider_code || '').trim() ? 'provider_metadata.provider_code' : '',
+        !providerCode ? 'provider_metadata.provider_code_or_switch_profile_code' : '',
         operations.length === 0 ? 'mapping_config.operations' : '',
-        !callback ? 'mapping_config.callback' : '',
-        callback && !String(callback.reference_field || '').trim() ? 'mapping_config.callback.reference_field' : '',
-        callback && !String(callback.status_field || '').trim() ? 'mapping_config.callback.status_field' : '',
-        !hasWebhookSecret ? 'webhook_secret' : '',
+        !isUniversalSwitch && !callback ? 'mapping_config.callback' : '',
+        !isUniversalSwitch && callback && !String(callback.reference_field || '').trim() ? 'mapping_config.callback.reference_field' : '',
+        !isUniversalSwitch && callback && !String(callback.status_field || '').trim() ? 'mapping_config.callback.status_field' : '',
+        !isUniversalSwitch && !hasWebhookSecret ? 'webhook_secret' : '',
         !hasBaseUrl ? 'api_base_url_or_service_root' : '',
         !routedProviderIds.has(String(partner.id)) ? 'provider_routing_rules' : '',
+        isUniversalSwitch && !String(metadata.message_standard || '').trim() ? 'provider_metadata.message_standard' : '',
+        isUniversalSwitch && String(metadata.message_standard || '').trim().toUpperCase() === 'ISO20022' && !String(metadata.clearing_network || '').trim() ? 'provider_metadata.clearing_network' : '',
+        isUniversalSwitch && String(metadata.message_standard || '').trim().toUpperCase() === 'ISO20022' && !String(metadata.iso20022_profile || '').trim() ? 'provider_metadata.iso20022_profile' : '',
       ].filter(Boolean);
 
       return missing.length > 0

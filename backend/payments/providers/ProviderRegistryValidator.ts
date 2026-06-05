@@ -12,6 +12,8 @@ const PARTNER_TYPES = new Set(['mobile_money', 'bank', 'card', 'crypto']);
 const LOGIC_TYPES = new Set(['REGISTRY', 'GENERIC_REST', 'SPECIALIZED']);
 const PROVIDER_GROUPS = new Set(['mobile', 'bank', 'gateways', 'crypto']);
 const RAIL_TYPES = new Set(['mobile_money', 'bank', 'card_gateway', 'crypto', 'wallet']);
+const REGISTRY_KINDS = new Set(['EXTERNAL_PROVIDER', 'UNIVERSAL_SWITCH', 'CLEARING_NETWORK']);
+const MESSAGE_STANDARDS = new Set(['PROVIDER_NATIVE', 'ISO20022', 'ISO8583', 'CUSTOM']);
 const CHECKOUT_MODES = new Set([
     'redirect',
     'embedded',
@@ -191,6 +193,37 @@ function normalizeProviderMetadata(metadata: unknown): FinancialPartnerMetadata 
     if (metadata === undefined || metadata === null) return undefined;
     const raw = assertObject(metadata, 'PROVIDER_METADATA');
     const normalized: FinancialPartnerMetadata = { ...raw };
+
+    const registryKind = String(raw.registry_kind ?? '').trim().toUpperCase();
+    if (registryKind) {
+        if (!REGISTRY_KINDS.has(registryKind)) {
+            throw new Error('PROVIDER_METADATA_REGISTRY_KIND_INVALID');
+        }
+        normalized.registry_kind = registryKind;
+    }
+
+    const messageStandard = String(raw.message_standard ?? '').trim().toUpperCase();
+    if (messageStandard) {
+        if (!MESSAGE_STANDARDS.has(messageStandard)) {
+            throw new Error('PROVIDER_METADATA_MESSAGE_STANDARD_INVALID');
+        }
+        normalized.message_standard = messageStandard;
+    }
+
+    for (const field of [
+        'clearing_network',
+        'switch_profile_code',
+        'pay_gateway_provider_code',
+        'participant_id',
+        'sponsored_participant_id',
+        'iso20022_profile',
+        'settlement_model',
+    ]) {
+        const value = String(raw[field] ?? '').trim();
+        if (value) {
+            (normalized as any)[field] = value;
+        }
+    }
 
     const groupRaw = String(
         raw.group ?? raw.provider_group ?? '',
@@ -399,6 +432,8 @@ export function assertPartnerActivationReady(payload: Partial<FinancialPartner>)
     const partnerName = String(payload.name || 'UNKNOWN_PROVIDER').trim();
     const metadata = (payload.provider_metadata || {}) as FinancialPartnerMetadata;
     const registry = payload.mapping_config as ProviderRegistryConfig | undefined;
+    const registryKind = String(metadata.registry_kind || 'EXTERNAL_PROVIDER').trim().toUpperCase();
+    const isUniversalSwitch = registryKind === 'UNIVERSAL_SWITCH' || registryKind === 'CLEARING_NETWORK';
 
     if (!registry) {
         throw new Error(`PROVIDER_ACTIVATION_MAPPING_CONFIG_REQUIRED:${partnerName}`);
@@ -421,7 +456,8 @@ export function assertPartnerActivationReady(payload: Partial<FinancialPartner>)
         throw new Error(`PROVIDER_ACTIVATION_SERVICE_ROOT_REQUIRED:${partnerName}`);
     }
 
-    if (!metadata.provider_code || !String(metadata.provider_code).trim()) {
+    const providerCode = String(metadata.provider_code || metadata.switch_profile_code || metadata.pay_gateway_provider_code || '').trim();
+    if (!providerCode) {
         throw new Error(`PROVIDER_ACTIVATION_PROVIDER_CODE_REQUIRED:${partnerName}`);
     }
 
@@ -434,12 +470,26 @@ export function assertPartnerActivationReady(payload: Partial<FinancialPartner>)
         throw new Error(`PROVIDER_ACTIVATION_OPERATIONS_METADATA_REQUIRED:${partnerName}`);
     }
 
+    if (isUniversalSwitch) {
+        if (!String(metadata.message_standard || '').trim()) {
+            throw new Error(`PROVIDER_ACTIVATION_MESSAGE_STANDARD_REQUIRED:${partnerName}`);
+        }
+        if (String(metadata.message_standard).trim().toUpperCase() === 'ISO20022') {
+            if (!String(metadata.clearing_network || '').trim()) {
+                throw new Error(`PROVIDER_ACTIVATION_CLEARING_NETWORK_REQUIRED:${partnerName}`);
+            }
+            if (!String(metadata.iso20022_profile || '').trim()) {
+                throw new Error(`PROVIDER_ACTIVATION_ISO20022_PROFILE_REQUIRED:${partnerName}`);
+            }
+        }
+    }
+
     const supportsWebhook =
         metadata.supports_webhooks === true ||
         operations.map((operation) => String(operation).trim().toUpperCase()).includes('WEBHOOK_VERIFY') ||
         Boolean(registry.callback);
 
-    if (supportsWebhook) {
+    if (supportsWebhook && !isUniversalSwitch) {
         if (!registry.callback) {
             throw new Error(`PROVIDER_ACTIVATION_CALLBACK_REQUIRED:${partnerName}`);
         }

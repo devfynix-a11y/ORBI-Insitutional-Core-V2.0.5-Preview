@@ -1,8 +1,13 @@
-# Provider Registry Contract
+# External Rail Registry Contract
 
-The ORBI backend uses a dynamic provider registry stored in `financial_partners`.
-Providers must be configured from Admin UI and executed through `logic_type` plus
-`mapping_config`, not through hardcoded provider ids or provider classes.
+The ORBI backend uses a dynamic external rail registry stored in `financial_partners`.
+The table name is retained for database compatibility, but the business meaning is broader:
+
+- direct external provider profiles
+- universal switch profiles
+- clearing network profiles
+
+ORBI Core should not onboard every mobile money or bank provider one by one when a regulated switch path can cover the same network. For TIPS and future East African/global pipelines, Core should register a universal switch profile and let ORBI Pay Gateway execute ISO 20022 rail messaging.
 
 ## Core Fields
 
@@ -13,6 +18,16 @@ Providers must be configured from Admin UI and executed through `logic_type` plu
 - `api_base_url`: provider base URL
 - `mapping_config`: auth, request, response, webhook, and balance registry config
 - `provider_metadata`: UI and product metadata
+
+## Registry Kinds
+
+`provider_metadata.registry_kind` defines how Core should understand the row:
+
+- `EXTERNAL_PROVIDER`: a specific provider profile, usually legacy or direct-provider integration.
+- `UNIVERSAL_SWITCH`: a switch profile that can reach many banks/wallets through one clearing participant.
+- `CLEARING_NETWORK`: a scheme/network profile such as TIPS, EAPS, RTGS, ACH, or a card switch.
+
+For new production bank/switch expansion, prefer `UNIVERSAL_SWITCH` or `CLEARING_NETWORK`.
 
 ## Current Routing Model
 
@@ -37,6 +52,15 @@ Fallback routing source:
 
 Supported UI/product fields:
 
+- `registry_kind`: `EXTERNAL_PROVIDER` | `UNIVERSAL_SWITCH` | `CLEARING_NETWORK`
+- `message_standard`: `PROVIDER_NATIVE` | `ISO20022` | `ISO8583` | `CUSTOM`
+- `clearing_network`: `TIPS`, `EAPS`, `RTGS`, `ACH`, `CARD_SWITCH`, `SWIFT`, or partner-specific code
+- `switch_profile_code`: Core-facing switch profile code
+- `pay_gateway_provider_code`: provider code configured in ORBI Pay Gateway manifest
+- `participant_id`: ORBI or sponsored participant ID
+- `sponsored_participant_id`: neighbor bank/sponsor participant ID
+- `iso20022_profile`: ISO 20022 implementation profile/version
+- `settlement_model`: `REALTIME_GROSS`, `DEFERRED_NET`, `BATCH`, or `HYBRID`
 - `group`: `Mobile` | `Bank` | `Gateways` | `Crypto`
 - `rail`: `MOBILE_MONEY` | `BANK` | `CARD_GATEWAY` | `CRYPTO` | `WALLET`
 - `brand_name`: provider-facing brand label
@@ -126,6 +150,42 @@ Example operation-aware registry layout:
   }
 }
 ```
+
+Example ISO 20022/TIPS universal switch profile:
+
+```json
+{
+  "name": "TIPS Universal Switch",
+  "type": "bank",
+  "logic_type": "REGISTRY",
+  "status": "ACTIVE",
+  "api_base_url": "https://pay.orbifinancial.com",
+  "supported_currencies": ["TZS"],
+  "provider_metadata": {
+    "registry_kind": "UNIVERSAL_SWITCH",
+    "message_standard": "ISO20022",
+    "clearing_network": "TIPS",
+    "switch_profile_code": "tips-neighbor-bank",
+    "pay_gateway_provider_code": "tips-neighbor-bank",
+    "provider_code": "tips-neighbor-bank",
+    "rail": "BANK",
+    "countries": ["TZ"],
+    "operations": ["COLLECTION_REQUEST", "DISBURSEMENT_REQUEST", "REVERSAL_REQUEST"],
+    "iso20022_profile": "tips-iso20022-pacs-v1",
+    "settlement_model": "REALTIME_GROSS"
+  },
+  "mapping_config": {
+    "service_root": "https://pay.orbifinancial.com",
+    "operations": {
+      "COLLECTION_REQUEST": { "method": "POST", "url": "/v1/collections" },
+      "DISBURSEMENT_REQUEST": { "method": "POST", "url": "/v1/payouts" },
+      "REVERSAL_REQUEST": { "method": "POST", "url": "/v1/refunds" }
+    }
+  }
+}
+```
+
+Core routes to this switch profile. ORBI Pay Gateway maps the request to ISO 20022 and communicates with the neighbor bank or clearing network.
 
 ## API Output
 

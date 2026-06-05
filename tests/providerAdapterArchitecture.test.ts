@@ -37,6 +37,42 @@ test('provider capability service classifies mobile money generically', () => {
   assert.deepEqual(capability.supportedOperations.sort(), ['COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST'].sort());
 });
 
+test('provider capability service exposes universal switch metadata', () => {
+  const capability = providerCapabilityService.describe({
+    id: 'switch-1',
+    name: 'TIPS Universal Switch',
+    type: 'bank',
+    status: 'ACTIVE',
+    supported_currencies: ['TZS'],
+    provider_metadata: {
+      registry_kind: 'UNIVERSAL_SWITCH',
+      message_standard: 'ISO20022',
+      clearing_network: 'TIPS',
+      switch_profile_code: 'tips-neighbor-bank',
+      pay_gateway_provider_code: 'tips-neighbor-bank',
+      iso20022_profile: 'tips-iso20022-pacs-v1',
+      operations: ['COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST'],
+      provider_code: 'tips-neighbor-bank',
+      rail: 'BANK',
+      countries: ['TZ'],
+    },
+    mapping_config: {
+      service_root: 'https://pay.orbifinancial.com',
+      operations: {
+        COLLECTION_REQUEST: { method: 'POST', url: '/v1/collections' },
+        DISBURSEMENT_REQUEST: { method: 'POST', url: '/v1/payouts' },
+      },
+    },
+  } as any);
+
+  assert.equal(capability.category, 'bank');
+  assert.equal(capability.rail, 'BANK');
+  assert.equal(capability.registryKind, 'UNIVERSAL_SWITCH');
+  assert.equal(capability.messageStandard, 'ISO20022');
+  assert.equal(capability.clearingNetwork, 'TIPS');
+  assert.equal(capability.providerCode, 'tips-neighbor-bank');
+});
+
 test('generic rest provider exposes formal adapter capabilities', () => {
   const provider = new GenericRestProvider();
   const capability = provider.getCapabilities({

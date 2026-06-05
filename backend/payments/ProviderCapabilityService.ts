@@ -50,10 +50,19 @@ export class ProviderCapabilityService {
       supportedCountries: Array.isArray(metadata.countries) ? metadata.countries : [],
       retryableOperations: operationList.filter((op) => op !== 'AUTH'),
       preferredRoutingPriority: Number(metadata.routing_priority || 100),
+      registryKind: String(metadata.registry_kind || 'EXTERNAL_PROVIDER'),
+      messageStandard: String(metadata.message_standard || 'PROVIDER_NATIVE'),
+      clearingNetwork: metadata.clearing_network ? String(metadata.clearing_network) : undefined,
+      switchProfileCode: metadata.switch_profile_code ? String(metadata.switch_profile_code) : undefined,
+      payGatewayProviderCode: metadata.pay_gateway_provider_code ? String(metadata.pay_gateway_provider_code) : undefined,
       extra: {
         checkoutMode: metadata.checkout_mode,
         channels: metadata.channels || [],
         providerGroup: metadata.group,
+        participantId: metadata.participant_id,
+        sponsoredParticipantId: metadata.sponsored_participant_id,
+        iso20022Profile: metadata.iso20022_profile,
+        settlementModel: metadata.settlement_model,
       },
     };
   }

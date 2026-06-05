@@ -113,3 +113,40 @@ test('active provider with complete registry passes activation guard', () => {
 
     assert.doesNotThrow(() => assertPartnerActivationReady(payload));
 });
+
+test('active universal ISO 20022 switch profile passes without direct provider webhook secret', () => {
+    const payload = normalizeFinancialPartnerInput({
+        name: 'TIPS Universal Switch',
+        type: 'bank',
+        logic_type: 'REGISTRY',
+        status: 'ACTIVE',
+        api_base_url: 'https://pay.orbifinancial.com',
+        mapping_config: {
+            service_root: 'https://pay.orbifinancial.com',
+            operations: {
+                COLLECTION_REQUEST: {
+                    method: 'POST',
+                    url: '/v1/collections',
+                },
+                DISBURSEMENT_REQUEST: {
+                    method: 'POST',
+                    url: '/v1/payouts',
+                },
+            },
+        },
+        provider_metadata: {
+            registry_kind: 'UNIVERSAL_SWITCH',
+            message_standard: 'ISO20022',
+            clearing_network: 'TIPS',
+            switch_profile_code: 'tips-neighbor-bank',
+            pay_gateway_provider_code: 'tips-neighbor-bank',
+            iso20022_profile: 'tips-iso20022-pacs-v1',
+            provider_code: 'tips-neighbor-bank',
+            rail: 'BANK',
+            operations: ['COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST'],
+            countries: ['TZ'],
+        },
+    });
+
+    assert.doesNotThrow(() => assertPartnerActivationReady(payload));
+});

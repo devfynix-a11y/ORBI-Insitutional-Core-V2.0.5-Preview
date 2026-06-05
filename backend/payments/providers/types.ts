@@ -16,6 +16,11 @@ export interface ProviderCapabilityDescriptor {
     supportedCountries: string[];
     retryableOperations: MoneyOperation[];
     preferredRoutingPriority?: number;
+    registryKind?: string;
+    messageStandard?: string;
+    clearingNetwork?: string;
+    switchProfileCode?: string;
+    payGatewayProviderCode?: string;
     extra?: Record<string, any>;
 }
 

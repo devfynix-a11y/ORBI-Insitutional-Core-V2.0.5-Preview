@@ -777,6 +777,10 @@ export interface ResolvedProviderConfig {
     routingDecision?: ProviderRoutingDecision;
 }
 
+export type ProviderRegistryKind = 'EXTERNAL_PROVIDER' | 'UNIVERSAL_SWITCH' | 'CLEARING_NETWORK';
+export type PaymentMessageStandard = 'PROVIDER_NATIVE' | 'ISO20022' | 'ISO8583' | 'CUSTOM';
+export type ClearingNetworkCode = 'TIPS' | 'EAPS' | 'RTGS' | 'ACH' | 'CARD_SWITCH' | 'SWIFT' | string;
+
 export type ProviderGroup = 'Mobile' | 'Bank' | 'Gateways' | 'Crypto';
 export type ProviderCheckoutMode =
     | 'redirect'
@@ -798,6 +802,15 @@ export type ProviderChannel =
     | 'checkout_link';
 
 export interface FinancialPartnerMetadata {
+    registry_kind?: ProviderRegistryKind | string;
+    message_standard?: PaymentMessageStandard | string;
+    clearing_network?: ClearingNetworkCode;
+    switch_profile_code?: string;
+    pay_gateway_provider_code?: string;
+    participant_id?: string;
+    sponsored_participant_id?: string;
+    iso20022_profile?: string;
+    settlement_model?: 'REALTIME_GROSS' | 'DEFERRED_NET' | 'BATCH' | 'HYBRID' | string;
     group?: ProviderGroup | string;
     provider_group?: ProviderGroup | string;
     rail?: RailType | string;

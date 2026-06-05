@@ -42,6 +42,9 @@ export function normalizeFinancialPartnerMetadata(
     partner?: Partial<FinancialPartner> | null,
 ): FinancialPartnerMetadata {
     const metadata = (partner?.provider_metadata || {}) as FinancialPartnerMetadata;
+    const registryKind = String(metadata.registry_kind || '').trim().toUpperCase();
+    const messageStandard = String(metadata.message_standard || '').trim().toUpperCase();
+    const switchProfileCode = String(metadata.switch_profile_code || metadata.pay_gateway_provider_code || metadata.provider_code || '').trim();
     const brandName = metadata.brand_name || metadata.display_name || partner?.name || '';
     const displayIcon = metadata.display_icon || metadata.icon || partner?.icon || '';
     const channels = Array.isArray(metadata.channels) ? metadata.channels : [];
@@ -50,6 +53,10 @@ export function normalizeFinancialPartnerMetadata(
 
     return {
         ...metadata,
+        registry_kind: registryKind || 'EXTERNAL_PROVIDER',
+        message_standard: messageStandard || 'PROVIDER_NATIVE',
+        switch_profile_code: switchProfileCode || undefined,
+        pay_gateway_provider_code: metadata.pay_gateway_provider_code || switchProfileCode || undefined,
         group: resolveProviderGroup(partner, metadata),
         brand_name: brandName,
         display_name: metadata.display_name || brandName,
@@ -73,6 +80,17 @@ export function normalizeFinancialPartnerMetadata(
 
 export function resolveProviderCode(partner?: Partial<FinancialPartner> | null): string {
     const metadata = normalizeFinancialPartnerMetadata(partner);
-    return String(metadata.provider_code || metadata.brand_name || partner?.name || '').trim();
+    return String(
+        metadata.pay_gateway_provider_code ||
+        metadata.switch_profile_code ||
+        metadata.provider_code ||
+        metadata.brand_name ||
+        partner?.name ||
+        '',
+    ).trim();
 }
 
+export function isUniversalSwitchProfile(partner?: Partial<FinancialPartner> | null): boolean {
+    const metadata = normalizeFinancialPartnerMetadata(partner);
+    return ['UNIVERSAL_SWITCH', 'CLEARING_NETWORK'].includes(String(metadata.registry_kind || '').trim().toUpperCase());
+}

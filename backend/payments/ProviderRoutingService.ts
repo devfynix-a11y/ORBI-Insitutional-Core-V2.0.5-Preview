@@ -8,7 +8,7 @@ import {
     RailType,
     ResolvedProviderConfig,
 } from '../../types.js';
-import { normalizeFinancialPartnerMetadata, resolveProviderCode } from './financialPartnerMetadata.js';
+import { isUniversalSwitchProfile, normalizeFinancialPartnerMetadata, resolveProviderCode } from './financialPartnerMetadata.js';
 import {
     assertProviderRegistry,
     resolveOperationConfig,
@@ -200,6 +200,10 @@ export class ProviderRoutingService {
                 partnerType: partner.type,
                 supportedCurrencies: partner.supported_currencies || [],
                 providerMetadata: normalizeFinancialPartnerMetadata(partner),
+                registryKind: normalizeFinancialPartnerMetadata(partner).registry_kind,
+                messageStandard: normalizeFinancialPartnerMetadata(partner).message_standard,
+                clearingNetwork: normalizeFinancialPartnerMetadata(partner).clearing_network,
+                switchProfileCode: normalizeFinancialPartnerMetadata(partner).switch_profile_code,
             },
             routingDecision,
         };
@@ -253,9 +257,12 @@ export class ProviderRoutingService {
     private resolvePriority(partner: FinancialPartner, operation: MoneyOperation): number {
         const metadataPriority = Number(normalizeFinancialPartnerMetadata(partner).routing_priority);
         const operationPriority = Number((assertProviderRegistry(partner) as any)?.routing?.[operation]?.priority);
-        if (Number.isFinite(operationPriority)) return operationPriority;
-        if (Number.isFinite(metadataPriority)) return metadataPriority;
-        return 100;
+        const basePriority = Number.isFinite(operationPriority)
+            ? operationPriority
+            : Number.isFinite(metadataPriority)
+                ? metadataPriority
+                : 100;
+        return isUniversalSwitchProfile(partner) ? basePriority - 5 : basePriority;
     }
 
     private buildDecision(params: {

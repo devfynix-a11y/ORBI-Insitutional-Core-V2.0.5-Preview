@@ -3,7 +3,9 @@
 ## Purpose
 
 Provider execution is now formalized around a registry-driven adapter architecture.
-The goal is to keep `financial_partners` and `provider_routing_rules` intact while removing hardcoded provider behavior and normalizing execution across mobile money, bank, card, and crypto rails.
+The goal is to keep `financial_partners` and `provider_routing_rules` intact while removing hardcoded provider behavior and normalizing execution across mobile money, bank, card, crypto, and universal switch rails.
+
+The preferred production direction is universal switch registration, not one-provider-at-a-time onboarding. ORBI Core routes to a switch or clearing profile. ORBI Pay Gateway handles ISO 20022/ISO8583/provider-native execution.
 
 ## Core Model
 
@@ -27,6 +29,14 @@ Execution remains registry-driven from existing models:
 - `financial_partners.mapping_config`
 
 No runtime path should depend on hardcoded Airtel-style assumptions.
+
+`financial_partners` is now treated as an external rail registry. Rows can represent:
+
+- `EXTERNAL_PROVIDER`
+- `UNIVERSAL_SWITCH`
+- `CLEARING_NETWORK`
+
+This keeps DB compatibility while allowing TIPS and future regional/global switch expansion.
 
 ## Normalized Contracts
 
@@ -59,12 +69,23 @@ Capabilities describe:
 
 - provider category
 - rail
+- registry kind
+- message standard
+- clearing network
+- switch profile code
 - supported operations
 - webhook/polling support
 - supported currencies and countries
 - routing priority hints
 
 `mobile_money` is treated as a generic provider category, not a named-provider implementation.
+
+For ISO 20022 switch profiles, `ProviderCapabilityService` exposes:
+
+- `registryKind = UNIVERSAL_SWITCH`
+- `messageStandard = ISO20022`
+- `clearingNetwork = TIPS`
+- `payGatewayProviderCode = tips-neighbor-bank`
 
 ## Routing Selection
 
