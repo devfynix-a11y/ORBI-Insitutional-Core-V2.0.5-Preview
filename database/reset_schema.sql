@@ -43,6 +43,7 @@ DROP TABLE IF EXISTS public.kyc_requests CASCADE;
 DROP TABLE IF EXISTS public.transfer_tax_rules CASCADE;
 DROP TABLE IF EXISTS public.regulatory_config CASCADE;
 DROP TABLE IF EXISTS public.digital_merchants CASCADE;
+DROP TABLE IF EXISTS public.payment_rail_capabilities CASCADE;
 DROP TABLE IF EXISTS public.financial_partners CASCADE;
 DROP TABLE IF EXISTS public.external_fund_movements CASCADE;
 DROP TABLE IF EXISTS public.institutional_payment_accounts CASCADE;
@@ -1493,6 +1494,42 @@ CREATE INDEX IF NOT EXISTS idx_provider_routing_rules_provider_status
 
 CREATE INDEX IF NOT EXISTS idx_provider_routing_rules_country_currency
     ON public.provider_routing_rules(country_code, currency, status, priority);
+
+CREATE TABLE IF NOT EXISTS public.payment_rail_capabilities (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    switch_partner_id UUID NOT NULL REFERENCES public.financial_partners(id) ON DELETE CASCADE,
+    capability_code TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    rail TEXT NOT NULL,
+    country_code TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    operation_codes TEXT[] NOT NULL DEFAULT ARRAY['COLLECTION_REQUEST','DISBURSEMENT_REQUEST']::TEXT[],
+    status TEXT NOT NULL DEFAULT 'INACTIVE',
+    priority INTEGER NOT NULL DEFAULT 100,
+    min_amount NUMERIC,
+    max_amount NUMERIC,
+    fee_profile_code TEXT,
+    pay_gateway_provider_code TEXT,
+    pay_gateway_capability_code TEXT,
+    icon TEXT,
+    color TEXT,
+    requires JSONB NOT NULL DEFAULT '{}'::jsonb,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT payment_rail_capabilities_unique_code_per_partner UNIQUE (switch_partner_id, capability_code),
+    CONSTRAINT payment_rail_capabilities_rail_check CHECK (rail IN ('MOBILE_MONEY','BANK','CARD_GATEWAY','CRYPTO','WALLET')),
+    CONSTRAINT payment_rail_capabilities_status_check CHECK (status IN ('ACTIVE','INACTIVE','MAINTENANCE'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_rail_capabilities_lookup
+    ON public.payment_rail_capabilities(country_code, currency, rail, status, priority);
+
+CREATE INDEX IF NOT EXISTS idx_payment_rail_capabilities_operations
+    ON public.payment_rail_capabilities USING GIN (operation_codes);
+
+CREATE INDEX IF NOT EXISTS idx_payment_rail_capabilities_partner
+    ON public.payment_rail_capabilities(switch_partner_id, status, priority);
 
 CREATE TABLE IF NOT EXISTS public.platform_fee_configs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -4727,6 +4764,7 @@ BEGIN
     ALTER TABLE public.financial_partners ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.provider_config_versions ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.provider_performance_metrics ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.payment_rail_capabilities ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.institutional_payment_accounts ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.external_fund_movements ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.settlement_lifecycle ENABLE ROW LEVEL SECURITY;
@@ -4936,6 +4974,19 @@ CREATE POLICY "Admin manage provider routing rules" ON public.provider_routing_r
 
 DROP POLICY IF EXISTS "Service role provider routing bypass" ON public.provider_routing_rules;
 CREATE POLICY "Service role provider routing bypass" ON public.provider_routing_rules
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Authenticated read active payment rail capabilities" ON public.payment_rail_capabilities;
+CREATE POLICY "Authenticated read active payment rail capabilities" ON public.payment_rail_capabilities
+    FOR SELECT USING (status = 'ACTIVE');
+
+DROP POLICY IF EXISTS "Admin manage payment rail capabilities" ON public.payment_rail_capabilities;
+CREATE POLICY "Admin manage payment rail capabilities" ON public.payment_rail_capabilities
+    FOR ALL USING ((SELECT public.get_auth_role()) IN ('SUPER_ADMIN', 'ADMIN', 'IT', 'FINANCE'))
+    WITH CHECK ((SELECT public.get_auth_role()) IN ('SUPER_ADMIN', 'ADMIN', 'IT', 'FINANCE'));
+
+DROP POLICY IF EXISTS "Service role payment rail capability bypass" ON public.payment_rail_capabilities;
+CREATE POLICY "Service role payment rail capability bypass" ON public.payment_rail_capabilities
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Admin manage provider config versions" ON public.provider_config_versions;

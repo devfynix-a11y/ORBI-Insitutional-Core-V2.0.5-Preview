@@ -437,6 +437,7 @@ export class OrbiAdminSdk {
     unlockWallet: (id: string, body: unknown) => this.post<OrbiApiResult<unknown>>(`/v1/wallets/${id}/unlock`, body),
     linkedWallets: () => this.get<OrbiApiResult<unknown[]>>('/v1/wallets/linked'),
     sovereignWallets: () => this.get<OrbiApiResult<unknown[]>>('/v1/wallets/sovereign'),
+    paymentMethods: (query?: Record<string, unknown>) => this.get<OrbiApiResult<unknown[]>>('/v1/payment-methods', query),
     previewTransaction: (body: PaymentIntentPayload) => this.post<OrbiApiResult<unknown>>('/v1/transactions/preview', body),
     settleTransaction: (body: PaymentIntentPayload, idempotencyKey: string) => this.post<OrbiApiResult<unknown>>('/v1/transactions/settle', body, { idempotencyKey }),
     transactions: (query?: Record<string, unknown>) => this.get<OrbiApiResult<unknown[]>>('/v1/transactions', query),

@@ -254,6 +254,30 @@ Use `partnerBanks` when ORBI connects through a bank partner that can reach TIPS
         "DISBURSEMENT_REQUEST",
         "REVERSAL_REQUEST"
       ],
+      "downstreamCapabilities": [
+        {
+          "capabilityCode": "M_PESA_TZ",
+          "displayName": "M-Pesa Tanzania",
+          "rail": "MOBILE_MONEY",
+          "countryCode": "TZ",
+          "currency": "TZS",
+          "operationCodes": ["COLLECTION_REQUEST", "DISBURSEMENT_REQUEST"],
+          "status": "INACTIVE",
+          "priority": 20,
+          "requires": { "msisdn": true }
+        },
+        {
+          "capabilityCode": "AIRTEL_MONEY_TZ",
+          "displayName": "Airtel Money Tanzania",
+          "rail": "MOBILE_MONEY",
+          "countryCode": "TZ",
+          "currency": "TZS",
+          "operationCodes": ["COLLECTION_REQUEST", "DISBURSEMENT_REQUEST"],
+          "status": "INACTIVE",
+          "priority": 30,
+          "requires": { "msisdn": true }
+        }
+      ],
       "priority": 40,
       "metadata": {
         "environment": "sandbox",
@@ -300,6 +324,7 @@ Backend normalization converts each `partnerBanks[]` item into:
 - A `financial_partners` record with `provider_metadata.registry_kind = UNIVERSAL_SWITCH`.
 - A `provider_config_versions` record that points to `ORBI_PAY_GATEWAY_BASE_URL`.
 - Auto-generated `provider_routing_rules` for every submitted country, currency, and operation.
+- `payment_rail_capabilities` rows for consumer-visible options such as M-Pesa, Airtel Money, Tigo Pesa, HaloPesa, and TIPS bank transfer.
 - Pay Gateway provider routing through `provider_metadata.pay_gateway_provider_code`.
 
 Operational rule:
@@ -308,6 +333,7 @@ Operational rule:
 - Use `messageStandard = PROVIDER_NATIVE` for early bank sandbox APIs that are not ISO 20022 yet.
 - Use `messageStandard = ISO20022` only when the Pay Gateway profile has certified ISO 20022 mapping and clearing-network rules.
 - Never store bank credentials in this bootstrap payload. Secrets belong in Pay Gateway environment/configuration and tokenized provider manifests.
+- Consumer apps must load selectable methods from `GET /v1/payment-methods`; they must not hardcode M-Pesa, Airtel, or bank lists.
 
 ## Preview Console UI
 

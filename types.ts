@@ -735,6 +735,15 @@ export interface ProviderRoutingDecision {
     preferredProviderCode?: string;
     preferredProviderId?: string;
     resolvedAt: string;
+    selectedCapability?: {
+        id?: string;
+        capabilityCode: string;
+        displayName?: string;
+        rail?: RailType | string;
+        countryCode?: string;
+        currency?: string;
+        payGatewayCapabilityCode?: string;
+    };
 }
 
 export type OfflineMessageType =

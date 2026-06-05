@@ -42,6 +42,15 @@ test('admin config bootstrap converts partner bank into universal switch provide
   assert.equal(provider.providerMetadata.pay_gateway_provider_code, 'nmb-obp-sandbox');
   assert.equal(provider.providerMetadata.provider_code, 'NMB_SPONSORED_TIPS');
   assert.equal(provider.providerMetadata.settlement_model, 'SANDBOX');
+  assert.equal(Array.isArray(provider.providerMetadata.downstream_capabilities), true);
+  assert.equal((provider.providerMetadata.downstream_capabilities as unknown[]).length, 5);
+  assert.deepEqual(
+    (provider.providerMetadata.downstream_capabilities as any[]).slice(0, 2).map((capability) => [capability.capabilityCode, capability.status]),
+    [
+      ['M_PESA_TZ', 'INACTIVE'],
+      ['AIRTEL_MONEY_TZ', 'INACTIVE'],
+    ],
+  );
 
   assert.equal(provider.mappingConfig.service_root, 'https://pay.orbifinancial.com');
   assert.deepEqual(provider.mappingConfig.operations, {
@@ -153,5 +162,6 @@ test('admin config bootstrap supports production ISO 20022 partner bank profile'
   assert.equal(provider.providerMetadata.participant_id, 'ORBI');
   assert.equal(provider.providerMetadata.sponsored_participant_id, 'PARTNER_BANK');
   assert.equal(provider.routingRules.every((rule) => rule.status === 'ACTIVE'), true);
+  assert.equal((provider.providerMetadata.downstream_capabilities as any[]).every((capability) => capability.status === 'ACTIVE'), true);
   assert.equal((provider.mappingConfig.operations as Record<string, any>).BENEFICIARY_VALIDATE.url, '/v1/provider-operations/beneficiary-validate');
 });

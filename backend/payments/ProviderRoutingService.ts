@@ -15,6 +15,7 @@ import {
     resolveOperationServiceKey,
     resolveProviderBaseUrl,
 } from './providers/ProviderRegistryAdapter.js';
+import { paymentRailCapabilityService } from './PaymentRailCapabilityService.js';
 
 function normalizeRail(value?: string): RailType | undefined {
     const normalized = String(value || '').trim().toUpperCase();
@@ -63,14 +64,24 @@ export class ProviderRoutingService {
             }
         }
 
-        const routed = await this.resolveViaRoutingRules(sb, input);
+        const capabilitySelection = await this.resolveRequestedCapability(input);
+        const effectiveInput = capabilitySelection
+            ? {
+                ...input,
+                preferredProviderCode: undefined,
+                preferredProviderId: capabilitySelection.switchPartner.id,
+            }
+            : input;
+
+        const routed = await this.resolveViaRoutingRules(sb, effectiveInput);
         if (routed) {
-            const resolved = this.toResolvedProviderConfig(routed.partner, input.operation, this.buildDecision({
-                input,
+            const resolved = this.toResolvedProviderConfig(routed.partner, effectiveInput.operation, this.buildDecision({
+                input: effectiveInput,
                 partner: routed.partner,
                 source: 'routing_rule',
                 ruleId: routed.ruleId,
                 priority: routed.priority,
+                selectedCapability: capabilitySelection?.capability,
             }));
             this.cache.set(cacheKey, { expiresAt: Date.now() + this.cacheTtlMs, data: resolved });
             if (redis && process.env.ORBI_DISABLE_REDIS_CACHE !== 'true') {
@@ -88,8 +99,8 @@ export class ProviderRoutingService {
             .select('*')
             .eq('status', 'ACTIVE');
 
-        if (input.preferredProviderId) {
-            query = query.eq('id', input.preferredProviderId);
+        if (effectiveInput.preferredProviderId) {
+            query = query.eq('id', effectiveInput.preferredProviderId);
         }
 
         const { data, error } = await query;
@@ -97,8 +108,8 @@ export class ProviderRoutingService {
 
         const partners = (data || []) as FinancialPartner[];
         const ranked = partners
-            .filter((partner) => this.matchesResolutionInput(partner, input))
-            .sort((a, b) => this.resolvePriority(a, input.operation) - this.resolvePriority(b, input.operation));
+            .filter((partner) => this.matchesResolutionInput(partner, effectiveInput))
+            .sort((a, b) => this.resolvePriority(a, effectiveInput.operation) - this.resolvePriority(b, effectiveInput.operation));
 
         const partner = ranked[0];
         if (!partner) {
@@ -107,8 +118,8 @@ export class ProviderRoutingService {
 
         const resolved = this.toResolvedProviderConfig(
             partner,
-            input.operation,
-            this.buildDecision({ input, partner, source: 'registry_fallback' }),
+            effectiveInput.operation,
+            this.buildDecision({ input: effectiveInput, partner, source: 'registry_fallback', selectedCapability: capabilitySelection?.capability }),
         );
         this.cache.set(cacheKey, { expiresAt: Date.now() + this.cacheTtlMs, data: resolved });
         if (redis && process.env.ORBI_DISABLE_REDIS_CACHE !== 'true') {
@@ -119,6 +130,23 @@ export class ProviderRoutingService {
             }
         }
         return resolved;
+    }
+
+    private async resolveRequestedCapability(input: ProviderResolutionInput) {
+        if (!input.preferredProviderCode) return null;
+        try {
+            return await paymentRailCapabilityService.resolveCapability(input.preferredProviderCode, {
+                countryCode: input.countryCode,
+                currency: input.currency,
+                rail: input.rail,
+                operation: input.operation,
+            });
+        } catch (error: any) {
+            if (/payment_rail_capabilities|relation|schema/i.test(String(error?.message || error))) {
+                return null;
+            }
+            throw error;
+        }
     }
 
     private buildCacheKey(input: ProviderResolutionInput) {
@@ -220,7 +248,8 @@ export class ProviderRoutingService {
         }
 
         const rail = normalizeRail(String(metadata.rail || '')) || fallbackRailFromPartner(partner);
-        if (rail !== input.rail) return false;
+        const selectedUniversalSwitch = input.preferredProviderId === partner.id && isUniversalSwitchProfile(partner);
+        if (rail !== input.rail && !selectedUniversalSwitch) return false;
 
         const operations = (metadata.operations || []) as Array<MoneyOperation | string>;
         if (operations.length > 0 && !operations.map((value) => String(value).trim().toUpperCase()).includes(input.operation)) {
@@ -271,6 +300,7 @@ export class ProviderRoutingService {
         source: ProviderRoutingDecision['source'];
         ruleId?: string;
         priority?: number;
+        selectedCapability?: any;
     }): ProviderRoutingDecision {
         return {
             providerId: params.partner.id,
@@ -285,6 +315,19 @@ export class ProviderRoutingService {
             preferredProviderCode: params.input.preferredProviderCode,
             preferredProviderId: params.input.preferredProviderId,
             resolvedAt: new Date().toISOString(),
+            ...(params.selectedCapability
+                ? {
+                    selectedCapability: {
+                        id: params.selectedCapability.id,
+                        capabilityCode: params.selectedCapability.capability_code,
+                        displayName: params.selectedCapability.display_name,
+                        rail: params.selectedCapability.rail,
+                        countryCode: params.selectedCapability.country_code,
+                        currency: params.selectedCapability.currency,
+                        payGatewayCapabilityCode: params.selectedCapability.pay_gateway_capability_code || params.selectedCapability.capability_code,
+                    },
+                }
+                : {}),
         };
     }
 }

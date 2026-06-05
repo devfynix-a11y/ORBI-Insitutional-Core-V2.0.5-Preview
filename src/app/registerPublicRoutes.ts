@@ -10,6 +10,7 @@ import { registerEngagementRoutes } from '../routes/public/engagement.js';
 import { registerStrategyRoutes } from '../routes/public/strategy.js';
 import { registerOperationsRoutes } from '../routes/public/operations.js';
 import { registerWealthRoutes } from '../routes/public/wealth.js';
+import { registerPaymentMethodRoutes } from '../routes/public/paymentMethods.js';
 import { registerProviderRoutes, mountProviderRoutes } from '../routes/providers/index.js';
 import { createAdminActivityAudit } from '../middleware/audit/adminActivityAudit.js';
 import { createCriticalActionLimiter } from '../middleware/security/criticalActionLimiter.js';
@@ -154,6 +155,7 @@ export const registerAppPublicRoutes = (deps: Deps) => {
   v1.use(criticalActionLimiter);
   mountProviderRoutes(v1, gatewayV1, gatewayRoutes, authenticate as any);
   registerProviderRoutes(v1, authenticate as any);
+  registerPaymentMethodRoutes(v1, authenticate as any);
 
   registerAuthUserRoutes(v1, {
     authenticate: authenticate as any,

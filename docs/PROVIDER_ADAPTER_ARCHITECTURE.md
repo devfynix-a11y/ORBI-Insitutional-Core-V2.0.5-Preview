@@ -25,10 +25,21 @@ Execution remains registry-driven from existing models:
 
 - `financial_partners`
 - `provider_routing_rules`
+- `payment_rail_capabilities`
 - `financial_partners.provider_metadata`
 - `financial_partners.mapping_config`
 
 No runtime path should depend on hardcoded Airtel-style assumptions.
+
+`payment_rail_capabilities` is the consumer-visible option registry. It is where ORBI publishes choices such as:
+
+- `M_PESA_TZ`
+- `AIRTEL_MONEY_TZ`
+- `TIGO_PESA_TZ`
+- `HALOPESA_TZ`
+- `TIPS_BANK_TRANSFER_TZ`
+
+Each capability is attached to a parent `financial_partners` switch profile, for example `NMB_SPONSORED_TIPS`. The mobile app displays capabilities, but Core routes execution through the parent partner/switch profile and ORBI Pay Gateway.
 
 `financial_partners` is now treated as an external rail registry. Rows can represent:
 
@@ -95,6 +106,15 @@ Routing selection is formalized through:
 - `backend/payments/ProviderRoutingService.ts`
 
 The selection service wraps the existing routing model and produces a normalized provider selection result without changing the storage model.
+
+Consumer/mobile selection flow:
+
+1. Mobile calls `GET /v1/payment-methods?countryCode=TZ&currency=TZS&rail=MOBILE_MONEY&operation=COLLECTION_REQUEST`.
+2. Core returns active payment rail capabilities only.
+3. User selects a capability such as `M_PESA_TZ`.
+4. Mobile sends `preferredProviderCode = M_PESA_TZ` during preview/settlement.
+5. `ProviderRoutingService` resolves `M_PESA_TZ` to the parent switch partner and records the selected capability in the routing decision metadata.
+6. ORBI Core remains ledger/risk authority. ORBI Pay Gateway remains execution authority.
 
 ## Error Normalization
 

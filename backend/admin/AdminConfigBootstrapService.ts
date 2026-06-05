@@ -67,6 +67,25 @@ const ProviderSchema = z.object({
   routingRules: z.array(RoutingRuleSchema).default([]),
 });
 
+const RailCapabilitySchema = z.object({
+  capabilityCode: z.string().min(2),
+  displayName: z.string().min(1),
+  rail: z.enum(['MOBILE_MONEY', 'BANK', 'CARD_GATEWAY', 'CRYPTO', 'WALLET']),
+  status: z.enum(['ACTIVE', 'INACTIVE', 'MAINTENANCE']).optional(),
+  countryCode: z.string().min(2).max(3).default('TZ'),
+  currency: z.string().length(3).default('TZS'),
+  operationCodes: z.array(RoutingRuleSchema.shape.operationCode).default(['COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST']),
+  priority: z.coerce.number().int().min(1).default(100),
+  minAmount: z.coerce.number().min(0).optional(),
+  maxAmount: z.coerce.number().min(0).optional(),
+  feeProfileCode: z.string().optional(),
+  payGatewayCapabilityCode: z.string().optional(),
+  icon: z.string().optional(),
+  color: z.string().optional(),
+  requires: z.record(z.string(), z.unknown()).default({}),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+});
+
 const PartnerBankSchema = z.object({
   partnerCode: z.string().min(2),
   name: z.string().min(1),
@@ -89,6 +108,73 @@ const PartnerBankSchema = z.object({
     'TRANSACTION_LOOKUP',
     'BENEFICIARY_VALIDATE',
   ])).default(['COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST', 'REVERSAL_REQUEST']),
+  downstreamCapabilities: z.array(RailCapabilitySchema).default([
+    {
+      capabilityCode: 'M_PESA_TZ',
+      displayName: 'M-Pesa Tanzania',
+      rail: 'MOBILE_MONEY',
+      countryCode: 'TZ',
+      currency: 'TZS',
+      operationCodes: ['COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST'],
+      priority: 20,
+      icon: 'mpesa',
+      color: '#13A538',
+      requires: { msisdn: true },
+      metadata: { category: 'mobile_money', service_level: 'sponsored_switch' },
+    },
+    {
+      capabilityCode: 'AIRTEL_MONEY_TZ',
+      displayName: 'Airtel Money Tanzania',
+      rail: 'MOBILE_MONEY',
+      countryCode: 'TZ',
+      currency: 'TZS',
+      operationCodes: ['COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST'],
+      priority: 30,
+      icon: 'airtel',
+      color: '#E60000',
+      requires: { msisdn: true },
+      metadata: { category: 'mobile_money', service_level: 'sponsored_switch' },
+    },
+    {
+      capabilityCode: 'TIGO_PESA_TZ',
+      displayName: 'Tigo Pesa Tanzania',
+      rail: 'MOBILE_MONEY',
+      countryCode: 'TZ',
+      currency: 'TZS',
+      operationCodes: ['COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST'],
+      priority: 40,
+      icon: 'tigopesa',
+      color: '#005BAA',
+      requires: { msisdn: true },
+      metadata: { category: 'mobile_money', service_level: 'sponsored_switch' },
+    },
+    {
+      capabilityCode: 'HALOPESA_TZ',
+      displayName: 'HaloPesa Tanzania',
+      rail: 'MOBILE_MONEY',
+      countryCode: 'TZ',
+      currency: 'TZS',
+      operationCodes: ['COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST'],
+      priority: 50,
+      icon: 'halopesa',
+      color: '#F58220',
+      requires: { msisdn: true },
+      metadata: { category: 'mobile_money', service_level: 'sponsored_switch' },
+    },
+    {
+      capabilityCode: 'TIPS_BANK_TRANSFER_TZ',
+      displayName: 'TIPS Bank Transfer Tanzania',
+      rail: 'BANK',
+      countryCode: 'TZ',
+      currency: 'TZS',
+      operationCodes: ['COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST', 'BENEFICIARY_VALIDATE'],
+      priority: 25,
+      icon: 'bank',
+      color: '#1D4ED8',
+      requires: { accountNumber: true, bankCode: true },
+      metadata: { category: 'bank_transfer', service_level: 'sponsored_switch' },
+    },
+  ]),
   priority: z.coerce.number().int().min(1).default(50),
   metadata: z.record(z.string(), z.unknown()).default({}),
 });
@@ -189,6 +275,24 @@ export class AdminConfigBootstrapService {
     const providerCode = upperCode(partnerBank.partnerCode);
     const countries = partnerBank.countries.map(upperCode);
     const supportedCurrencies = partnerBank.supportedCurrencies.map(upperCode);
+    const downstreamCapabilities = partnerBank.downstreamCapabilities.map((capability) => ({
+      capabilityCode: upperCode(capability.capabilityCode),
+      displayName: capability.displayName,
+      rail: capability.rail,
+      status: capability.status || (partnerBank.status === 'ACTIVE' ? 'ACTIVE' : 'INACTIVE'),
+      countryCode: upperCode(capability.countryCode),
+      currency: upperCode(capability.currency),
+      operationCodes: capability.operationCodes.map(upperCode),
+      priority: capability.priority,
+      minAmount: capability.minAmount,
+      maxAmount: capability.maxAmount,
+      feeProfileCode: capability.feeProfileCode,
+      payGatewayCapabilityCode: capability.payGatewayCapabilityCode || upperCode(capability.capabilityCode),
+      icon: capability.icon,
+      color: capability.color,
+      requires: capability.requires,
+      metadata: capability.metadata,
+    }));
 
     return {
       providerCode,
@@ -216,6 +320,7 @@ export class AdminConfigBootstrapService {
         group: 'Bank',
         checkout_mode: 'server_to_server',
         channels: ['bank_transfer', 'bank_account'],
+        downstream_capabilities: downstreamCapabilities,
       },
       mappingConfig: {
         service_root: partnerBank.apiBaseUrl || payGatewayBaseUrl,
@@ -311,6 +416,9 @@ export class AdminConfigBootstrapService {
           type: provider.type,
           status: provider.status,
           routingRules: provider.routingRules.length,
+          downstreamCapabilities: Array.isArray((provider.providerMetadata as any).downstream_capabilities)
+            ? ((provider.providerMetadata as any).downstream_capabilities as unknown[]).length
+            : 0,
         },
       });
     }
@@ -413,13 +521,82 @@ export class AdminConfigBootstrapService {
 
     await this.saveProviderConfigVersion(partner.id, provider.mappingConfig, provider.providerMetadata, actorId, provider.status === 'ACTIVE' ? 'ACTIVE' : 'DRAFT');
     await this.saveRoutingRules(partner.id, provider.routingRules, actorId);
+    const capabilityCount = await this.saveRailCapabilities(partner.id, provider, actorId);
 
     return {
       providerCode: provider.providerCode,
       providerId: partner.id,
       action: existing ? 'updated' : 'created',
       routingRules: provider.routingRules.length,
+      downstreamCapabilities: capabilityCount,
     };
+  }
+
+  private static async saveRailCapabilities(
+    providerId: string,
+    provider: ReturnType<typeof AdminConfigBootstrapService.normalize>['providers'][number],
+    actorId: string,
+  ) {
+    const sb = getAdminSupabase() || getSupabase();
+    if (!sb) throw new Error('DB_OFFLINE');
+
+    const capabilities = Array.isArray((provider.providerMetadata as any).downstream_capabilities)
+      ? (provider.providerMetadata as any).downstream_capabilities as any[]
+      : [];
+    if (capabilities.length === 0) return 0;
+
+    let saved = 0;
+    for (const capability of capabilities) {
+      const capabilityCode = upperCode(String(capability.capabilityCode || capability.capability_code || ''));
+      if (!capabilityCode) continue;
+
+      const row = {
+        switch_partner_id: providerId,
+        capability_code: capabilityCode,
+        display_name: String(capability.displayName || capability.display_name || capabilityCode).trim(),
+        rail: upperCode(String(capability.rail || 'BANK')),
+        country_code: upperCode(String(capability.countryCode || capability.country_code || 'TZ')),
+        currency: upperCode(String(capability.currency || 'TZS')),
+        operation_codes: Array.isArray(capability.operationCodes || capability.operation_codes)
+          ? (capability.operationCodes || capability.operation_codes).map((value: unknown) => upperCode(String(value)))
+          : ['COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST'],
+        status: upperCode(String(capability.status || (provider.status === 'ACTIVE' ? 'ACTIVE' : 'INACTIVE'))),
+        priority: Number(capability.priority || 100),
+        min_amount: capability.minAmount ?? capability.min_amount ?? null,
+        max_amount: capability.maxAmount ?? capability.max_amount ?? null,
+        fee_profile_code: capability.feeProfileCode ?? capability.fee_profile_code ?? null,
+        pay_gateway_provider_code: (provider.providerMetadata as any).pay_gateway_provider_code || null,
+        pay_gateway_capability_code: capability.payGatewayCapabilityCode || capability.pay_gateway_capability_code || capabilityCode,
+        icon: capability.icon || null,
+        color: capability.color || null,
+        requires: capability.requires || {},
+        metadata: {
+          ...(capability.metadata || {}),
+          admin_audit: {
+            updated_by: actorId,
+            updated_at: new Date().toISOString(),
+          },
+        },
+        updated_at: new Date().toISOString(),
+      };
+
+      const { data: existing, error: findError } = await sb
+        .from('payment_rail_capabilities')
+        .select('id')
+        .eq('switch_partner_id', providerId)
+        .eq('capability_code', capabilityCode)
+        .maybeSingle();
+      if (findError) throw new Error(findError.message);
+
+      const write = existing
+        ? sb.from('payment_rail_capabilities').update(row).eq('id', existing.id)
+        : sb.from('payment_rail_capabilities').insert({ ...row, created_at: new Date().toISOString() });
+      const { error } = await write;
+      if (error) throw new Error(error.message);
+      saved += 1;
+    }
+
+    return saved;
   }
 
   private static async saveProviderConfigVersion(
