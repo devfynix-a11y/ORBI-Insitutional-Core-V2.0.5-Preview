@@ -821,6 +821,17 @@ export class AuthService {
                 return { error: { message: err.message } };
             }
         }
+        const authErrorMessage = String(res.error?.message || '');
+        if (/email\s+not\s+confirmed|not\s+confirmed|confirm/i.test(authErrorMessage)) {
+            const identity = await this.resolveIdentityForChallenge(e).catch(() => null);
+            return {
+                error: {
+                    message: 'ACCOUNT_NOT_ACTIVATED: Confirm your email or phone OTP before accessing ORBI services.',
+                    code: 'ACCOUNT_NOT_ACTIVATED',
+                    account_status: identity?.status || 'pending_confirmation',
+                },
+            };
+        }
         return { error: res.error };
     }
 
