@@ -214,6 +214,22 @@ export const registerAdminRoutes = (admin: Router, authenticate: RequestHandler)
     }
   });
 
+  admin.get('/payment-gateway/obp/payment-capabilities', requireSessionPermission(['provider.read', 'provider.write'], ['ADMIN', 'SUPER_ADMIN', 'IT']), async (req, res) => {
+    try {
+      const data = await PaymentGatewayReadinessService.discoverObpPaymentCapabilities({
+        providerCode: queryStringValue(req.query.providerCode),
+        bankId: queryStringValue(req.query.bankId),
+        accountId: queryStringValue(req.query.accountId),
+        viewId: queryStringValue(req.query.viewId),
+        countryCode: queryStringValue(req.query.countryCode),
+        currency: queryStringValue(req.query.currency),
+      });
+      res.json({ success: true, data });
+    } catch (e: any) {
+      res.status(502).json({ success: false, error: e.message || 'PAYMENT_GATEWAY_DISCOVERY_FAILED' });
+    }
+  });
+
   admin.post('/config/bootstrap', requireSessionPermission(
     ['provider.write', 'provider_routing.write', 'platform_fee.write', 'infra_config.write'],
     ['ADMIN', 'SUPER_ADMIN', 'IT'],

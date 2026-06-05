@@ -2,7 +2,7 @@ const GATEWAY_TIMEOUT_MS = Number(process.env.ORBI_PAYMENT_GATEWAY_READINESS_TIM
 
 const normalizeBaseUrl = (value: string) => value.replace(/\/+$/, '');
 
-const fetchJsonWithTimeout = async (url: string) => {
+const fetchJsonWithTimeout = async (url: string, headers?: Record<string, string>) => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), GATEWAY_TIMEOUT_MS);
   try {
@@ -11,6 +11,7 @@ const fetchJsonWithTimeout = async (url: string) => {
       headers: {
         accept: 'application/json',
         'user-agent': 'orbi-core-admin-readiness/1.0',
+        ...(headers || {}),
       },
       signal: controller.signal,
     });
@@ -64,5 +65,43 @@ export class PaymentGatewayReadinessService {
         providers: [],
       };
     }
+  }
+
+  static async discoverObpPaymentCapabilities(options: {
+    providerCode?: string;
+    bankId?: string;
+    accountId?: string;
+    viewId?: string;
+    countryCode?: string;
+    currency?: string;
+  }) {
+    const baseUrl = normalizeBaseUrl(String(process.env.ORBI_PAY_GATEWAY_BASE_URL || '').trim());
+    if (!baseUrl) throw new Error('ORBI_PAY_GATEWAY_BASE_URL_NOT_CONFIGURED');
+
+    const operatorKey = String(process.env.ORBI_PAY_GATEWAY_OPERATOR_DISCOVERY_API_KEY || '').trim();
+    if (!operatorKey) throw new Error('ORBI_PAY_GATEWAY_OPERATOR_DISCOVERY_API_KEY_NOT_CONFIGURED');
+
+    const providerCode = String(options.providerCode || 'nmb-obp-sandbox').trim();
+    const url = new URL(`/v1/discovery/obp/${encodeURIComponent(providerCode)}/payment-capabilities`, `${baseUrl}/`);
+    for (const [key, value] of Object.entries({
+      bankId: options.bankId,
+      accountId: options.accountId,
+      viewId: options.viewId,
+      countryCode: options.countryCode,
+      currency: options.currency,
+    })) {
+      if (value) url.searchParams.set(key, value);
+    }
+
+    const result = await fetchJsonWithTimeout(url.toString(), {
+      'x-orbi-pay-operator-key': operatorKey,
+      'user-agent': 'orbi-core-payment-capability-discovery/1.0',
+    });
+
+    if (!result.ok || result.payload?.success === false) {
+      throw new Error(result.payload?.error || `ORBI_PAY_GATEWAY_DISCOVERY_FAILED:${result.status}`);
+    }
+
+    return result.payload?.data || result.payload;
   }
 }
