@@ -324,11 +324,13 @@ Backend normalization converts each `partnerBanks[]` item into:
 - A `financial_partners` record with `provider_metadata.registry_kind = UNIVERSAL_SWITCH`.
 - A `provider_config_versions` record that points to `ORBI_PAY_GATEWAY_BASE_URL`.
 - Auto-generated `provider_routing_rules` for every submitted country, currency, and operation.
-- `payment_rail_capabilities` rows for consumer-visible options such as M-Pesa, Airtel Money, Tigo Pesa, HaloPesa, and TIPS bank transfer.
+- `payment_rail_capabilities` rows for only the manually submitted consumer-visible options, such as M-Pesa, Airtel Money, Tigo Pesa, HaloPesa, or TIPS bank transfer.
 - Pay Gateway provider routing through `provider_metadata.pay_gateway_provider_code`.
 
 Operational rule:
 
+- ORBI Core does not create default downstream payment options. Operators must add each mobile-visible rail in the Configuration Studio with a stable code, display name, currency, rail type, status, limits, and required fields.
+- Removing a downstream capability from the latest partner-bank configuration payload soft-retires it by setting it `INACTIVE`; this preserves audit/history while removing it from mobile payment method discovery.
 - Keep partner bank profiles `INACTIVE` until sandbox credentials, callback validation, settlement reconciliation, and risk controls are confirmed.
 - Use `messageStandard = PROVIDER_NATIVE` for early bank sandbox APIs that are not ISO 20022 yet.
 - Use `messageStandard = ISO20022` only when the Pay Gateway profile has certified ISO 20022 mapping and clearing-network rules.

@@ -31,7 +31,7 @@ Execution remains registry-driven from existing models:
 
 No runtime path should depend on hardcoded Airtel-style assumptions.
 
-`payment_rail_capabilities` is the consumer-visible option registry. It is where ORBI publishes choices such as:
+`payment_rail_capabilities` is the consumer-visible option registry. It is where ORBI publishes operator-configured choices such as:
 
 - `M_PESA_TZ`
 - `AIRTEL_MONEY_TZ`
@@ -39,7 +39,9 @@ No runtime path should depend on hardcoded Airtel-style assumptions.
 - `HALOPESA_TZ`
 - `TIPS_BANK_TRANSFER_TZ`
 
-Each capability is attached to a parent `financial_partners` switch profile, for example `NMB_SPONSORED_TIPS`. The mobile app displays capabilities, but Core routes execution through the parent partner/switch profile and ORBI Pay Gateway.
+These are examples, not defaults. Each capability must be created manually in the Configuration Studio or submitted through the partner-bank bootstrap payload with its display name, rail type, currency, status, limits, required fields, and optional Pay Gateway capability mapping.
+
+Each capability is attached to a parent `financial_partners` switch profile, for example `NMB_SPONSORED_TIPS`. The mobile app displays the capability `display_name`, but Core routes execution through the parent partner/switch profile and ORBI Pay Gateway.
 
 `financial_partners` is now treated as an external rail registry. Rows can represent:
 

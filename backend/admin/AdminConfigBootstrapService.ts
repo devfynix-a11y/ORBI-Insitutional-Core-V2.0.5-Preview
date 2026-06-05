@@ -108,73 +108,7 @@ const PartnerBankSchema = z.object({
     'TRANSACTION_LOOKUP',
     'BENEFICIARY_VALIDATE',
   ])).default(['COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST', 'REVERSAL_REQUEST']),
-  downstreamCapabilities: z.array(RailCapabilitySchema).default([
-    {
-      capabilityCode: 'M_PESA_TZ',
-      displayName: 'M-Pesa Tanzania',
-      rail: 'MOBILE_MONEY',
-      countryCode: 'TZ',
-      currency: 'TZS',
-      operationCodes: ['COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST'],
-      priority: 20,
-      icon: 'mpesa',
-      color: '#13A538',
-      requires: { msisdn: true },
-      metadata: { category: 'mobile_money', service_level: 'sponsored_switch' },
-    },
-    {
-      capabilityCode: 'AIRTEL_MONEY_TZ',
-      displayName: 'Airtel Money Tanzania',
-      rail: 'MOBILE_MONEY',
-      countryCode: 'TZ',
-      currency: 'TZS',
-      operationCodes: ['COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST'],
-      priority: 30,
-      icon: 'airtel',
-      color: '#E60000',
-      requires: { msisdn: true },
-      metadata: { category: 'mobile_money', service_level: 'sponsored_switch' },
-    },
-    {
-      capabilityCode: 'TIGO_PESA_TZ',
-      displayName: 'Tigo Pesa Tanzania',
-      rail: 'MOBILE_MONEY',
-      countryCode: 'TZ',
-      currency: 'TZS',
-      operationCodes: ['COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST'],
-      priority: 40,
-      icon: 'tigopesa',
-      color: '#005BAA',
-      requires: { msisdn: true },
-      metadata: { category: 'mobile_money', service_level: 'sponsored_switch' },
-    },
-    {
-      capabilityCode: 'HALOPESA_TZ',
-      displayName: 'HaloPesa Tanzania',
-      rail: 'MOBILE_MONEY',
-      countryCode: 'TZ',
-      currency: 'TZS',
-      operationCodes: ['COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST'],
-      priority: 50,
-      icon: 'halopesa',
-      color: '#F58220',
-      requires: { msisdn: true },
-      metadata: { category: 'mobile_money', service_level: 'sponsored_switch' },
-    },
-    {
-      capabilityCode: 'TIPS_BANK_TRANSFER_TZ',
-      displayName: 'TIPS Bank Transfer Tanzania',
-      rail: 'BANK',
-      countryCode: 'TZ',
-      currency: 'TZS',
-      operationCodes: ['COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST', 'BENEFICIARY_VALIDATE'],
-      priority: 25,
-      icon: 'bank',
-      color: '#1D4ED8',
-      requires: { accountNumber: true, bankCode: true },
-      metadata: { category: 'bank_transfer', service_level: 'sponsored_switch' },
-    },
-  ]),
+  downstreamCapabilities: z.array(RailCapabilitySchema).default([]),
   priority: z.coerce.number().int().min(1).default(50),
   metadata: z.record(z.string(), z.unknown()).default({}),
 });
@@ -543,6 +477,42 @@ export class AdminConfigBootstrapService {
     const capabilities = Array.isArray((provider.providerMetadata as any).downstream_capabilities)
       ? (provider.providerMetadata as any).downstream_capabilities as any[]
       : [];
+    const submittedCodes = new Set(
+      capabilities
+        .map((capability) => upperCode(String(capability.capabilityCode || capability.capability_code || '')))
+        .filter(Boolean),
+    );
+
+    const { data: existingCapabilities, error: existingError } = await sb
+      .from('payment_rail_capabilities')
+      .select('id, capability_code, metadata')
+      .eq('switch_partner_id', providerId);
+    if (existingError) throw new Error(existingError.message);
+
+    const retiredAt = new Date().toISOString();
+    for (const existing of existingCapabilities || []) {
+      const existingCode = upperCode(String(existing.capability_code || ''));
+      if (submittedCodes.has(existingCode)) continue;
+
+      const { error: retireError } = await sb
+        .from('payment_rail_capabilities')
+        .update({
+          status: 'INACTIVE',
+          metadata: {
+            ...((existing as any).metadata || {}),
+            retired_by_bootstrap: true,
+            admin_audit: {
+              updated_by: actorId,
+              updated_at: retiredAt,
+              reason: 'Capability omitted from latest partner-bank configuration payload.',
+            },
+          },
+          updated_at: retiredAt,
+        })
+        .eq('id', existing.id);
+      if (retireError) throw new Error(retireError.message);
+    }
+
     if (capabilities.length === 0) return 0;
 
     let saved = 0;

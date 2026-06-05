@@ -18,6 +18,28 @@ test('admin config bootstrap converts partner bank into universal switch provide
         supportedCurrencies: ['tzs'],
         countries: ['tz'],
         operations: ['COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST', 'REVERSAL_REQUEST'],
+        downstreamCapabilities: [
+          {
+            capabilityCode: 'M_PESA_TZ',
+            displayName: 'M-Pesa Tz',
+            rail: 'MOBILE_MONEY',
+            countryCode: 'tz',
+            currency: 'tzs',
+            operationCodes: ['COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST'],
+            priority: 20,
+            requires: { msisdn: true },
+          },
+          {
+            capabilityCode: 'AIRTEL_MONEY_TZ',
+            displayName: 'Airtel Money Tz',
+            rail: 'MOBILE_MONEY',
+            countryCode: 'tz',
+            currency: 'tzs',
+            operationCodes: ['COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST'],
+            priority: 30,
+            requires: { msisdn: true },
+          },
+        ],
         priority: 40,
       },
     ],
@@ -43,7 +65,7 @@ test('admin config bootstrap converts partner bank into universal switch provide
   assert.equal(provider.providerMetadata.provider_code, 'NMB_SPONSORED_TIPS');
   assert.equal(provider.providerMetadata.settlement_model, 'SANDBOX');
   assert.equal(Array.isArray(provider.providerMetadata.downstream_capabilities), true);
-  assert.equal((provider.providerMetadata.downstream_capabilities as unknown[]).length, 5);
+  assert.equal((provider.providerMetadata.downstream_capabilities as unknown[]).length, 2);
   assert.deepEqual(
     (provider.providerMetadata.downstream_capabilities as any[]).slice(0, 2).map((capability) => [capability.capabilityCode, capability.status]),
     [
@@ -151,6 +173,17 @@ test('admin config bootstrap supports production ISO 20022 partner bank profile'
         supportedCurrencies: ['TZS'],
         countries: ['TZ'],
         operations: ['COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST', 'BENEFICIARY_VALIDATE'],
+        downstreamCapabilities: [
+          {
+            capabilityCode: 'TIPS_BANK_TRANSFER_TZ',
+            displayName: 'TIPS Bank Transfer Tz',
+            rail: 'BANK',
+            countryCode: 'TZ',
+            currency: 'TZS',
+            operationCodes: ['COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST', 'BENEFICIARY_VALIDATE'],
+            status: 'ACTIVE',
+          },
+        ],
       },
     ],
   }, 'test-admin');
