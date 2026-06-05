@@ -445,10 +445,13 @@ export class AuthService {
         if (sb) {
             try {
                 const table = registryType === 'STAFF' ? 'staff' : 'users';
+                const selectColumns = registryType === 'STAFF'
+                    ? 'account_status'
+                    : 'account_status, kyc_level, kyc_status, id_type, id_number';
                 const { data, error } = await sb.from(table)
-                    .select('account_status, kyc_level, kyc_status, id_type, id_number')
+                    .select(selectColumns)
                     .eq('id', userId)
-                    .maybeSingle();
+                    .maybeSingle() as any;
                 
                 if (error || !data) return { status: 'pending', kyc_level: 0, kyc_status: 'unverified' };
                 
