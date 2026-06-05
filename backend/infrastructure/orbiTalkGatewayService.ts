@@ -435,7 +435,36 @@ class OrbiTalkGatewayService {
                 return false;
             }
 
-            orbiTalkGatewayLogger.info('orbi_talk_gateway.template_sent', { channel, recipient, template_name: templateName });
+            const responseBody = await response.json().catch(() => ({} as any));
+            const status = String(responseBody?.status || '').toLowerCase();
+            const dispatchAccepted =
+                channel === 'email'
+                    ? responseBody?.emailSent === true || responseBody?.success === true
+                    : responseBody?.pushed === true || status === 'sent' || status === 'delivered';
+
+            if (!dispatchAccepted) {
+                orbiTalkGatewayLogger.warn('orbi_talk_gateway.template_queued_or_not_dispatched', {
+                    channel,
+                    recipient,
+                    template_name: templateName,
+                    message_id: responseBody?.messageId,
+                    pushed: responseBody?.pushed,
+                    email_sent: responseBody?.emailSent,
+                    status: responseBody?.status,
+                    dispatch_reason: responseBody?.dispatchReason,
+                    message: responseBody?.message,
+                });
+                return false;
+            }
+
+            orbiTalkGatewayLogger.info('orbi_talk_gateway.template_sent', {
+                channel,
+                recipient,
+                template_name: templateName,
+                message_id: responseBody?.messageId,
+                pushed: responseBody?.pushed,
+                email_sent: responseBody?.emailSent,
+            });
             return true;
         } catch (error) {
             orbiTalkGatewayLogger.error('orbi_talk_gateway.template_exception', { channel, recipient, template_name: templateName }, error);
