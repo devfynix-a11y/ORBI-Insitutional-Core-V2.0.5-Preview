@@ -658,6 +658,29 @@ class OrbiServer {
         const normalizedOrigin = String(payload?.app_origin || DEFAULT_INSTITUTIONAL_APP_ORIGIN).trim();
         const normalizedRole = String(payload?.role || 'ADMIN').trim().toUpperCase();
         const normalizedLanguage = String(payload?.language || 'en').trim().toLowerCase() || 'en';
+        const normalizedEmail = String(payload?.email || '').trim().toLowerCase();
+
+        if (!normalizedEmail) {
+            return { error: 'EMAIL_REQUIRED' };
+        }
+
+        const { data: existingUserEmail } = await sb
+            .from('users')
+            .select('id')
+            .ilike('email', normalizedEmail)
+            .maybeSingle();
+        if (existingUserEmail) {
+            return { error: 'IDENTITY_REGISTRY_CONFLICT: This email is already registered as a consumer/mobile identity.' };
+        }
+
+        const { data: existingStaffEmail } = await sb
+            .from('staff')
+            .select('id')
+            .ilike('email', normalizedEmail)
+            .maybeSingle();
+        if (existingStaffEmail) {
+            return { error: 'ACCOUNT_ALREADY_EXISTS: This email is already linked to a staff identity.' };
+        }
 
         if (payload?.phone) {
             const { data: existingUser } = await sb
@@ -681,7 +704,7 @@ class OrbiServer {
         
         // 1. Create Auth User
         const { data: authData, error: authError } = await sb.auth.admin.createUser({
-            email: payload.email,
+            email: normalizedEmail,
             password: payload.password,
             user_metadata: {
                 full_name: payload.full_name,
@@ -700,7 +723,7 @@ class OrbiServer {
         // 2. Create Staff Profile
         const { error: profileError } = await sb.from('staff').insert({
             id: authData.user.id,
-            email: payload.email,
+            email: normalizedEmail,
             full_name: payload.full_name,
             role: normalizedRole,
             phone: payload.phone,

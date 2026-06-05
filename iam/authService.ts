@@ -346,6 +346,13 @@ export class AuthService {
         return { contact: this.normalizePhoneIdentifier(value), type: 'sms', column: 'phone' };
     }
 
+    private async findIdentityInRegistry(
+        identifier: string,
+        registryType: 'STAFF' | 'CONSUMER' | 'MERCHANT' | 'AGENT',
+    ) {
+        return this.resolveIdentityForChallenge(identifier, registryType === 'STAFF' ? 'STAFF' : 'USER');
+    }
+
     private async assertActivationContactAvailable(contact: string, excludeUserId: string) {
         const sb = getAdminSupabase();
         if (!sb) throw new Error('DB_OFFLINE');
@@ -449,6 +456,7 @@ export class AuthService {
             for (const row of data || []) {
                 const { error } = await sb.auth.admin.deleteUser(row.id);
                 if (!error) {
+                    await sb.from(table).delete().eq('id', row.id);
                     terminated += 1;
                     await this.security.logActivity(row.id, 'UNCONFIRMED_ACCOUNT_TERMINATED', 'success', `Expired ${table} identity removed after activation window`);
                 }
@@ -1112,8 +1120,21 @@ export class AuthService {
                     ...(formattedPhone ? [formattedPhone] : []),
                 ];
                 for (const identifier of signupIdentifiers) {
-                    const existingIdentity = await this.resolveIdentityForChallenge(identifier);
-                    if (!existingIdentity) continue;
+                    const existingIdentity = await this.findIdentityInRegistry(identifier, registryType);
+                    if (!existingIdentity) {
+                        const crossRegistryIdentity = await this.resolveIdentityForChallenge(identifier);
+                        if (crossRegistryIdentity) {
+                            const attemptedChannel = registryType === 'STAFF' ? 'portal staff' : 'consumer mobile';
+                            const existingChannel = crossRegistryIdentity.table === 'staff' ? 'portal staff' : 'consumer mobile';
+                            return {
+                                data: null,
+                                error: {
+                                    message: `IDENTITY_REGISTRY_CONFLICT: This email or phone is already registered as a ${existingChannel} identity and cannot be reused for ${attemptedChannel} registration.`,
+                                },
+                            };
+                        }
+                        continue;
+                    }
                     if (this.isActiveStatus(existingIdentity.status)) {
                         return { data: null, error: { message: "ACCOUNT_ALREADY_EXISTS: This email or phone is already linked to an active ORBI account." } };
                     }
