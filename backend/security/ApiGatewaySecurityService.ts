@@ -200,8 +200,8 @@ export class ApiGatewaySecurityService {
         }
 
         const identity = SecurityOperationsEngine.identity(req);
-        const lockKey = this.lockKey(policy, identity.actorId, identity.ipHash, identity.deviceHash);
-        const quarantineKey = this.quarantineKey(policy, identity.actorId, identity.ipHash, identity.deviceHash);
+        const lockKey = this.lockKey(policy, route, identity.actorId, identity.ipHash, identity.deviceHash, identity.appHash);
+        const quarantineKey = this.quarantineKey(policy, route, identity.actorId, identity.ipHash, identity.deviceHash, identity.appHash);
         const activeQuarantine = await RedisManager.get(quarantineKey);
         if (activeQuarantine) {
           await this.recordDecision(req, policy, 'QUARANTINE', activeQuarantine, 100);
@@ -214,7 +214,7 @@ export class ApiGatewaySecurityService {
           return this.reject(res, 423, 'API_GATEWAY_ATTEMPT_LOCKED', 'Request source is temporarily locked after repeated risky attempts.', activeLock);
         }
 
-        const velocity = await this.recordVelocity(policy, identity.actorId, identity.ipHash, identity.deviceHash);
+        const velocity = await this.recordVelocity(policy, route, identity.actorId, identity.ipHash, identity.deviceHash, identity.appHash);
         const scoring = await this.scoringAdapter.score(buildScoringInput(req, {
           route,
           routeClass: policy.class,
@@ -236,7 +236,15 @@ export class ApiGatewaySecurityService {
           const reason = {
             reason: 'API_GATEWAY_QUARANTINE',
             route,
+            method,
             routeGroup: policy.group,
+            operationClass: policy.class,
+            scopeKey: quarantineKey,
+            actorRef: identity.actorId,
+            ipHash: identity.ipHash,
+            deviceHash: identity.deviceHash || null,
+            appId: identity.appId,
+            traceId: req.get('x-orbi-trace') || null,
             count: velocity.count,
             score: scoring.score,
             expiresAt: new Date(Date.now() + policy.quarantineTtlSeconds * 1000).toISOString(),
@@ -252,7 +260,15 @@ export class ApiGatewaySecurityService {
           const reason = {
             reason: 'API_GATEWAY_ATTEMPT_LOCK',
             route,
+            method,
             routeGroup: policy.group,
+            operationClass: policy.class,
+            scopeKey: lockKey,
+            actorRef: identity.actorId,
+            ipHash: identity.ipHash,
+            deviceHash: identity.deviceHash || null,
+            appId: identity.appId,
+            traceId: req.get('x-orbi-trace') || null,
             count: velocity.count,
             score: scoring.score,
             expiresAt: new Date(Date.now() + policy.lockTtlSeconds * 1000).toISOString(),
@@ -269,7 +285,14 @@ export class ApiGatewaySecurityService {
           const reason = {
             reason: 'API_GATEWAY_THROTTLE',
             route,
+            method,
             routeGroup: policy.group,
+            operationClass: policy.class,
+            actorRef: identity.actorId,
+            ipHash: identity.ipHash,
+            deviceHash: identity.deviceHash || null,
+            appId: identity.appId,
+            traceId: req.get('x-orbi-trace') || null,
             count: velocity.count,
             score: scoring.score,
             retryAfterSeconds,
@@ -310,7 +333,11 @@ export class ApiGatewaySecurityService {
 
   private isBypassed(req: Request) {
     const route = normalizePath(req);
-    return route === '/health' || route === '/ready' || route === '/health/deep' || req.method.toUpperCase() === 'OPTIONS';
+    return route === '/health' ||
+      route === '/ready' ||
+      route === '/health/deep' ||
+      route.startsWith('/admin/api-gateway/security') ||
+      req.method.toUpperCase() === 'OPTIONS';
   }
 
   private redisRequiredButUnavailable() {
@@ -319,21 +346,28 @@ export class ApiGatewaySecurityService {
       !RedisClusterFactory.isAvailable();
   }
 
-  private velocityKey(policy: GatewayPolicy, actorId: string, ipHash: string, deviceHash: string) {
-    return `orbi:api-gateway:velocity:${policy.group}:${stableHash(actorId)}:${ipHash}:${deviceHash || 'no-device'}`;
+  private scopeSegment(policy: GatewayPolicy, route: string) {
+    if (policy.group === 'auth' || policy.group === 'admin') {
+      return `${policy.group}:${stableHash(route)}`;
+    }
+    return policy.group;
   }
 
-  private lockKey(policy: GatewayPolicy, actorId: string, ipHash: string, deviceHash: string) {
-    return `orbi:api-gateway:lock:${policy.group}:${stableHash(actorId)}:${ipHash}:${deviceHash || 'no-device'}`;
+  private velocityKey(policy: GatewayPolicy, route: string, actorId: string, ipHash: string, deviceHash: string, appHash: string) {
+    return `orbi:api-gateway:velocity:${this.scopeSegment(policy, route)}:${stableHash(actorId)}:${ipHash}:${deviceHash || 'no-device'}:${appHash || 'no-app'}`;
   }
 
-  private quarantineKey(policy: GatewayPolicy, actorId: string, ipHash: string, deviceHash: string) {
-    return `orbi:api-gateway:quarantine:${policy.group}:${stableHash(actorId)}:${ipHash}:${deviceHash || 'no-device'}`;
+  private lockKey(policy: GatewayPolicy, route: string, actorId: string, ipHash: string, deviceHash: string, appHash: string) {
+    return `orbi:api-gateway:lock:${this.scopeSegment(policy, route)}:${stableHash(actorId)}:${ipHash}:${deviceHash || 'no-device'}:${appHash || 'no-app'}`;
   }
 
-  private async recordVelocity(policy: GatewayPolicy, actorId: string, ipHash: string, deviceHash: string) {
+  private quarantineKey(policy: GatewayPolicy, route: string, actorId: string, ipHash: string, deviceHash: string, appHash: string) {
+    return `orbi:api-gateway:quarantine:${this.scopeSegment(policy, route)}:${stableHash(actorId)}:${ipHash}:${deviceHash || 'no-device'}:${appHash || 'no-app'}`;
+  }
+
+  private async recordVelocity(policy: GatewayPolicy, route: string, actorId: string, ipHash: string, deviceHash: string, appHash: string) {
     const now = Date.now();
-    const key = this.velocityKey(policy, actorId, ipHash, deviceHash);
+    const key = this.velocityKey(policy, route, actorId, ipHash, deviceHash, appHash);
     const current = await RedisManager.get(key).catch(() => null) as GatewayRecord | null;
     const record: GatewayRecord = !current || now > current.reset
       ? { count: 1, reset: now + policy.windowMs }
