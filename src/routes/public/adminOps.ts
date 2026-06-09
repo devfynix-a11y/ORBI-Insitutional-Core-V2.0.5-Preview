@@ -1435,7 +1435,28 @@ export const registerAdminOpsRoutes = (v1: Router, deps: Deps) => {
 
       const { data, error } = await dbQuery;
       if (error) return res.status(500).json({ success: false, error: error.message });
-      res.json({ success: true, data: data || [] });
+      const normalized = (data || []).map((row: any) => {
+        const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+        const eventType = String(row.event_type || metadata.eventType || 'infrastructure').toLowerCase();
+        const status = String(metadata.status || metadata.outcome || 'SUCCESS').toUpperCase();
+        const riskSensitivity = String(metadata.riskSensitivity || metadata.risk_sensitivity || metadata.severity || 'LOW').toUpperCase();
+        return {
+          id: row.id,
+          timestamp: row.timestamp,
+          eventType,
+          action: row.action,
+          actorId: row.actor_id || metadata.actorId || metadata.actor_id || 'SYSTEM',
+          actorRole: metadata.actorRole || metadata.actor_role || metadata.role || 'SYSTEM',
+          targetId: row.transaction_id || metadata.targetId || metadata.target_id || metadata.resourceId || null,
+          status: ['SUCCESS', 'FAILED', 'BLOCKED'].includes(status) ? status : status === 'ERROR' ? 'FAILED' : 'SUCCESS',
+          riskSensitivity: ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(riskSensitivity) ? riskSensitivity : 'LOW',
+          traceId: metadata.traceId || metadata.trace_id || null,
+          hash: row.hash,
+          signature: row.signature,
+          metadata,
+        };
+      });
+      res.json({ success: true, data: normalized });
     } catch (e: any) {
       res.status(400).json({ success: false, error: e.message });
     }
