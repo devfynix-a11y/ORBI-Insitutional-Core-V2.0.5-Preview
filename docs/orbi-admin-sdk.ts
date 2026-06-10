@@ -445,6 +445,18 @@ export class OrbiAdminSdk {
     fxQuote: (query: { from: string; to: string; amount: number | string }) => this.get<OrbiApiResult<unknown>>('/v1/fx/quote', query),
   };
 
+  engagement = {
+    chat: (body: unknown) => this.post<OrbiApiResult<unknown>>('/v1/chat', body),
+    insights: () => this.get<OrbiApiResult<unknown>>('/v1/insights'),
+    insightsFeed: () => this.get<OrbiApiResult<unknown>>('/v1/insights/feed'),
+    merchantRecommendations: () => this.get<OrbiApiResult<unknown[]>>('/v1/insights/merchant-recommendations'),
+    receiptScan: (body: unknown) => this.post<OrbiApiResult<unknown>>('/v1/receipt/scan', body),
+    notifications: (query?: Record<string, unknown>) => this.get<OrbiApiResult<unknown[]>>('/v1/notifications', query),
+    markNotificationRead: (id: string) => this.patch<OrbiApiResult<unknown>>(`/v1/notifications/${id}/read`, {}),
+    markNotificationsReadAll: () => this.patch<OrbiApiResult<unknown>>('/v1/notifications/read-all', {}),
+    deleteNotification: (id: string) => this.delete<OrbiApiResult<unknown>>(`/v1/notifications/${id}`),
+  };
+
   commerce = {
     merchantCategories: () => this.get<OrbiApiResult<unknown[]>>('/v1/merchants/categories'),
     merchants: (query?: Record<string, unknown>) => this.get<OrbiApiResult<unknown[]>>('/v1/merchants', query),
@@ -499,6 +511,8 @@ export class OrbiAdminSdk {
 
   wealth = {
     summary: () => this.get<OrbiApiResult<unknown>>('/v1/wealth/summary'),
+    netWorth: () => this.get<OrbiApiResult<unknown>>('/v1/wealth/net-worth'),
+    upcomingCommitments: () => this.get<OrbiApiResult<unknown[]>>('/v1/wealth/upcoming-commitments'),
     goals: () => this.get<OrbiApiResult<unknown[]>>('/v1/goals'),
     createGoal: (body: unknown) => this.post<OrbiApiResult<unknown>>('/v1/goals', body),
     updateGoal: (id: string, body: unknown) => this.patch<OrbiApiResult<unknown>>(`/v1/goals/${id}`, body),

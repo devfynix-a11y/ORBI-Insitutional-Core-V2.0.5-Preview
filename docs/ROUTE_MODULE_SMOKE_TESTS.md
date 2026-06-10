@@ -88,6 +88,8 @@ Confirm that:
 - `POST /v1/chat`
 - `POST /v1/chat` with attachment
 - `GET /v1/insights`
+- `GET /v1/insights/feed`
+- `GET /v1/insights/merchant-recommendations`
 - `POST /v1/receipt/scan`
 - `GET /v1/notifications`
 - `PATCH /v1/notifications/:id/read`
@@ -127,6 +129,8 @@ Confirm that:
 ## Wealth
 
 - `GET /v1/wealth/summary`
+- `GET /v1/wealth/net-worth`
+- `GET /v1/wealth/upcoming-commitments`
 - `GET /v1/wealth/bill-reserves`
 - `POST /v1/wealth/bill-reserves`
 - `PATCH /v1/wealth/bill-reserves/:id`

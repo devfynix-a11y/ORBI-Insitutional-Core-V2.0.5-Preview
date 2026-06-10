@@ -181,12 +181,92 @@ The Orbi AI Assistant provides personalized support for payments, savings, and c
 Proactively display personalized financial advice based on user behavior.
 *   **Endpoint**: `GET /api/v1/insights`
 *   **Headers**: `Authorization: Bearer <TOKEN>`
+*   **Behavior**: The backend now attempts AI-generated insights first, then falls back to stored `wealth_insights` plus heuristic analysis if AI is unavailable.
 *   **Response Structure**:
 ```json
 {
   "spendingAlerts": ["string", ...],
   "budgetSuggestions": ["string", ...],
   "financialAdvice": ["string", ...]
+}
+```
+
+### Step 2A: Guardian AI Feed
+Use a dashboard-ready feed when the Home screen needs typed insight cards instead of raw grouped strings.
+*   **Endpoint**: `GET /api/v1/insights/feed`
+*   **Headers**: `Authorization: Bearer <TOKEN>`
+*   **Response Structure**:
+```json
+{
+  "insights": [
+    {
+      "type": "SPENDING_ALERT",
+      "title": "Guardian AI",
+      "message": "Transport spend is running hot this week.",
+      "severity": "WARNING",
+      "severityLabel": "Spending alert"
+    }
+  ]
+}
+```
+
+### Step 2B: Merchant Recommendations
+Use this for the Home smart carousel or Discover previews when showing relevant merchants.
+*   **Endpoint**: `GET /api/v1/insights/merchant-recommendations`
+*   **Headers**: `Authorization: Bearer <TOKEN>`
+*   **Response Structure**:
+```json
+{
+  "recommendations": [
+    {
+      "id": "uuid",
+      "name": "Merchant Name",
+      "category": "Utilities",
+      "reason": "Matches your recent utilities activity",
+      "source": "digital_merchants",
+      "status": "ACTIVE"
+    }
+  ]
+}
+```
+
+### Step 2C: Net Worth Summary
+Use this to render dedicated net-worth, assets, liabilities, and monthly change surfaces on Home.
+*   **Endpoint**: `GET /api/v1/wealth/net-worth`
+*   **Headers**: `Authorization: Bearer <TOKEN>`
+*   **Response Structure**:
+```json
+{
+  "assets": 4800000,
+  "liabilities": 0,
+  "net_worth": 4800000,
+  "monthly_change_amount": 250000,
+  "monthly_change_percent": 5.5,
+  "currency": "TZS",
+  "liabilities_source": "NO_DEBT_PRODUCTS_CONFIGURED"
+}
+```
+
+### Step 2D: Upcoming Commitments
+Use this instead of bill reserves directly when Home needs a single commitments stream.
+*   **Endpoint**: `GET /api/v1/wealth/upcoming-commitments`
+*   **Headers**: `Authorization: Bearer <TOKEN>`
+*   **Response Structure**:
+```json
+{
+  "commitments": [
+    {
+      "id": "uuid",
+      "type": "BILL_RESERVE",
+      "title": "DAWASA",
+      "provider": "DAWASA",
+      "amount": 60000,
+      "currency": "TZS",
+      "status": "ACTIVE",
+      "due_at": "2026-06-15T12:00:00.000Z",
+      "source": "bill_reserves"
+    }
+  ]
 }
 ```
 

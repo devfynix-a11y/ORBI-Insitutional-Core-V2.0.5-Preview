@@ -32,6 +32,40 @@ type Deps = {
   getAdminSupabase: () => any;
 };
 
+const toNumber = (value: any) => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'string') return Number(value.replace(/,/g, '').trim()) || 0;
+  return 0;
+};
+
+const firstNonEmpty = (...values: Array<any>) => {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+};
+
+const nextDueDate = (duePattern: any, dueDay: any) => {
+  const now = new Date();
+  const normalizedPattern = String(duePattern || '').toUpperCase();
+  const day = Number(dueDay);
+  if (normalizedPattern === 'WEEKLY') {
+    const result = new Date(now);
+    result.setDate(now.getDate() + 7);
+    return result.toISOString();
+  }
+  if (Number.isFinite(day) && day > 0) {
+    const thisMonth = new Date(now.getFullYear(), now.getMonth(), Math.min(day, 28), 12, 0, 0, 0);
+    if (thisMonth.getTime() >= now.getTime()) {
+      return thisMonth.toISOString();
+    }
+    return new Date(now.getFullYear(), now.getMonth() + 1, Math.min(day, 28), 12, 0, 0, 0).toISOString();
+  }
+  const fallback = new Date(now);
+  fallback.setDate(now.getDate() + 30);
+  return fallback.toISOString();
+};
+
 const BillReserveCreateSchema = z.object({
     provider_name: z.string().min(2),
     bill_type: z.string().min(2),
@@ -334,6 +368,125 @@ export const registerWealthRoutes = (v1: Router, deps: Deps) => {
                       return lowType.includes('linked') || lowType.includes('external') || lowTier.includes('linked');
                   }).length,
                   insights,
+              },
+          });
+      } catch (e: any) {
+          res.status(500).json({ success: false, error: e.message });
+      }
+  });
+
+  v1.get('/wealth/upcoming-commitments', authenticate as any, async (req, res) => {
+      const session = (req as any).session;
+      try {
+          const sb = getAdminSupabase() || getSupabase();
+          if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+
+          const [billReservesResult, approvalsResult] = await Promise.all([
+              sb
+                  .from('bill_reserves')
+                  .select('id,provider_name,bill_type,currency,reserve_amount,locked_balance,due_pattern,due_day,status,is_active,metadata,updated_at,created_at')
+                  .eq('user_id', session.sub)
+                  .neq('status', 'ARCHIVED')
+                  .order('updated_at', { ascending: false }),
+              sb
+                  .from('shared_budget_approvals')
+                  .select('id,amount,currency,provider,bill_category,reference,note,status,created_at,metadata')
+                  .eq('requester_user_id', session.sub)
+                  .eq('status', 'PENDING')
+                  .order('created_at', { ascending: false })
+                  .limit(10),
+          ]);
+
+          const commitments = [
+              ...(billReservesResult.data || []).map((reserve: any) => ({
+                  id: reserve.id,
+                  type: 'BILL_RESERVE',
+                  title: firstNonEmpty(reserve.provider_name, reserve.bill_type, 'Upcoming bill'),
+                  provider: firstNonEmpty(reserve.provider_name, reserve.bill_type),
+                  amount: toNumber(reserve.locked_balance || reserve.reserve_amount),
+                  currency: String(reserve.currency || 'TZS').toUpperCase(),
+                  status: String(reserve.status || (reserve.is_active === false ? 'PAUSED' : 'ACTIVE')).toUpperCase(),
+                  due_at: reserve.metadata?.due_at || nextDueDate(reserve.due_pattern, reserve.due_day),
+                  source: 'bill_reserves',
+                  metadata: reserve.metadata || {},
+              })),
+              ...(approvalsResult.data || []).map((approval: any) => ({
+                  id: approval.id,
+                  type: 'BUDGET_APPROVAL',
+                  title: firstNonEmpty(approval.provider, approval.bill_category, 'Budget approval'),
+                  provider: firstNonEmpty(approval.provider, approval.bill_category),
+                  amount: toNumber(approval.amount),
+                  currency: String(approval.currency || 'TZS').toUpperCase(),
+                  status: String(approval.status || 'PENDING').toUpperCase(),
+                  due_at: approval.metadata?.due_at || approval.created_at,
+                  source: 'shared_budget_approvals',
+                  metadata: approval.metadata || {},
+              })),
+          ]
+              .sort((a, b) => new Date(a.due_at).getTime() - new Date(b.due_at).getTime())
+              .slice(0, 8);
+
+          res.json({
+              success: true,
+              data: {
+                  commitments,
+              },
+          });
+      } catch (e: any) {
+          res.status(500).json({ success: false, error: e.message });
+      }
+  });
+
+  v1.get('/wealth/net-worth', authenticate as any, async (req, res) => {
+      const session = (req as any).session;
+      try {
+          const sb = getAdminSupabase() || getSupabase();
+          if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+
+          const [
+              platformVaultsResult,
+              walletsResult,
+              snapshotsResult,
+              userResult,
+          ] = await Promise.all([
+              sb.from('platform_vaults').select('balance,currency,vault_role,metadata').eq('user_id', session.sub),
+              sb.from('wallets').select('balance,currency,type,management_tier,metadata').eq('user_id', session.sub),
+              sb.from('wealth_snapshots')
+                  .select('snapshot_date,net_position,currency')
+                  .eq('user_id', session.sub)
+                  .order('snapshot_date', { ascending: false })
+                  .limit(2),
+              sb.from('users').select('currency').eq('id', session.sub).single(),
+          ]);
+
+          const assets = [
+              ...(platformVaultsResult.data || []),
+              ...(walletsResult.data || []),
+          ].reduce((sum: number, wallet: any) => sum + Math.max(0, toNumber(wallet.balance)), 0);
+
+          const latestSnapshot = (snapshotsResult.data || [])[0];
+          const previousSnapshot = (snapshotsResult.data || [])[1];
+          const liabilities = 0;
+          const netWorth = assets - liabilities;
+          const latestSnapshotPosition = toNumber(latestSnapshot?.net_position);
+          const previousSnapshotPosition = toNumber(previousSnapshot?.net_position);
+          const monthlyChangeAmount = latestSnapshot ? netWorth - latestSnapshotPosition : 0;
+          const monthlyChangePercent = latestSnapshot && latestSnapshotPosition !== 0
+              ? (monthlyChangeAmount / Math.abs(latestSnapshotPosition)) * 100
+              : previousSnapshot && previousSnapshotPosition !== 0
+                  ? ((latestSnapshotPosition - previousSnapshotPosition) / Math.abs(previousSnapshotPosition)) * 100
+                  : 0;
+
+          res.json({
+              success: true,
+              data: {
+                  assets,
+                  liabilities,
+                  net_worth: netWorth,
+                  monthly_change_amount: monthlyChangeAmount,
+                  monthly_change_percent: monthlyChangePercent,
+                  currency: String(userResult.data?.currency || latestSnapshot?.currency || 'TZS').toUpperCase(),
+                  liabilities_source: 'NO_DEBT_PRODUCTS_CONFIGURED',
               },
           });
       } catch (e: any) {

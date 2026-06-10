@@ -494,6 +494,32 @@ orbi.finance.receipt(transactionId)
 orbi.finance.fxQuote({ from, to, amount })
 ```
 
+### Engagement
+
+```ts
+orbi.engagement.chat(body)
+orbi.engagement.insights()
+orbi.engagement.insightsFeed()
+orbi.engagement.merchantRecommendations()
+orbi.engagement.receiptScan(formData)
+orbi.engagement.notifications(query)
+orbi.engagement.markNotificationRead(notificationId)
+orbi.engagement.markNotificationsReadAll()
+orbi.engagement.deleteNotification(notificationId)
+```
+
+### Wealth
+
+```ts
+orbi.wealth.summary()
+orbi.wealth.netWorth()
+orbi.wealth.upcomingCommitments()
+orbi.wealth.billReserves()
+orbi.wealth.sharedPots()
+orbi.wealth.sharedBudgets()
+orbi.wealth.allocationRules()
+```
+
 ### Merchant, Agent, Bills, Orbi Pay
 
 ```ts

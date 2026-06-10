@@ -27,6 +27,269 @@ function getFirstUploadedFile(req: any) {
   return req.file || files[0] || null;
 }
 
+type InsightPayload = {
+  spendingAlerts: string[];
+  budgetSuggestions: string[];
+  financialAdvice: string[];
+};
+
+type StoredInsightRow = {
+  insight_type?: string | null;
+  title?: string | null;
+  message?: string | null;
+  severity?: string | null;
+  created_at?: string | null;
+  metadata?: Record<string, any> | null;
+};
+
+function asNumber(value: any): number {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'string') return Number(value.replace(/,/g, '').trim()) || 0;
+  return 0;
+}
+
+function firstNonEmpty(...values: Array<any>): string {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+}
+
+function parseInsightJson(text: string | undefined | null): InsightPayload | null {
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text);
+    return {
+      spendingAlerts: Array.isArray(parsed?.spendingAlerts)
+        ? parsed.spendingAlerts.map((item: any) => String(item || '').trim()).filter(Boolean)
+        : [],
+      budgetSuggestions: Array.isArray(parsed?.budgetSuggestions)
+        ? parsed.budgetSuggestions.map((item: any) => String(item || '').trim()).filter(Boolean)
+        : [],
+      financialAdvice: Array.isArray(parsed?.financialAdvice)
+        ? parsed.financialAdvice.map((item: any) => String(item || '').trim()).filter(Boolean)
+        : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function pickSeverityLabel(type: string): string {
+  const normalized = String(type || '').toUpperCase();
+  if (normalized.includes('SPEND')) return 'Spending alert';
+  if (normalized.includes('SAVE')) return 'Saving suggestion';
+  if (normalized.includes('GOAL')) return 'Goal prediction';
+  if (normalized.includes('BUDGET')) return 'Budget warning';
+  if (normalized.includes('SECURITY') || normalized.includes('RISK')) return 'Security warning';
+  return 'Insight';
+}
+
+function buildHeuristicInsights(context: {
+  transactions: any[];
+  goals: any[];
+  categories: any[];
+  billReserves: any[];
+}): InsightPayload {
+  const transactions = context.transactions || [];
+  const goals = context.goals || [];
+  const categories = context.categories || [];
+  const billReserves = context.billReserves || [];
+
+  const spendingAlerts: string[] = [];
+  const budgetSuggestions: string[] = [];
+  const financialAdvice: string[] = [];
+
+  const categoryPressure = categories
+    .map((category: any) => {
+      const budget = asNumber(category.budget);
+      const spent = asNumber(category.spent_amount ?? category.spent);
+      const ratio = budget > 0 ? spent / budget : 0;
+      return { category, budget, spent, ratio };
+    })
+    .sort((a, b) => b.ratio - a.ratio);
+
+  const hottestBudget = categoryPressure.find((entry) => entry.budget > 0);
+  if (hottestBudget && hottestBudget.ratio >= 0.85) {
+    spendingAlerts.push(
+      `${firstNonEmpty(hottestBudget.category.name, 'A budget')} is already at ${(hottestBudget.ratio * 100).toFixed(0)}% of plan.`,
+    );
+  }
+
+  const recentSpend = transactions.reduce((sum: number, item: any) => {
+    const amount = asNumber(item.amount);
+    return sum + (amount > 0 ? amount : 0);
+  }, 0);
+  const totalBudget = categories.reduce((sum: number, item: any) => sum + asNumber(item.budget), 0);
+  if (totalBudget > 0 && recentSpend > totalBudget * 0.75) {
+    spendingAlerts.push(
+      'Recent outflows are consuming most of your active budget envelope. Slow non-essential spending this week.',
+    );
+  }
+
+  const leadingGoal = goals
+    .map((goal: any) => {
+      const current = asNumber(goal.current_amount ?? goal.current);
+      const target = asNumber(goal.target_amount ?? goal.target);
+      const ratio = target > 0 ? current / target : 0;
+      return { goal, current, target, ratio };
+    })
+    .sort((a, b) => b.ratio - a.ratio)[0];
+  if (leadingGoal && leadingGoal.target > 0) {
+    financialAdvice.push(
+      `${firstNonEmpty(leadingGoal.goal.name, 'Your top goal')} is ${(leadingGoal.ratio * 100).toFixed(0)}% funded. Keep the same pace to finish sooner.`,
+    );
+  } else if (goals.length === 0) {
+    financialAdvice.push(
+      'Create one active goal so ORBI can separate long-term progress from everyday spending.',
+    );
+  }
+
+  const underusedBudgets = categoryPressure.filter((entry) => entry.budget > 0 && entry.ratio < 0.35);
+  if (underusedBudgets.length > 0) {
+    budgetSuggestions.push(
+      `You still have room in ${firstNonEmpty(underusedBudgets[0].category.name, 'one budget')}. Redirect a small amount into savings instead of leaving it idle.`,
+    );
+  }
+
+  if (billReserves.length === 0) {
+    financialAdvice.push(
+      'Set up a bill reserve so upcoming obligations are protected before daily spending can touch them.',
+    );
+  }
+
+  if (spendingAlerts.length === 0) {
+    spendingAlerts.push('No immediate spending pressure detected from your latest activity.');
+  }
+  if (budgetSuggestions.length === 0) {
+    budgetSuggestions.push('Keep one budget category deliberately underused and route the difference into savings.');
+  }
+  if (financialAdvice.length === 0) {
+    financialAdvice.push('Your money posture looks stable. Maintain consistent savings and review one budget before week end.');
+  }
+
+  return {
+    spendingAlerts: spendingAlerts.slice(0, 3),
+    budgetSuggestions: budgetSuggestions.slice(0, 3),
+    financialAdvice: financialAdvice.slice(0, 3),
+  };
+}
+
+function mapStoredInsightsToPayload(rows: StoredInsightRow[]): InsightPayload {
+  const payload: InsightPayload = {
+    spendingAlerts: [],
+    budgetSuggestions: [],
+    financialAdvice: [],
+  };
+  for (const row of rows) {
+    const message = firstNonEmpty(row.message, row.title);
+    if (!message) continue;
+    const type = String(row.insight_type || '').toUpperCase();
+    if (type.includes('SPEND')) {
+      payload.spendingAlerts.push(message);
+    } else if (type.includes('BUDGET') || type.includes('SAVE')) {
+      payload.budgetSuggestions.push(message);
+    } else {
+      payload.financialAdvice.push(message);
+    }
+  }
+  return payload;
+}
+
+function mapPayloadToFeed(payload: InsightPayload) {
+  return [
+    ...payload.spendingAlerts.map((message) => ({
+      type: 'SPENDING_ALERT',
+      title: 'Guardian AI',
+      message,
+      severity: 'WARNING',
+      severityLabel: 'Spending alert',
+    })),
+    ...payload.budgetSuggestions.map((message) => ({
+      type: 'SAVING_SUGGESTION',
+      title: 'Guardian AI',
+      message,
+      severity: 'INFO',
+      severityLabel: 'Saving suggestion',
+    })),
+    ...payload.financialAdvice.map((message) => ({
+      type: 'GOAL_PREDICTION',
+      title: 'Guardian AI',
+      message,
+      severity: 'INFO',
+      severityLabel: 'Goal prediction',
+    })),
+  ].slice(0, 5);
+}
+
+async function fetchStoredWealthInsights(sb: any, userId: string) {
+  const { data, error } = await sb
+    .from('wealth_insights')
+    .select('insight_type,title,message,severity,created_at,metadata')
+    .eq('user_id', userId)
+    .eq('status', 'ACTIVE')
+    .or(`expires_at.is.null,expires_at.gte.${new Date().toISOString()}`)
+    .order('created_at', { ascending: false })
+    .limit(10);
+  if (error) return [];
+  return (data || []) as StoredInsightRow[];
+}
+
+async function upsertGeneratedInsights(
+  sb: any,
+  userId: string,
+  payload: InsightPayload,
+  source: 'AI' | 'HEURISTIC',
+) {
+  const generated = [
+    ...payload.spendingAlerts.map((message) => ({
+      user_id: userId,
+      insight_type: 'SPENDING_ALERT',
+      title: 'Guardian AI',
+      message,
+      severity: 'WARNING',
+      status: 'ACTIVE',
+      metadata: { source, audience: 'dashboard_home' },
+    })),
+    ...payload.budgetSuggestions.map((message) => ({
+      user_id: userId,
+      insight_type: 'SAVING_SUGGESTION',
+      title: 'Guardian AI',
+      message,
+      severity: 'INFO',
+      status: 'ACTIVE',
+      metadata: { source, audience: 'dashboard_home' },
+    })),
+    ...payload.financialAdvice.map((message) => ({
+      user_id: userId,
+      insight_type: 'GOAL_PREDICTION',
+      title: 'Guardian AI',
+      message,
+      severity: 'INFO',
+      status: 'ACTIVE',
+      metadata: { source, audience: 'dashboard_home' },
+    })),
+  ].slice(0, 6);
+
+  if (generated.length === 0) return;
+
+  await sb
+    .from('wealth_insights')
+    .update({
+      status: 'RESOLVED',
+      metadata: {
+        source,
+        audience: 'dashboard_home',
+        replacedAt: new Date().toISOString(),
+      },
+    })
+    .eq('user_id', userId)
+    .eq('status', 'ACTIVE')
+    .contains('metadata', { audience: 'dashboard_home' });
+
+  await sb.from('wealth_insights').insert(generated);
+}
+
 export const registerEngagementRoutes = (v1: Router, deps: Deps) => {
   const { authenticate, upload, LogicCore, getAdminSupabase } = deps;
 
@@ -114,27 +377,34 @@ export const registerEngagementRoutes = (v1: Router, deps: Deps) => {
     const userId = session.sub;
 
     try {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) throw new Error('GEMINI_API_KEY_MISSING');
-      const ai = new GoogleGenAI({ apiKey });
-
       const sb = getAdminSupabase();
-      const { data: transactions } = await sb!
+      if (!sb) {
+        return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+      }
+      const { data: transactions } = await sb
         .from('transactions')
         .select('amount, description, created_at, category')
         .eq('user_id', userId)
         .order('created_at', { ascending: false })
         .limit(20);
 
-      const { data: goals } = await sb!
+      const { data: goals } = await sb
         .from('goals')
         .select('name, target_amount, current_amount, funding_strategy, auto_allocation_enabled, linked_income_percentage, monthly_target')
         .eq('user_id', userId);
 
-      const { data: categories } = await sb!
+      const { data: categories } = await sb
         .from('categories')
         .select('name, budget, spent_amount, hard_limit, period')
         .eq('user_id', userId);
+
+      const { data: billReserves } = await sb
+        .from('bill_reserves')
+        .select('provider_name, bill_type, reserve_amount, locked_balance, due_pattern, due_day, status, is_active')
+        .eq('user_id', userId)
+        .neq('status', 'ARCHIVED');
+
+      const storedInsights = await fetchStoredWealthInsights(sb, userId);
 
       const allocatedToGoals = (goals || []).reduce((sum: number, g: any) => sum + Number(g.current_amount || 0), 0);
       const allocatedToBudgets = (categories || []).reduce((sum: number, c: any) => sum + Number(c.budget || 0), 0);
@@ -144,6 +414,7 @@ export const registerEngagementRoutes = (v1: Router, deps: Deps) => {
         transactions,
         goals,
         categories,
+        billReserves,
         moneyState: {
           allocatedToGoals,
           allocatedToBudgets,
@@ -174,25 +445,200 @@ export const registerEngagementRoutes = (v1: Router, deps: Deps) => {
             - CRITICAL: Do NOT use the word 'Fynix' or 'fynix'. Always use 'Orbi'.
         `;
 
-      const response = await callGeminiWithRetry(ai, {
-        model: 'gemini-2.5-flash',
-        contents: `Analyze this financial data: ${JSON.stringify(context)}`,
-        config: {
-          systemInstruction,
-          responseMimeType: 'application/json',
-        },
+      const heuristicFallback = buildHeuristicInsights({
+        transactions: transactions || [],
+        goals: goals || [],
+        categories: categories || [],
+        billReserves: billReserves || [],
       });
+      const storedFallback = mapStoredInsightsToPayload(storedInsights);
 
-      let insights;
-      try {
-        insights = JSON.parse(response.text || '{}');
-      } catch (e) {
-        console.error('[Insights] JSON Parse Error:', e, 'Response:', response.text);
-        insights = { spendingAlerts: [], budgetSuggestions: [], financialAdvice: ['Unable to generate insights at this time.'] };
+      let insights: InsightPayload | null = null;
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (apiKey) {
+        try {
+          const ai = new GoogleGenAI({ apiKey });
+          const response = await callGeminiWithRetry(ai, {
+            model: 'gemini-2.5-flash',
+            contents: `Analyze this financial data: ${JSON.stringify(context)}`,
+            config: {
+              systemInstruction,
+              responseMimeType: 'application/json',
+            },
+          });
+          insights = parseInsightJson(response.text);
+        } catch (e) {
+          console.error('[Insights] AI generation failed, using fallback:', e);
+        }
       }
-      res.json({ success: true, data: insights });
+
+      const resolved = insights && (
+        insights.spendingAlerts.length ||
+        insights.budgetSuggestions.length ||
+        insights.financialAdvice.length
+      )
+        ? insights
+        : {
+            spendingAlerts: [
+              ...storedFallback.spendingAlerts,
+              ...heuristicFallback.spendingAlerts,
+            ].slice(0, 3),
+            budgetSuggestions: [
+              ...storedFallback.budgetSuggestions,
+              ...heuristicFallback.budgetSuggestions,
+            ].slice(0, 3),
+            financialAdvice: [
+              ...storedFallback.financialAdvice,
+              ...heuristicFallback.financialAdvice,
+            ].slice(0, 3),
+          };
+
+      await upsertGeneratedInsights(sb, userId, resolved, insights ? 'AI' : 'HEURISTIC');
+
+      res.json({ success: true, data: resolved });
     } catch (e: any) {
       console.error('[Insights] Error:', e);
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.get('/insights/feed', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    const userId = session.sub;
+
+    try {
+      const sb = getAdminSupabase();
+      if (!sb) {
+        return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+      }
+
+      const storedInsights = await fetchStoredWealthInsights(sb, userId);
+      const feed = storedInsights.length > 0
+        ? storedInsights.slice(0, 5).map((row) => ({
+            type: String(row.insight_type || 'INSIGHT'),
+            title: firstNonEmpty(row.title, 'Guardian AI'),
+            message: firstNonEmpty(row.message),
+            severity: firstNonEmpty(row.severity, 'INFO'),
+            severityLabel: pickSeverityLabel(String(row.insight_type || '')),
+            createdAt: row.created_at || null,
+            metadata: row.metadata || {},
+          }))
+        : mapPayloadToFeed(buildHeuristicInsights({
+            transactions: [],
+            goals: [],
+            categories: [],
+            billReserves: [],
+          }));
+
+      res.json({
+        success: true,
+        data: {
+          insights: feed,
+        },
+      });
+    } catch (e: any) {
+      console.error('[Insights Feed] Error:', e);
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.get('/insights/merchant-recommendations', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    const userId = session.sub;
+
+    try {
+      const sb = getAdminSupabase();
+      if (!sb) {
+        return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+      }
+
+      const [
+        recentTransactionsResult,
+        digitalMerchantsResult,
+        merchantsResult,
+      ] = await Promise.all([
+        sb
+          .from('transactions')
+          .select('merchant_name,category,description,provider,created_at')
+          .eq('user_id', userId)
+          .order('created_at', { ascending: false })
+          .limit(30),
+        sb
+          .from('digital_merchants')
+          .select('id,name,category,status,metadata,created_at')
+          .eq('status', 'ACTIVE')
+          .order('created_at', { ascending: false })
+          .limit(40),
+        sb
+          .from('merchants')
+          .select('id,business_name,status,metadata,created_at')
+          .eq('status', 'active')
+          .order('created_at', { ascending: false })
+          .limit(40),
+      ]);
+
+      const recentTransactions = recentTransactionsResult.data || [];
+      const digitalMerchants = digitalMerchantsResult.data || [];
+      const merchants = merchantsResult.data || [];
+
+      const categoryFrequency = new Map<string, number>();
+      const recentMerchantNames = new Set<string>();
+      for (const tx of recentTransactions) {
+        const category = firstNonEmpty(tx.category, tx.provider);
+        if (category) {
+          const key = category.toLowerCase();
+          categoryFrequency.set(key, (categoryFrequency.get(key) || 0) + 1);
+        }
+        const merchantName = firstNonEmpty(tx.merchant_name);
+        if (merchantName) {
+          recentMerchantNames.add(merchantName.toLowerCase());
+        }
+      }
+
+      const scored = [
+        ...digitalMerchants.map((merchant: any) => ({
+          id: merchant.id,
+          name: merchant.name,
+          category: firstNonEmpty(merchant.category, merchant.metadata?.category, 'General'),
+          reason: 'Relevant to your current spending pattern',
+          source: 'digital_merchants',
+          status: merchant.status,
+          score: 0,
+        })),
+        ...merchants.map((merchant: any) => ({
+          id: merchant.id,
+          name: merchant.business_name,
+          category: firstNonEmpty(merchant.metadata?.category, merchant.metadata?.segment, 'General'),
+          reason: 'Active merchant on ORBI',
+          source: 'merchants',
+          status: merchant.status,
+          score: 0,
+        })),
+      ].map((merchant) => {
+        const categoryScore = categoryFrequency.get(String(merchant.category).toLowerCase()) || 0;
+        const repeatPenalty = recentMerchantNames.has(String(merchant.name).toLowerCase()) ? -1 : 0;
+        return {
+          ...merchant,
+          score: categoryScore * 3 + repeatPenalty + (merchant.source === 'digital_merchants' ? 1 : 0),
+          reason: categoryScore > 0
+            ? `Matches your recent ${merchant.category.toLowerCase()} activity`
+            : merchant.reason,
+        };
+      });
+
+      const recommendations = scored
+        .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+        .slice(0, 6)
+        .map(({ score, ...merchant }) => merchant);
+
+      res.json({
+        success: true,
+        data: {
+          recommendations,
+        },
+      });
+    } catch (e: any) {
+      console.error('[Merchant Recommendations] Error:', e);
       res.status(500).json({ success: false, error: e.message });
     }
   });

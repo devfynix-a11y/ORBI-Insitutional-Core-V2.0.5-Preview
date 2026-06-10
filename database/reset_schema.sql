@@ -67,9 +67,17 @@ DROP TABLE IF EXISTS public.financial_ledger CASCADE;
 DROP TABLE IF EXISTS public.transaction_quotes CASCADE;
 DROP TABLE IF EXISTS public.transaction_events CASCADE;
 DROP TABLE IF EXISTS public.financial_events CASCADE;
+DROP TABLE IF EXISTS public.payment_orders CASCADE;
+DROP TABLE IF EXISTS public.settlement_payouts CASCADE;
 DROP TABLE IF EXISTS public.transactions CASCADE;
+DROP TABLE IF EXISTS public.ent_system_vaults CASCADE;
 DROP TABLE IF EXISTS public.platform_vaults CASCADE;
 DROP TABLE IF EXISTS public.wallets CASCADE;
+DROP TABLE IF EXISTS public.api_keys CASCADE;
+DROP TABLE IF EXISTS public.tenant_settlements CASCADE;
+DROP TABLE IF EXISTS public.tenant_users CASCADE;
+DROP TABLE IF EXISTS public.tenants CASCADE;
+DROP TABLE IF EXISTS public.behavior_profiles CASCADE;
 DROP TABLE IF EXISTS public.staff CASCADE;
 DROP TABLE IF EXISTS public.users CASCADE;
 DROP TABLE IF EXISTS public.secrets CASCADE;
@@ -291,9 +299,74 @@ BEGIN
     END IF;
 END $$;
 
+CREATE TABLE IF NOT EXISTS public.tenants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'individual' CHECK (type IN ('individual', 'merchant', 'marketplace', 'partner', 'enterprise')),
+    status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'SUSPENDED', 'PENDING', 'CLOSED')),
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.tenant_users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'admin', 'operator', 'member', 'viewer')),
+    status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'SUSPENDED', 'INVITED', 'REMOVED')),
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT tenant_users_unique_user_per_tenant UNIQUE (tenant_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.api_keys (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
+    public_key TEXT NOT NULL UNIQUE,
+    secret_key TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'REVOKED', 'EXPIRED')),
+    permissions TEXT[] DEFAULT ARRAY[]::TEXT[],
+    metadata JSONB DEFAULT '{}'::jsonb,
+    expires_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.tenant_settlements (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL UNIQUE REFERENCES public.tenants(id) ON DELETE CASCADE,
+    destination_type TEXT DEFAULT 'bank',
+    account_name TEXT,
+    account_number TEXT,
+    bank_code TEXT,
+    phone TEXT,
+    currency TEXT NOT NULL DEFAULT 'TZS',
+    schedule TEXT DEFAULT 'manual',
+    status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'PAUSED', 'DISABLED')),
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.behavior_profiles (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL UNIQUE REFERENCES public.users(id) ON DELETE CASCADE,
+    typing_cadence JSONB DEFAULT '{}'::jsonb,
+    device_motion JSONB DEFAULT '{}'::jsonb,
+    navigation_pattern JSONB DEFAULT '{}'::jsonb,
+    risk_score NUMERIC DEFAULT 0,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS public.wallets (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(), 
     user_id UUID REFERENCES public.users(id) ON DELETE CASCADE, 
+    tenant_id UUID REFERENCES public.tenants(id) ON DELETE SET NULL,
+    owner_type TEXT DEFAULT 'user',
     name TEXT NOT NULL, 
     balance NUMERIC DEFAULT 0, 
     currency TEXT DEFAULT 'TZS', 
@@ -332,6 +405,18 @@ CREATE TABLE IF NOT EXISTS public.platform_vaults (
 
 DO $$
 BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema='public' AND table_name='wallets' AND column_name='tenant_id'
+    ) THEN
+        ALTER TABLE public.wallets ADD COLUMN tenant_id UUID REFERENCES public.tenants(id) ON DELETE SET NULL;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema='public' AND table_name='wallets' AND column_name='owner_type'
+    ) THEN
+        ALTER TABLE public.wallets ADD COLUMN owner_type TEXT DEFAULT 'user';
+    END IF;
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns
         WHERE table_name='wallets' AND column_name='is_locked'
@@ -387,6 +472,16 @@ BEGIN
         ALTER TABLE public.platform_vaults ADD COLUMN updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
     END IF;
 END $$;
+
+CREATE TABLE IF NOT EXISTS public.ent_system_vaults (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    vault_purpose VARCHAR(50) UNIQUE NOT NULL,
+    wallet_id UUID UNIQUE NOT NULL REFERENCES public.wallets(id) ON DELETE RESTRICT,
+    is_active BOOLEAN DEFAULT TRUE,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
 
 COMMENT ON COLUMN public.platform_vaults.metadata IS
   'JSON metadata. External reconciliation reads provider_id, providerId, provider_code, providerCode, partner_id, partnerId, partner_code, or partnerCode from this object.';
@@ -473,6 +568,7 @@ CREATE TABLE IF NOT EXISTS public.transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     reference_id TEXT UNIQUE,
     user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    tenant_id UUID REFERENCES public.tenants(id) ON DELETE SET NULL,
     wallet_id UUID,
     to_wallet_id UUID,
     amount TEXT NOT NULL,
@@ -482,6 +578,8 @@ CREATE TABLE IF NOT EXISTS public.transactions (
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('created', 'pending', 'authorized', 'processing', 'settled', 'completed', 'failed', 'cancelled', 'held_for_review', 'reversed', 'refunded')),
     status_notes TEXT,
     date DATE DEFAULT CURRENT_DATE,
+    settlement_id UUID,
+    settlement_status TEXT DEFAULT 'PENDING',
     metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -510,6 +608,15 @@ BEGIN
 
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='transactions' AND column_name='currency') THEN
         ALTER TABLE public.transactions ADD COLUMN currency TEXT DEFAULT 'TZS';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='transactions' AND column_name='tenant_id') THEN
+        ALTER TABLE public.transactions ADD COLUMN tenant_id UUID REFERENCES public.tenants(id) ON DELETE SET NULL;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='transactions' AND column_name='settlement_id') THEN
+        ALTER TABLE public.transactions ADD COLUMN settlement_id UUID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='transactions' AND column_name='settlement_status') THEN
+        ALTER TABLE public.transactions ADD COLUMN settlement_status TEXT DEFAULT 'PENDING';
     END IF;
 
     -- Add User Setting Columns
@@ -625,6 +732,22 @@ BEGIN
             );
     END IF;
 END $$;
+
+CREATE TABLE IF NOT EXISTS public.settlement_payouts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
+    amount NUMERIC(20, 6) NOT NULL DEFAULT 0,
+    fee_deducted NUMERIC(20, 6) NOT NULL DEFAULT 0,
+    net_amount NUMERIC(20, 6) NOT NULL DEFAULT 0,
+    currency TEXT NOT NULL DEFAULT 'TZS',
+    status TEXT NOT NULL DEFAULT 'PROCESSING' CHECK (status IN ('PROCESSING', 'PENDING', 'COMPLETED', 'FAILED', 'CANCELLED')),
+    destination_snapshot JSONB DEFAULT '{}'::jsonb,
+    reference TEXT UNIQUE,
+    provider_ref TEXT,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
 
 CREATE TABLE IF NOT EXISTS public.transaction_quotes (
     id TEXT PRIMARY KEY,
@@ -933,6 +1056,76 @@ CREATE TABLE IF NOT EXISTS public.shared_budget_approvals (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+DO $$
+BEGIN
+    DELETE FROM public.shared_pot_members spm
+    WHERE (spm.pot_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.shared_pots sp WHERE sp.id = spm.pot_id))
+       OR (spm.user_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = spm.user_id));
+
+    DELETE FROM public.shared_pot_invitations spi
+    WHERE (spi.pot_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.shared_pots sp WHERE sp.id = spi.pot_id))
+       OR (spi.inviter_user_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = spi.inviter_user_id))
+       OR (spi.invitee_user_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = spi.invitee_user_id));
+
+    DELETE FROM public.shared_budget_members sbm
+    WHERE (sbm.budget_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.shared_budgets sb WHERE sb.id = sbm.budget_id))
+       OR (sbm.user_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = sbm.user_id));
+
+    DELETE FROM public.shared_budget_invitations sbi
+    WHERE (sbi.budget_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.shared_budgets sb WHERE sb.id = sbi.budget_id))
+       OR (sbi.inviter_user_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = sbi.inviter_user_id))
+       OR (sbi.invitee_user_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = sbi.invitee_user_id));
+
+    UPDATE public.shared_budget_transactions sbt
+    SET member_user_id = NULL
+    WHERE member_user_id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = sbt.member_user_id);
+
+    DELETE FROM public.shared_budget_approvals sba
+    WHERE (sba.shared_budget_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.shared_budgets sb WHERE sb.id = sba.shared_budget_id))
+       OR (sba.requester_user_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = sba.requester_user_id));
+
+    UPDATE public.shared_budget_approvals sba
+    SET reviewer_user_id = NULL
+    WHERE reviewer_user_id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = sba.reviewer_user_id);
+
+    ALTER TABLE public.shared_pot_members
+        DROP CONSTRAINT IF EXISTS shared_pot_members_user_id_fkey,
+        ADD CONSTRAINT shared_pot_members_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+    ALTER TABLE public.shared_pot_invitations
+        DROP CONSTRAINT IF EXISTS shared_pot_invitations_pot_id_fkey,
+        ADD CONSTRAINT shared_pot_invitations_pot_id_fkey FOREIGN KEY (pot_id) REFERENCES public.shared_pots(id) ON DELETE CASCADE;
+    ALTER TABLE public.shared_pot_invitations
+        DROP CONSTRAINT IF EXISTS shared_pot_invitations_inviter_user_id_fkey,
+        ADD CONSTRAINT shared_pot_invitations_inviter_user_id_fkey FOREIGN KEY (inviter_user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+    ALTER TABLE public.shared_pot_invitations
+        DROP CONSTRAINT IF EXISTS shared_pot_invitations_invitee_user_id_fkey,
+        ADD CONSTRAINT shared_pot_invitations_invitee_user_id_fkey FOREIGN KEY (invitee_user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+    ALTER TABLE public.shared_budget_members
+        DROP CONSTRAINT IF EXISTS shared_budget_members_user_id_fkey,
+        ADD CONSTRAINT shared_budget_members_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+    ALTER TABLE public.shared_budget_invitations
+        DROP CONSTRAINT IF EXISTS shared_budget_invitations_budget_id_fkey,
+        ADD CONSTRAINT shared_budget_invitations_budget_id_fkey FOREIGN KEY (budget_id) REFERENCES public.shared_budgets(id) ON DELETE CASCADE;
+    ALTER TABLE public.shared_budget_invitations
+        DROP CONSTRAINT IF EXISTS shared_budget_invitations_inviter_user_id_fkey,
+        ADD CONSTRAINT shared_budget_invitations_inviter_user_id_fkey FOREIGN KEY (inviter_user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+    ALTER TABLE public.shared_budget_invitations
+        DROP CONSTRAINT IF EXISTS shared_budget_invitations_invitee_user_id_fkey,
+        ADD CONSTRAINT shared_budget_invitations_invitee_user_id_fkey FOREIGN KEY (invitee_user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+    ALTER TABLE public.shared_budget_transactions
+        DROP CONSTRAINT IF EXISTS shared_budget_transactions_member_user_id_fkey,
+        ADD CONSTRAINT shared_budget_transactions_member_user_id_fkey FOREIGN KEY (member_user_id) REFERENCES public.users(id) ON DELETE SET NULL;
+    ALTER TABLE public.shared_budget_approvals
+        DROP CONSTRAINT IF EXISTS shared_budget_approvals_requester_user_id_fkey,
+        ADD CONSTRAINT shared_budget_approvals_requester_user_id_fkey FOREIGN KEY (requester_user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+    ALTER TABLE public.shared_budget_approvals
+        DROP CONSTRAINT IF EXISTS shared_budget_approvals_reviewer_user_id_fkey,
+        ADD CONSTRAINT shared_budget_approvals_reviewer_user_id_fkey FOREIGN KEY (reviewer_user_id) REFERENCES public.users(id) ON DELETE SET NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS public.bill_reserves (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1398,6 +1591,21 @@ CREATE INDEX IF NOT EXISTS idx_financial_partners_rail
 CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_config_versions_one_active
     ON public.provider_config_versions(provider_id)
     WHERE status = 'ACTIVE';
+
+CREATE TABLE IF NOT EXISTS public.payment_orders (
+    id TEXT PRIMARY KEY,
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    provider_id UUID REFERENCES public.financial_partners(id) ON DELETE SET NULL,
+    amount NUMERIC(20, 6) NOT NULL DEFAULT 0,
+    currency TEXT NOT NULL DEFAULT 'TZS',
+    status TEXT NOT NULL DEFAULT 'INITIATED' CHECK (status IN ('INITIATED', 'SETTLEMENT_PENDING', 'SETTLED', 'FAILED', 'REFUNDED', 'CANCELLED')),
+    authorization_id TEXT,
+    settlement_id UUID,
+    refunded_at TIMESTAMP WITH TIME ZONE,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
 
 CREATE TABLE IF NOT EXISTS public.provider_performance_metrics (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -4722,27 +4930,6 @@ BEGIN
     )
     ON CONFLICT (id) DO NOTHING;
 
-    INSERT INTO public.user_messages (
-        user_id, subject, body, category, is_read
-    )
-    VALUES (
-        new_user_id,
-        'Welcome to ORBI: Your Sovereign Financial Node',
-        'Welcome to the future of money. Your sovereign vault is active and ready.
-
-We are here to support your financial journey. If you need assistance, please reach out to our platform team:
-
-• Email: support@orbi.io
-• Phone: +255 700 000 000
-• Help Center: help.orbi.io
-
-Stay Sovereign,
-The ORBI Team',
-        'system',
-        FALSE
-    )
-    ON CONFLICT DO NOTHING;
-
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
@@ -4759,7 +4946,14 @@ BEGIN
     -- Enable RLS for all tables
     ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.staff ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.tenants ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.tenant_users ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.api_keys ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.tenant_settlements ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.behavior_profiles ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.payment_orders ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.settlement_payouts ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.financial_ledger ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.financial_partners ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.provider_config_versions ENABLE ROW LEVEL SECURITY;
@@ -4799,6 +4993,7 @@ BEGIN
     ALTER TABLE public.regulatory_config ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.transfer_tax_rules ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.wallets ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.ent_system_vaults ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.platform_vaults ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.staff_messages ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.goals ENABLE ROW LEVEL SECURITY;
@@ -5083,6 +5278,56 @@ CREATE POLICY "Admins view reconciliation reports" ON public.reconciliation_repo
 DROP POLICY IF EXISTS "System manage reconciliation reports" ON public.reconciliation_reports;
 CREATE POLICY "System manage reconciliation reports" ON public.reconciliation_reports 
     FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Tenant members read tenants" ON public.tenants;
+CREATE POLICY "Tenant members read tenants" ON public.tenants
+    FOR SELECT USING (id IN (SELECT tenant_id FROM public.tenant_users WHERE user_id = auth.uid() AND status = 'ACTIVE'));
+
+DROP POLICY IF EXISTS "Tenant users read own memberships" ON public.tenant_users;
+CREATE POLICY "Tenant users read own memberships" ON public.tenant_users
+    FOR SELECT USING (user_id = auth.uid());
+
+DROP POLICY IF EXISTS "Tenant owners manage API keys" ON public.api_keys;
+CREATE POLICY "Tenant owners manage API keys" ON public.api_keys
+    FOR SELECT USING (
+        tenant_id IN (
+            SELECT tenant_id FROM public.tenant_users
+            WHERE user_id = auth.uid() AND role IN ('owner', 'admin') AND status = 'ACTIVE'
+        )
+    );
+
+DROP POLICY IF EXISTS "Tenant members read settlement config" ON public.tenant_settlements;
+CREATE POLICY "Tenant members read settlement config" ON public.tenant_settlements
+    FOR SELECT USING (tenant_id IN (SELECT tenant_id FROM public.tenant_users WHERE user_id = auth.uid() AND status = 'ACTIVE'));
+
+DROP POLICY IF EXISTS "Tenant members read settlement payouts" ON public.settlement_payouts;
+CREATE POLICY "Tenant members read settlement payouts" ON public.settlement_payouts
+    FOR SELECT USING (tenant_id IN (SELECT tenant_id FROM public.tenant_users WHERE user_id = auth.uid() AND status = 'ACTIVE'));
+
+DROP POLICY IF EXISTS "Users manage own behavior profile" ON public.behavior_profiles;
+CREATE POLICY "Users manage own behavior profile" ON public.behavior_profiles
+    FOR ALL USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS "Users read own payment orders" ON public.payment_orders;
+CREATE POLICY "Users read own payment orders" ON public.payment_orders
+    FOR SELECT USING (user_id = auth.uid());
+
+DROP POLICY IF EXISTS "System bypass tenants" ON public.tenants;
+CREATE POLICY "System bypass tenants" ON public.tenants FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "System bypass tenant users" ON public.tenant_users;
+CREATE POLICY "System bypass tenant users" ON public.tenant_users FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "System bypass api keys" ON public.api_keys;
+CREATE POLICY "System bypass api keys" ON public.api_keys FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "System bypass tenant settlements" ON public.tenant_settlements;
+CREATE POLICY "System bypass tenant settlements" ON public.tenant_settlements FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "System bypass settlement payouts" ON public.settlement_payouts;
+CREATE POLICY "System bypass settlement payouts" ON public.settlement_payouts FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "System bypass payment orders" ON public.payment_orders;
+CREATE POLICY "System bypass payment orders" ON public.payment_orders FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "System bypass behavior profiles" ON public.behavior_profiles;
+CREATE POLICY "System bypass behavior profiles" ON public.behavior_profiles FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "System bypass ent system vaults" ON public.ent_system_vaults;
+CREATE POLICY "System bypass ent system vaults" ON public.ent_system_vaults FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 -- ==========================================
 -- NEXT-GEN SECURITY ARCHITECTURE (V26)
@@ -5371,407 +5616,6 @@ BEGIN
     )
     OR api_base_url LIKE 'https://api.example.com/%';
 
-    RETURN;
-
-    -- Legacy placeholder seeds intentionally disabled below. Keep the historical block unreachable for migration diff traceability.
-    INSERT INTO public.financial_partners (
-        id, name, type, supported_currencies, icon, color, api_base_url,
-        provider_metadata, mapping_config, logic_type, status
-    ) VALUES
-    (
-        '10000000-0000-0000-0000-000000000101',
-        'DISABLED_LEGACY_MOBILE_MONEY_PLACEHOLDER',
-        'mobile_money',
-        ARRAY['TZS']::TEXT[],
-        'smartphone',
-        '#16A34A',
-        'https://api.example.com/mobile-money/mpesa',
-        jsonb_build_object(
-            'group', 'Mobile Money',
-            'brand_name', 'M-Pesa',
-            'provider_code', 'MPESA_TZ',
-            'display_icon', 'smartphone',
-            'checkout_mode', 'server_to_server',
-            'channels', jsonb_build_array('stk_push', 'ussd'),
-            'rail', 'MOBILE_MONEY',
-            'operations', jsonb_build_array('COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST'),
-            'countries', jsonb_build_array('TZ'),
-            'routing_priority', 10
-        ),
-        jsonb_build_object(
-            'service_root', 'https://api.example.com/mobile-money/mpesa',
-            'operations', jsonb_build_object(
-                'COLLECTION_REQUEST', jsonb_build_object('timeout_ms', 30000),
-                'DISBURSEMENT_REQUEST', jsonb_build_object('timeout_ms', 30000)
-            )
-        ),
-        'REGISTRY',
-        'INACTIVE'
-    ),
-    (
-        '10000000-0000-0000-0000-000000000102',
-        'DISABLED_LEGACY_BANK_PLACEHOLDER',
-        'bank',
-        ARRAY['TZS', 'USD']::TEXT[],
-        'account_balance',
-        '#2563EB',
-        'https://api.example.com/bank/core',
-        jsonb_build_object(
-            'group', 'Bank',
-            'brand_name', 'Bank Transfer',
-            'provider_code', 'BANK_TZ',
-            'display_icon', 'account_balance',
-            'checkout_mode', 'server_to_server',
-            'channels', jsonb_build_array('account', 'bank_transfer'),
-            'rail', 'BANK',
-            'operations', jsonb_build_array('COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST'),
-            'countries', jsonb_build_array('TZ'),
-            'routing_priority', 20
-        ),
-        jsonb_build_object(
-            'service_root', 'https://api.example.com/bank/core',
-            'operations', jsonb_build_object(
-                'COLLECTION_REQUEST', jsonb_build_object('timeout_ms', 30000),
-                'DISBURSEMENT_REQUEST', jsonb_build_object('timeout_ms', 30000)
-            )
-        ),
-        'REGISTRY',
-        'INACTIVE'
-    ),
-    (
-        '10000000-0000-0000-0000-000000000103',
-        'DISABLED_LEGACY_CARD_PLACEHOLDER',
-        'card',
-        ARRAY['TZS', 'USD']::TEXT[],
-        'credit_card',
-        '#7C3AED',
-        'https://api.example.com/card/gateway',
-        jsonb_build_object(
-            'group', 'Cards',
-            'brand_name', 'Card Gateway',
-            'provider_code', 'CARD_GATEWAY',
-            'display_icon', 'credit_card',
-            'checkout_mode', 'server_to_server',
-            'channels', jsonb_build_array('visa', 'mastercard'),
-            'rail', 'CARD_GATEWAY',
-            'operations', jsonb_build_array('COLLECTION_REQUEST'),
-            'countries', jsonb_build_array('TZ'),
-            'routing_priority', 30
-        ),
-        jsonb_build_object(
-            'service_root', 'https://api.example.com/card/gateway',
-            'operations', jsonb_build_object(
-                'COLLECTION_REQUEST', jsonb_build_object('timeout_ms', 30000)
-            )
-        ),
-        'REGISTRY',
-        'INACTIVE'
-    ),
-    (
-        '10000000-0000-0000-0000-000000000104',
-        'DISABLED_LEGACY_CRYPTO_PLACEHOLDER',
-        'crypto',
-        ARRAY['USDT', 'BTC', 'ETH']::TEXT[],
-        'currency_bitcoin',
-        '#F59E0B',
-        'https://api.example.com/crypto/gateway',
-        jsonb_build_object(
-            'group', 'Crypto',
-            'brand_name', 'Crypto Gateway',
-            'provider_code', 'CRYPTO_GATEWAY',
-            'display_icon', 'currency_bitcoin',
-            'checkout_mode', 'server_to_server',
-            'channels', jsonb_build_array('onchain', 'wallet'),
-            'rail', 'CRYPTO',
-            'operations', jsonb_build_array('COLLECTION_REQUEST', 'DISBURSEMENT_REQUEST'),
-            'countries', jsonb_build_array('TZ'),
-            'routing_priority', 40
-        ),
-        jsonb_build_object(
-            'service_root', 'https://api.example.com/crypto/gateway',
-            'operations', jsonb_build_object(
-                'COLLECTION_REQUEST', jsonb_build_object('timeout_ms', 45000),
-                'DISBURSEMENT_REQUEST', jsonb_build_object('timeout_ms', 45000)
-            )
-        ),
-        'REGISTRY',
-        'INACTIVE'
-    )
-    ON CONFLICT (id) DO UPDATE SET
-        name = EXCLUDED.name,
-        type = EXCLUDED.type,
-        supported_currencies = EXCLUDED.supported_currencies,
-        icon = EXCLUDED.icon,
-        color = EXCLUDED.color,
-        api_base_url = EXCLUDED.api_base_url,
-        provider_metadata = EXCLUDED.provider_metadata,
-        mapping_config = EXCLUDED.mapping_config,
-        logic_type = EXCLUDED.logic_type,
-        status = EXCLUDED.status;
-
-    INSERT INTO public.institutional_payment_accounts (
-        id, role, provider_id, bank_name, account_name, account_number, currency,
-        country_code, status, is_primary, metadata
-    ) VALUES
-    (
-        '10000000-0000-0000-0000-000000000201',
-        'MAIN_COLLECTION',
-        '10000000-0000-0000-0000-000000000101',
-        'Vodacom M-Pesa Trust',
-        'ORBI Main Collection',
-        '255700000001',
-        'TZS',
-        'TZ',
-        'INACTIVE',
-        FALSE,
-        jsonb_build_object('purpose', 'deposit_collection', 'rail', 'MOBILE_MONEY')
-    ),
-    (
-        '10000000-0000-0000-0000-000000000202',
-        'TRANSFER_SAVINGS',
-        '10000000-0000-0000-0000-000000000101',
-        'Vodacom M-Pesa Trust',
-        'ORBI Transfer Settlement',
-        '255700000002',
-        'TZS',
-        'TZ',
-        'INACTIVE',
-        FALSE,
-        jsonb_build_object('purpose', 'outbound_settlement', 'rail', 'MOBILE_MONEY')
-    ),
-    (
-        '10000000-0000-0000-0000-000000000203',
-        'FEE_COLLECTION',
-        '10000000-0000-0000-0000-000000000101',
-        'Vodacom M-Pesa Trust',
-        'ORBI Fee Reserve',
-        '255700000003',
-        'TZS',
-        'TZ',
-        'INACTIVE',
-        FALSE,
-        jsonb_build_object('purpose', 'fee_collection', 'rail', 'MOBILE_MONEY')
-    ),
-    (
-        '10000000-0000-0000-0000-000000000204',
-        'TAX_COLLECTION',
-        '10000000-0000-0000-0000-000000000101',
-        'Vodacom M-Pesa Trust',
-        'ORBI Tax Reserve',
-        '255700000004',
-        'TZS',
-        'TZ',
-        'INACTIVE',
-        FALSE,
-        jsonb_build_object('purpose', 'tax_collection', 'rail', 'MOBILE_MONEY')
-    ),
-    (
-        '10000000-0000-0000-0000-000000000205',
-        'MAIN_COLLECTION',
-        '10000000-0000-0000-0000-000000000102',
-        'CRDB Bank',
-        'ORBI Main Collection Bank',
-        '1100000001',
-        'TZS',
-        'TZ',
-        'INACTIVE',
-        FALSE,
-        jsonb_build_object('purpose', 'deposit_collection', 'rail', 'BANK')
-    ),
-    (
-        '10000000-0000-0000-0000-000000000206',
-        'TRANSFER_SAVINGS',
-        '10000000-0000-0000-0000-000000000102',
-        'CRDB Bank',
-        'ORBI Transfer Clearing',
-        '1100000002',
-        'TZS',
-        'TZ',
-        'INACTIVE',
-        FALSE,
-        jsonb_build_object('purpose', 'outbound_settlement', 'rail', 'BANK')
-    ),
-    (
-        '10000000-0000-0000-0000-000000000207',
-        'FEE_COLLECTION',
-        '10000000-0000-0000-0000-000000000102',
-        'CRDB Bank',
-        'ORBI Fee Collection Bank',
-        '1100000003',
-        'TZS',
-        'TZ',
-        'INACTIVE',
-        FALSE,
-        jsonb_build_object('purpose', 'fee_collection', 'rail', 'BANK')
-    ),
-    (
-        '10000000-0000-0000-0000-000000000208',
-        'TAX_COLLECTION',
-        '10000000-0000-0000-0000-000000000102',
-        'CRDB Bank',
-        'ORBI Tax Collection Bank',
-        '1100000004',
-        'TZS',
-        'TZ',
-        'INACTIVE',
-        FALSE,
-        jsonb_build_object('purpose', 'tax_collection', 'rail', 'BANK')
-    ),
-    (
-        '10000000-0000-0000-0000-000000000209',
-        'MAIN_COLLECTION',
-        '10000000-0000-0000-0000-000000000103',
-        'Card Settlement Bank',
-        'ORBI Card Collection',
-        '2200000001',
-        'TZS',
-        'TZ',
-        'INACTIVE',
-        FALSE,
-        jsonb_build_object('purpose', 'deposit_collection', 'rail', 'CARD_GATEWAY')
-    ),
-    (
-        '10000000-0000-0000-0000-000000000210',
-        'TRANSFER_SAVINGS',
-        '10000000-0000-0000-0000-000000000103',
-        'Card Settlement Bank',
-        'ORBI Card Settlement',
-        '2200000002',
-        'TZS',
-        'TZ',
-        'INACTIVE',
-        FALSE,
-        jsonb_build_object('purpose', 'outbound_settlement', 'rail', 'CARD_GATEWAY')
-    ),
-    (
-        '10000000-0000-0000-0000-000000000211',
-        'MAIN_COLLECTION',
-        '10000000-0000-0000-0000-000000000104',
-        'ORBI Digital Assets',
-        'ORBI Crypto Collection',
-        'CRYPTO-COLLECT-001',
-        'USDT',
-        'TZ',
-        'INACTIVE',
-        FALSE,
-        jsonb_build_object('purpose', 'deposit_collection', 'rail', 'CRYPTO')
-    ),
-    (
-        '10000000-0000-0000-0000-000000000212',
-        'TRANSFER_SAVINGS',
-        '10000000-0000-0000-0000-000000000104',
-        'ORBI Digital Assets',
-        'ORBI Crypto Settlement',
-        'CRYPTO-SETTLE-001',
-        'USDT',
-        'TZ',
-        'INACTIVE',
-        FALSE,
-        jsonb_build_object('purpose', 'outbound_settlement', 'rail', 'CRYPTO')
-    )
-    ON CONFLICT (id) DO UPDATE SET
-        role = EXCLUDED.role,
-        provider_id = EXCLUDED.provider_id,
-        bank_name = EXCLUDED.bank_name,
-        account_name = EXCLUDED.account_name,
-        account_number = EXCLUDED.account_number,
-        currency = EXCLUDED.currency,
-        country_code = EXCLUDED.country_code,
-        status = EXCLUDED.status,
-        is_primary = EXCLUDED.is_primary,
-        metadata = EXCLUDED.metadata,
-        updated_at = NOW();
-
-    INSERT INTO public.provider_routing_rules (
-        id, rail, country_code, currency, operation_code, provider_id, priority, conditions, status
-    ) VALUES
-    (
-        '10000000-0000-0000-0000-000000000301',
-        'MOBILE_MONEY',
-        'TZ',
-        'TZS',
-        'COLLECTION_REQUEST',
-        '10000000-0000-0000-0000-000000000101',
-        10,
-        '{}'::jsonb,
-        'INACTIVE'
-    ),
-    (
-        '10000000-0000-0000-0000-000000000302',
-        'MOBILE_MONEY',
-        'TZ',
-        'TZS',
-        'DISBURSEMENT_REQUEST',
-        '10000000-0000-0000-0000-000000000101',
-        10,
-        '{}'::jsonb,
-        'INACTIVE'
-    ),
-    (
-        '10000000-0000-0000-0000-000000000303',
-        'BANK',
-        'TZ',
-        'TZS',
-        'COLLECTION_REQUEST',
-        '10000000-0000-0000-0000-000000000102',
-        20,
-        '{}'::jsonb,
-        'INACTIVE'
-    ),
-    (
-        '10000000-0000-0000-0000-000000000304',
-        'BANK',
-        'TZ',
-        'TZS',
-        'DISBURSEMENT_REQUEST',
-        '10000000-0000-0000-0000-000000000102',
-        20,
-        '{}'::jsonb,
-        'INACTIVE'
-    ),
-    (
-        '10000000-0000-0000-0000-000000000305',
-        'CARD_GATEWAY',
-        'TZ',
-        'TZS',
-        'COLLECTION_REQUEST',
-        '10000000-0000-0000-0000-000000000103',
-        30,
-        '{}'::jsonb,
-        'INACTIVE'
-    ),
-    (
-        '10000000-0000-0000-0000-000000000306',
-        'CRYPTO',
-        'TZ',
-        'USDT',
-        'COLLECTION_REQUEST',
-        '10000000-0000-0000-0000-000000000104',
-        40,
-        '{}'::jsonb,
-        'INACTIVE'
-    ),
-    (
-        '10000000-0000-0000-0000-000000000307',
-        'CRYPTO',
-        'TZ',
-        'USDT',
-        'DISBURSEMENT_REQUEST',
-        '10000000-0000-0000-0000-000000000104',
-        40,
-        '{}'::jsonb,
-        'INACTIVE'
-    )
-    ON CONFLICT (id) DO UPDATE SET
-        rail = EXCLUDED.rail,
-        country_code = EXCLUDED.country_code,
-        currency = EXCLUDED.currency,
-        operation_code = EXCLUDED.operation_code,
-        provider_id = EXCLUDED.provider_id,
-        priority = EXCLUDED.priority,
-        conditions = EXCLUDED.conditions,
-        status = EXCLUDED.status,
-        updated_at = NOW();
 END $$;
 
 WITH base_fee_configs(flow_code, transaction_model, operation_type, direction, rail) AS (
