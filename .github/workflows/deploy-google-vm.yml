@@ -17,6 +17,7 @@ jobs:
       ORBI_BRANCH: main
       ORBI_IMAGE: orbi-core:latest
       HOST_PORT: 3000
+      TLS_DIR: /opt/orbi/mtls
 
     steps:
       - name: Deploy locally on Google VM
@@ -32,6 +33,7 @@ jobs:
             const branch = process.env.ORBI_BRANCH;
             const image = process.env.ORBI_IMAGE;
             const hostPort = process.env.HOST_PORT;
+            const tlsDir = process.env.TLS_DIR;
 
             const run = (command, args, options = {}) => {
               core.info(`Running ${command} ${args.join(' ')}`);
@@ -57,6 +59,10 @@ jobs:
               return;
             }
             fs.chmodSync(envPath, 0o600);
+            if (!fs.existsSync(tlsDir)) {
+              core.setFailed(`Missing Google VM TLS directory: ${tlsDir}`);
+              return;
+            }
 
             run('docker', ['build', '-t', image, '.'], { cwd: appDir });
             try {
@@ -70,6 +76,7 @@ jobs:
               '--name', 'orbi-core-api',
               '--restart', 'unless-stopped',
               '--env-file', '.env',
+              '--volume', `${tlsDir}:${tlsDir}:ro`,
               '-p', `${hostPort}:3000`,
               image,
             ], { cwd: appDir });
