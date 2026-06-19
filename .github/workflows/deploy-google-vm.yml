@@ -74,12 +74,27 @@ jobs:
               image,
             ], { cwd: appDir });
 
-            await new Promise((resolve) => setTimeout(resolve, 8000));
-            const response = await fetch(`http://127.0.0.1:${hostPort}/health`, {
-              headers: { 'X-Forwarded-Proto': 'https' },
-            });
-            const body = await response.text();
-            core.info(`Health response ${response.status}: ${body}`);
-            if (!response.ok) {
-              core.setFailed(`Google VM health check failed with HTTP ${response.status}.`);
+            let lastHealthError = 'Health endpoint did not respond.';
+            for (let attempt = 1; attempt <= 18; attempt += 1) {
+              await new Promise((resolve) => setTimeout(resolve, 5000));
+              try {
+                const response = await fetch(`http://127.0.0.1:${hostPort}/health`, {
+                  headers: { 'X-Forwarded-Proto': 'https' },
+                });
+                const body = await response.text();
+                core.info(`Health attempt ${attempt} response ${response.status}: ${body}`);
+                if (response.ok) return;
+                lastHealthError = `HTTP ${response.status}: ${body}`;
+              } catch (error) {
+                lastHealthError = error instanceof Error ? error.message : String(error);
+                core.warning(`Health attempt ${attempt} failed: ${lastHealthError}`);
+              }
             }
+
+            try {
+              run('docker', ['ps', '-a', '--filter', 'name=orbi-core-api'], { cwd: appDir });
+              run('docker', ['logs', '--tail', '200', 'orbi-core-api'], { cwd: appDir });
+            } catch (error) {
+              core.warning(`Unable to collect container diagnostics: ${error}`);
+            }
+            core.setFailed(`Google VM health check failed after 90 seconds: ${lastHealthError}`);
