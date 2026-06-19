@@ -213,8 +213,9 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
   });
 
   v1.get('/escrow/:id', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
     try {
-      const result = await LogicCore.getEscrow(req.params.id);
+      const result = await LogicCore.getEscrow(req.params.id, session.sub);
       if (!result) return res.status(404).json({ success: false, error: 'ESCROW_NOT_FOUND' });
       res.json({ success: true, data: result });
     } catch (e: any) {
@@ -224,7 +225,7 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
 
   v1.post('/escrow/create', authenticate as any, async (req, res) => {
     const { recipientCustomerId, amount, description, conditions } = req.body;
-    const userId = (req as any).user.id;
+    const userId = (req as any).session.sub;
     try {
       const referenceId = await LogicCore.createEscrow(userId, recipientCustomerId, amount, description, conditions);
       res.json({ success: true, referenceId });
@@ -235,7 +236,7 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
 
   v1.post('/escrow/release', authenticate as any, async (req, res) => {
     const { referenceId } = req.body;
-    const userId = (req as any).user.id;
+    const userId = (req as any).session.sub;
     try {
       const success = await LogicCore.releaseEscrow(referenceId, userId);
       res.json({ success });
@@ -246,7 +247,7 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
 
   v1.post('/escrow/dispute', authenticate as any, async (req, res) => {
     const { referenceId, reason } = req.body;
-    const userId = (req as any).user.id;
+    const userId = (req as any).session.sub;
     try {
       await LogicCore.disputeEscrow(referenceId, userId, reason);
       res.json({ success: true });
@@ -257,15 +258,15 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
 
   v1.post('/escrow/refund', authenticate as any, async (req, res) => {
     const session = (req as any).session;
-    const { referenceId } = req.body;
-    const userId = (req as any).user.id;
+    const { referenceId, reason } = req.body;
+    const userId = session.sub;
 
     if (!sessionHasAnyRole(session, [...SUPER_ADMIN_AND_ADMIN_ROLES])) {
       return res.status(403).json({ success: false, error: 'UNAUTHORIZED_ADMIN_ONLY' });
     }
 
     try {
-      await LogicCore.refundEscrow(referenceId, userId);
+      await LogicCore.refundEscrow(referenceId, userId, reason);
       res.json({ success: true });
     } catch (e: any) {
       res.status(400).json({ success: false, error: e.message });

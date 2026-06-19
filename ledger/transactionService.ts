@@ -478,6 +478,7 @@ export class TransactionService {
                 id: txId,
                 user_id: t.user_id || 'system',
                 amount: t.amount || 0,
+                currency: t.currency || 'TZS',
                 description: t.description || 'Sovereign Transaction',
                 type: t.type || 'expense',
                 status: t.status || 'completed',

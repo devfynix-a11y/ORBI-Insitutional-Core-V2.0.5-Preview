@@ -1,4 +1,4 @@
-import { b2bDb, asNumber, asString, limitFromQuery, metadataNumber } from './shared.js';
+import { b2bDb, asNumber, asString, limitFromQuery } from './shared.js';
 
 export type MerchantSettlementReportInput = {
   merchantId: string;
@@ -34,41 +34,39 @@ export class MerchantSettlementReportsService {
     const currency = asString(input.currency, 'TZS').toUpperCase();
 
     const { data: rows, error } = await sb
-      .from('merchant_transactions')
+      .from('merchant_paysafe_settlements')
       .select('*')
       .eq('merchant_id', input.merchantId)
       .eq('currency', currency)
-      .gte('created_at', input.periodStart)
-      .lte('created_at', input.periodEnd);
+      .eq('status', 'SETTLED')
+      .gte('settled_at', input.periodStart)
+      .lte('settled_at', input.periodEnd);
     if (error) throw new Error(error.message);
 
-    const transactions = rows || [];
-    const grossAmount = transactions.reduce((sum: number, row: any) => sum + asNumber(row.amount), 0);
-    const feeAmount = transactions.reduce((sum: number, row: any) => (
-      sum + metadataNumber(row.metadata, ['feeAmount', 'fee_amount', 'totalFee', 'platformFee'])
-    ), 0);
-    const taxAmount = transactions.reduce((sum: number, row: any) => (
-      sum + metadataNumber(row.metadata, ['taxAmount', 'tax_amount', 'vatAmount', 'governmentFee'])
-    ), 0);
-    const settledCount = transactions.filter((row: any) => String(row.status || '').toLowerCase() === 'completed').length;
+    const settlements = rows || [];
+    const grossAmount = settlements.reduce((sum: number, row: any) => sum + asNumber(row.gross_amount), 0);
+    const feeAmount = settlements.reduce((sum: number, row: any) => sum + asNumber(row.fee_amount), 0);
+    const taxAmount = settlements.reduce((sum: number, row: any) => sum + asNumber(row.tax_amount), 0);
+    const netAmount = settlements.reduce((sum: number, row: any) => sum + asNumber(row.net_amount), 0);
+    const ownerUserId = settlements.find((row: any) => row.owner_user_id)?.owner_user_id || null;
 
     const payload = {
       merchant_id: input.merchantId,
-      owner_user_id: transactions.find((row: any) => row.owner_user_id)?.owner_user_id || null,
+      owner_user_id: ownerUserId,
       period_start: input.periodStart,
       period_end: input.periodEnd,
       currency,
       gross_amount: grossAmount,
       fee_amount: feeAmount,
       tax_amount: taxAmount,
-      net_amount: grossAmount - feeAmount - taxAmount,
-      transaction_count: transactions.length,
-      settled_transaction_count: settledCount,
+      net_amount: netAmount,
+      transaction_count: settlements.length,
+      settled_transaction_count: settlements.length,
       status: 'generated',
       generated_by: input.actorId || null,
       metadata: {
-        failed_transaction_count: transactions.filter((row: any) => String(row.status || '').toLowerCase() === 'failed').length,
-        pending_transaction_count: transactions.filter((row: any) => !['completed', 'failed'].includes(String(row.status || '').toLowerCase())).length,
+        source: 'merchant_paysafe_settlements',
+        settlement_ids: settlements.map((row: any) => row.id),
       },
     };
 

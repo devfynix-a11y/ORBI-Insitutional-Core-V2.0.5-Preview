@@ -1,3 +1,5 @@
+import crypto from 'crypto';
+import { URL } from 'url';
 import type { Express, NextFunction, Request, Response, Router } from 'express';
 import { z } from 'zod';
 import { getAdminSupabase, getSupabase } from '../../../backend/supabaseClient.js';
@@ -5,6 +7,8 @@ import { BankingEngineService } from '../../../backend/ledger/transactionEngine.
 import { Audit } from '../../../backend/security/audit.js';
 import { Server as LogicCore } from '../../../backend/server.js';
 import { Webhooks } from '../../../backend/payments/webhookHandler.js';
+import { platformFeeService } from '../../../backend/payments/PlatformFeeService.js';
+import { gatewayPaymentIntentService } from '../../../backend/payments/GatewayPaymentIntentService.js';
 import {
   createInternalWorkerMiddleware,
   getInternalAuditMetadata,
@@ -33,6 +37,417 @@ const TrustedGatewayEventSchema = z.object({
   rawStatus: z.string().min(1).optional(),
   payload: z.record(z.string(), z.unknown()).optional(),
 });
+
+const ServicePaymentRequestSchema = z.object({
+  intentId: z.string().min(1),
+  serviceCode: z.string().min(1),
+  operation: z.enum(['collection', 'payout', 'refund', 'paysafe']),
+  reference: z.string().min(1),
+  amount: z.number().nonnegative(),
+  currency: z.string().min(3).max(8),
+  description: z.string().max(500).optional(),
+  customer: z.object({
+    name: z.string().optional(),
+    email: z.string().email().optional(),
+    phone: z.string().optional(),
+    userId: z.string().optional(),
+  }).optional(),
+  walletId: z.string().optional(),
+  accountNumber: z.string().optional(),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+  checkoutUrl: z.string().optional(),
+  createdAt: z.string().optional(),
+});
+
+const PaySafeBalanceRequestSchema = z.object({
+  serviceCode: z.string().min(1),
+  merchantId: z.string().optional(),
+  userId: z.string().optional(),
+  email: z.string().email().optional(),
+  phone: z.string().optional(),
+  includeHistory: z.boolean().optional().default(false),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+});
+
+const MerchantOrderPaymentStatusRequestSchema = z.object({
+  serviceCode: z.string().min(1),
+  merchantId: z.string().min(1),
+  orderId: z.string().min(1),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+});
+
+const MerchantSettlementsRequestSchema = z.object({
+  serviceCode: z.string().min(1),
+  merchantId: z.string().min(1),
+  currency: z.string().min(3).max(8).optional(),
+  status: z.string().optional(),
+  limit: z.number().int().min(1).max(100).optional().default(50),
+  offset: z.number().int().min(0).optional().default(0),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+});
+
+type ServicePaymentCoreEvent = {
+  intentId: string;
+  serviceCode: string;
+  status: 'requires_action' | 'processing' | 'pending' | 'completed' | 'failed';
+  message?: string;
+  transactionId?: string;
+  challenge?: {
+    type: 'PIN' | 'OTP' | 'PASSKEY' | 'BIOMETRIC' | '3DS';
+    challengeId: string;
+    prompt: string;
+    expiresAt?: string;
+    delivery?: {
+      channel?: 'sms' | 'email' | 'push' | 'in_app';
+      destinationHint?: string;
+    };
+    metadata?: Record<string, unknown>;
+  };
+  raw?: Record<string, unknown>;
+};
+
+const stableSerialize = (value: unknown): string => {
+  if (value === null || value === undefined) return '';
+  if (typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((entry) => stableSerialize(entry)).join(',')}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, entryValue]) => entryValue !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right));
+  return `{${entries.map(([key, entryValue]) => `${JSON.stringify(key)}:${stableSerialize(entryValue)}`).join(',')}}`;
+};
+
+const hashInternalRequestBody = (body: unknown): string =>
+  crypto.createHash('sha256').update(stableSerialize(body)).digest('hex');
+
+const buildSignedCoreToPayGatewayHeaders = (method: string, path: string, body: unknown): Record<string, string> => {
+  const signingSecret = process.env.WORKER_SIGNING_SECRET || process.env.WORKER_SECRET || '';
+  if (!signingSecret) throw new Error('WORKER_SIGNING_SECRET_NOT_CONFIGURED');
+  const workerId = process.env.ORBI_CORE_PAY_GATEWAY_WORKER_ID || 'orbi-core';
+  const scopes = 'gateway:service-payments:result';
+  const timestamp = new Date().toISOString();
+  const nonce = crypto.randomUUID();
+  const requestId = crypto.randomUUID();
+  const bodySha256 = hashInternalRequestBody(body);
+  const canonicalPayload = [
+    method.toUpperCase(),
+    path,
+    workerId,
+    scopes,
+    timestamp,
+    nonce,
+    requestId,
+    bodySha256,
+  ].join('\n');
+  const signature = crypto.createHmac('sha256', signingSecret).update(canonicalPayload).digest('hex');
+  return {
+    'content-type': 'application/json',
+    'x-worker-id': workerId,
+    'x-worker-scopes': scopes,
+    'x-worker-request-id': requestId,
+    'x-worker-timestamp': timestamp,
+    'x-worker-nonce': nonce,
+    'x-worker-signature': signature,
+    'x-worker-key-id': process.env.WORKER_KEY_ID || 'orbi-core-v1',
+  };
+};
+
+const postServicePaymentEventToPayGateway = async (event: ServicePaymentCoreEvent): Promise<Record<string, unknown>> => {
+  const baseUrl = String(process.env.ORBI_PAY_GATEWAY_BASE_URL || '').trim();
+  if (!baseUrl) return { attempted: false, delivered: false, error: 'ORBI_PAY_GATEWAY_BASE_URL_NOT_CONFIGURED' };
+  const path = process.env.ORBI_PAY_GATEWAY_SERVICE_PAYMENT_EVENT_PATH || '/v1/internal/core/service-payment-events';
+  const endpoint = new URL(path, baseUrl);
+  const body = JSON.stringify(event);
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      ...buildSignedCoreToPayGatewayHeaders('POST', endpoint.pathname, event),
+      'content-length': Buffer.byteLength(body).toString(),
+    },
+    body,
+  });
+  let payload: any = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = { raw: await response.text().catch(() => '') };
+  }
+  return {
+    attempted: true,
+    delivered: response.ok,
+    statusCode: response.status,
+    payload,
+  };
+};
+
+const normalizePhoneCandidate = (value?: string) => String(value || '').replace(/[^\d+]/g, '').trim();
+
+const findServicePaymentCustomer = async (customer: z.infer<typeof ServicePaymentRequestSchema>['customer']) => {
+  const sb = getAdminSupabase() || getSupabase();
+  if (!sb) throw new Error('DB_OFFLINE');
+  const userId = String(customer?.userId || '').trim();
+  const email = String(customer?.email || '').trim().toLowerCase();
+  const phone = normalizePhoneCandidate(customer?.phone);
+
+  if (userId) {
+    const { data, error } = await sb
+      .from('users')
+      .select('id, full_name, name, email, phone, account_status')
+      .eq('id', userId)
+      .maybeSingle();
+    if (error) throw error;
+    if (data) return data;
+  }
+
+  if (email) {
+    const { data, error } = await sb
+      .from('users')
+      .select('id, full_name, name, email, phone, account_status')
+      .ilike('email', email)
+      .maybeSingle();
+    if (error) throw error;
+    if (data) return data;
+  }
+
+  if (phone) {
+    const { data, error } = await sb
+      .from('users')
+      .select('id, full_name, name, email, phone, account_status')
+      .or(`phone.eq.${phone},phone.eq.${phone.replace(/^\+/, '')}`)
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    if (data) return data;
+  }
+
+  return null;
+};
+
+const findPaySafeBalanceUser = async (request: z.infer<typeof PaySafeBalanceRequestSchema>) =>
+  request.userId || request.email || request.phone
+    ? findServicePaymentCustomer({
+        userId: request.userId,
+        email: request.email,
+        phone: request.phone,
+      })
+    : null;
+
+const numberFromDb = (value: unknown): number => {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const referenceFromEscrow = (row: Record<string, any>): string | undefined => {
+  const conditions = row.conditions && typeof row.conditions === 'object' ? row.conditions : {};
+  const disputeMetadata = row.dispute_metadata && typeof row.dispute_metadata === 'object' ? row.dispute_metadata : {};
+  return String(
+    conditions.reference ||
+      conditions.orderId ||
+      conditions.order_id ||
+      conditions.serviceReference ||
+      disputeMetadata.reference ||
+      row.transaction_id ||
+      '',
+  ) || undefined;
+};
+
+const buildPaySafeBalanceProjection = (user: Record<string, any>, escrows: Record<string, any>[]) => {
+  const totals = new Map<string, {
+    currency: string;
+    incomingHeld: number;
+    outgoingHeld: number;
+    incomingDisputed: number;
+    outgoingDisputed: number;
+    releasedIncoming: number;
+    refundedOutgoing: number;
+    totalIncomingProtected: number;
+    totalOutgoingProtected: number;
+  }>();
+
+  const ensureTotal = (currency: string) => {
+    const key = currency.toUpperCase();
+    if (!totals.has(key)) {
+      totals.set(key, {
+        currency: key,
+        incomingHeld: 0,
+        outgoingHeld: 0,
+        incomingDisputed: 0,
+        outgoingDisputed: 0,
+        releasedIncoming: 0,
+        refundedOutgoing: 0,
+        totalIncomingProtected: 0,
+        totalOutgoingProtected: 0,
+      });
+    }
+    return totals.get(key)!;
+  };
+
+  const userId = String(user.id);
+  const items = escrows.map((row) => {
+    const amount = numberFromDb(row.amount);
+    const currency = String(row.currency || 'TZS').toUpperCase();
+    const status = String(row.status || '').toUpperCase();
+    const direction = String(row.receiver_id) === userId ? 'incoming' : 'outgoing';
+    const total = ensureTotal(currency);
+
+    if (status === 'HELD') {
+      if (direction === 'incoming') total.incomingHeld += amount;
+      else total.outgoingHeld += amount;
+    } else if (status === 'DISPUTED') {
+      if (direction === 'incoming') total.incomingDisputed += amount;
+      else total.outgoingDisputed += amount;
+    } else if (status === 'RELEASED' && direction === 'incoming') {
+      total.releasedIncoming += amount;
+    } else if (status === 'REFUNDED' && direction === 'outgoing') {
+      total.refundedOutgoing += amount;
+    }
+
+    total.totalIncomingProtected = total.incomingHeld + total.incomingDisputed;
+    total.totalOutgoingProtected = total.outgoingHeld + total.outgoingDisputed;
+
+    return {
+      escrowId: row.id,
+      transactionId: row.transaction_id || undefined,
+      direction,
+      amount,
+      currency,
+      status,
+      reference: referenceFromEscrow(row),
+      conditions: row.conditions || {},
+      disputeMetadata: row.dispute_metadata || {},
+      createdAt: row.created_at || undefined,
+      updatedAt: row.updated_at || undefined,
+      expiresAt: row.expires_at || undefined,
+    };
+  });
+
+  return {
+    user: {
+      id: userId,
+      displayName: user.full_name || user.name || undefined,
+      email: user.email || undefined,
+      phone: user.phone || undefined,
+      accountStatus: user.account_status || undefined,
+    },
+    totals: Array.from(totals.values()),
+    escrows: items,
+  };
+};
+
+const stringFromMetadata = (metadata: Record<string, unknown>, ...keys: string[]): string => {
+  for (const key of keys) {
+    const value = metadata[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+};
+
+const resolveServiceMerchantContext = async (
+  sb: NonNullable<ReturnType<typeof getAdminSupabase> | ReturnType<typeof getSupabase>>,
+  request: z.infer<typeof ServicePaymentRequestSchema>,
+) => {
+  const metadata = request.metadata || {};
+  const merchantId = stringFromMetadata(metadata, 'merchantId', 'merchant_id');
+  const paySafeAction = stringFromMetadata(metadata, 'paySafeAction', 'paysafe_action');
+  const requireMerchant = request.operation === 'paysafe' || Boolean(metadata.requireActiveMerchant);
+
+  if (!merchantId) {
+    if (!requireMerchant) return null;
+    throw new Error('MERCHANT_CONTEXT_REQUIRED');
+  }
+
+  const { data: merchant, error: merchantError } = await sb
+    .from('merchants')
+    .select('id,business_name,owner_user_id,status,metadata')
+    .eq('id', merchantId)
+    .maybeSingle();
+  if (merchantError) throw merchantError;
+  if (!merchant) throw new Error('MERCHANT_NOT_FOUND');
+  if (String(merchant.status || '').toLowerCase() !== 'active') {
+    throw new Error('MERCHANT_NOT_ACTIVE');
+  }
+
+  const resolveWalletByType = async (types: string[]) => {
+    const { data, error } = await sb
+      .from('merchant_wallets')
+      .select('id,merchant_id,owner_user_id,name,wallet_type,is_primary,balance,currency,status,metadata')
+      .eq('merchant_id', merchant.id)
+      .eq('status', 'active')
+      .in('wallet_type', types)
+      .order('is_primary', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  };
+
+  const escrowWallet = await resolveWalletByType(['paysafe_escrow', 'escrow', 'holding']);
+  const settlementWallet = await resolveWalletByType(['settlement', 'operating']);
+
+  if (request.operation === 'paysafe' && !escrowWallet) {
+    throw new Error('PAYSAFE_ESCROW_MERCHANT_WALLET_REQUIRED');
+  }
+
+  let feeQuote: Record<string, unknown> | null = null;
+  if (request.amount > 0) {
+    try {
+      const fee = await platformFeeService.resolveFee({
+        flowCode: stringFromMetadata(metadata, 'feeFlowCode', 'fee_flow_code') || 'MERCHANT_PAYMENT',
+        amount: request.amount,
+        currency: request.currency,
+        transactionModel: 'MERCHANT_PAYMENT',
+        transactionType: request.operation === 'paysafe' ? 'MERCHANT_PAYMENT' : request.operation.toUpperCase(),
+        operationType: request.operation === 'paysafe'
+          ? `PAYSAFE_${paySafeAction ? paySafeAction.toUpperCase() : 'ESCROW'}`
+          : request.operation.toUpperCase(),
+        direction: request.operation === 'refund' ? 'OUTBOUND' : 'INBOUND',
+        channel: 'PAY_GATEWAY',
+        metadata: {
+          ...metadata,
+          merchantId: merchant.id,
+          serviceCode: request.serviceCode,
+        },
+      });
+      feeQuote = {
+        flowCode: fee.flowCode,
+        configId: fee.configId,
+        currency: fee.currency,
+        amount: fee.amount,
+        serviceFee: fee.serviceFee,
+        taxAmount: fee.taxAmount,
+        govFeeAmount: fee.govFeeAmount,
+        totalFee: fee.totalFee,
+        netAmount: fee.netAmount,
+      };
+    } catch (error: any) {
+      feeQuote = {
+        unresolved: true,
+        error: error.message || 'FEE_QUOTE_UNAVAILABLE',
+      };
+    }
+  }
+
+  return {
+    merchant,
+    escrowWallet,
+    settlementWallet,
+    feeQuote,
+  };
+};
+
+const resolveActiveMerchant = async (
+  sb: NonNullable<ReturnType<typeof getAdminSupabase> | ReturnType<typeof getSupabase>>,
+  merchantId: string,
+) => {
+  const { data: merchant, error } = await sb
+    .from('merchants')
+    .select('id,business_name,owner_user_id,status,metadata')
+    .eq('id', merchantId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!merchant) throw new Error('MERCHANT_NOT_FOUND');
+  if (String(merchant.status || '').toLowerCase() !== 'active') throw new Error('MERCHANT_NOT_ACTIVE');
+  return merchant;
+};
 
 const flattenHeaders = (headers: Request['headers']): Record<string, string | undefined> =>
   Object.fromEntries(
@@ -286,6 +701,473 @@ export const registerInternalRoutes = (internal: Router) => {
         ...getInternalAuditMetadata(req),
       });
       return res.status(statusCode).json({ success: false, error: message });
+    }
+  });
+
+  internal.post('/pay-gateway/service-payment-requests', requireWorkerScope(['gateway:service-payments:write']), async (req, res) => {
+    const parsed = ServicePaymentRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        error: 'SERVICE_PAYMENT_REQUEST_INVALID',
+        issues: parsed.error.issues.map((issue) => ({
+          path: issue.path.join('.'),
+          message: issue.message,
+        })),
+      });
+    }
+
+    const workerId = String((req as any).internalWorker?.id || req.get('x-worker-id') || 'payment-gateway');
+    const request = parsed.data;
+    let event: ServicePaymentCoreEvent | null = null;
+    let resolvedCustomer: Record<string, any> | null = null;
+
+    try {
+      const sb = getAdminSupabase() || getSupabase();
+      if (!sb) throw new Error('DB_OFFLINE');
+
+      let merchantContext: Awaited<ReturnType<typeof resolveServiceMerchantContext>> = null;
+      try {
+        merchantContext = await resolveServiceMerchantContext(sb, request);
+      } catch (merchantError: any) {
+        event = {
+          intentId: request.intentId,
+          serviceCode: request.serviceCode,
+          status: 'failed',
+          message: 'Merchant account is not ready for this PaySafe/payment request.',
+          raw: {
+            reason: merchantError.message || 'MERCHANT_CONTEXT_INVALID',
+            reference: request.reference,
+            operation: request.operation,
+          },
+        };
+      }
+
+      const customer = event ? null : await findServicePaymentCustomer(request.customer);
+      resolvedCustomer = customer;
+      if (!event && !customer) {
+        event = {
+          intentId: request.intentId,
+          serviceCode: request.serviceCode,
+          status: 'failed',
+          message: 'Customer was not found in ORBI Core.',
+          raw: {
+            reason: 'CUSTOMER_NOT_FOUND',
+            reference: request.reference,
+          },
+        };
+      } else if (!event && customer && !['active', 'verified'].includes(String(customer.account_status || '').toLowerCase())) {
+        event = {
+          intentId: request.intentId,
+          serviceCode: request.serviceCode,
+          status: 'failed',
+          message: 'Customer account is not active for payment authorization.',
+          raw: {
+            reason: 'CUSTOMER_ACCOUNT_NOT_ACTIVE',
+            customerId: customer.id,
+            accountStatus: customer.account_status || null,
+            reference: request.reference,
+          },
+        };
+      } else if (!event && customer) {
+        const challengeId = `pay_ch_${crypto.randomUUID().replace(/-/g, '')}`;
+        const expiresAt = new Date(Date.now() + 3 * 60 * 1000).toISOString();
+        const paySafeAction = typeof request.metadata?.paySafeAction === 'string'
+          ? String(request.metadata.paySafeAction).replace(/_/g, ' ')
+          : '';
+        const amountLabel = request.amount > 0
+          ? `${request.currency.toUpperCase()} ${request.amount}`
+          : `${request.operation}${paySafeAction ? ` ${paySafeAction}` : ''}`;
+        event = {
+          intentId: request.intentId,
+          serviceCode: request.serviceCode,
+          status: 'requires_action',
+          message: 'Customer authorization is required before ORBI Core can continue payment processing.',
+          challenge: {
+            type: 'PIN',
+            challengeId,
+            prompt: `Approve ${amountLabel} for ${request.serviceCode}.`,
+            expiresAt,
+            delivery: {
+              channel: 'in_app',
+              destinationHint: 'ORBI mobile app',
+            },
+            metadata: {
+              customerId: customer.id,
+              reference: request.reference,
+              operation: request.operation,
+              merchantId: merchantContext?.merchant?.id || null,
+              merchantName: merchantContext?.merchant?.business_name || null,
+              merchantWalletsResolved: Boolean(merchantContext?.escrowWallet),
+              feeQuote: merchantContext?.feeQuote || null,
+            },
+          },
+          raw: {
+            customerId: customer.id,
+            customerEmail: customer.email || null,
+            customerPhone: customer.phone || null,
+            operation: request.operation,
+            reference: request.reference,
+            amount: request.amount,
+            currency: request.currency,
+            merchant: merchantContext ? {
+              id: merchantContext.merchant.id,
+              businessName: merchantContext.merchant.business_name,
+              hasPaySafeEscrowWallet: Boolean(merchantContext.escrowWallet),
+              hasSettlementWallet: Boolean(merchantContext.settlementWallet),
+            } : null,
+            feeQuote: merchantContext?.feeQuote || null,
+          },
+        };
+      }
+
+      if (!event) {
+        throw new Error('SERVICE_PAYMENT_EVENT_NOT_RESOLVED');
+      }
+
+      const persistence = await gatewayPaymentIntentService.persist({
+        intentId: request.intentId,
+        serviceCode: request.serviceCode,
+        reference: request.reference,
+        operation: request.operation,
+        customerUserId: resolvedCustomer?.id || null,
+        merchantId: merchantContext?.merchant?.id || null,
+        amount: request.amount,
+        currency: request.currency,
+        requestPayload: request as unknown as Record<string, unknown>,
+        responsePayload: event as unknown as Record<string, unknown>,
+        status: event.status,
+        challenge: event.challenge
+          ? {
+              challengeId: event.challenge.challengeId,
+              type: event.challenge.type,
+              expiresAt: event.challenge.expiresAt,
+              metadata: event.challenge.metadata,
+            }
+          : undefined,
+      });
+
+      if (persistence.replayed === true && persistence.response) {
+        event = persistence.response as ServicePaymentCoreEvent;
+      }
+      const outboxEventKey = String(persistence.outboxEventKey || '');
+
+      const gatewayDelivery = await postServicePaymentEventToPayGateway(event).catch((error: any) => ({
+        attempted: true,
+        delivered: false,
+        error: error.message || 'PAY_GATEWAY_SERVICE_PAYMENT_EVENT_FAILED',
+      }));
+      if (outboxEventKey) {
+        await gatewayPaymentIntentService.recordDelivery(
+          outboxEventKey,
+          gatewayDelivery.delivered === true,
+          gatewayDelivery.delivered === true
+            ? undefined
+            : String(
+                gatewayDelivery.error ||
+                  (gatewayDelivery as Record<string, unknown>).statusCode ||
+                  'DELIVERY_FAILED',
+              ),
+        ).catch(() => undefined);
+      }
+
+      await Audit.log('FINANCIAL', event.raw?.customerId ? String(event.raw.customerId) : workerId, 'SERVICE_PAYMENT_REQUEST_RECEIVED', {
+        serviceCode: request.serviceCode,
+        intentId: request.intentId,
+        reference: request.reference,
+        operation: request.operation,
+        amount: request.amount,
+        currency: request.currency,
+        coreStatus: event.status,
+        durableReplay: persistence.replayed === true,
+        outboxEventKey: outboxEventKey || null,
+        gatewayDelivery,
+        ...getInternalAuditMetadata(req),
+      });
+
+      return res.json({
+        success: true,
+        data: {
+          ...event,
+          gatewayDelivery,
+        },
+      });
+    } catch (e: any) {
+      const message = String(e?.message || e || 'SERVICE_PAYMENT_REQUEST_FAILED');
+      await Audit.log('FINANCIAL', workerId, 'SERVICE_PAYMENT_REQUEST_FAILED', {
+        serviceCode: request.serviceCode,
+        intentId: request.intentId,
+        reference: request.reference,
+        error: message,
+        ...getInternalAuditMetadata(req),
+      });
+      return res.status(message === 'DB_OFFLINE' ? 503 : 500).json({ success: false, error: message });
+    }
+  });
+
+  internal.post('/pay-gateway/paysafe-balances', requireWorkerScope(['gateway:paysafe-balances:read']), async (req, res) => {
+    const parsed = PaySafeBalanceRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        error: 'PAYSAFE_BALANCE_REQUEST_INVALID',
+        issues: parsed.error.issues.map((issue) => ({
+          path: issue.path.join('.'),
+          message: issue.message,
+        })),
+      });
+    }
+
+    const workerId = String((req as any).internalWorker?.id || req.get('x-worker-id') || 'payment-gateway');
+    const request = parsed.data;
+
+    try {
+      const sb = getAdminSupabase() || getSupabase();
+      if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+
+      const user = await findPaySafeBalanceUser(request);
+      const userScoped = Boolean(request.userId || request.email || request.phone);
+      if (userScoped && !user) {
+        await Audit.log('FINANCIAL', workerId, 'PAYSAFE_BALANCE_QUERY_USER_NOT_FOUND', {
+          serviceCode: request.serviceCode,
+          userId: request.userId || null,
+          emailProvided: Boolean(request.email),
+          phoneProvided: Boolean(request.phone),
+          ...getInternalAuditMetadata(req),
+        });
+        return res.status(404).json({ success: false, error: 'PAYSAFE_USER_NOT_FOUND' });
+      }
+
+      const merchantId = request.merchantId || stringFromMetadata(request.metadata || {}, 'merchantId', 'merchant_id');
+      if (!merchantId) {
+        return res.status(400).json({ success: false, error: 'PAYSAFE_MERCHANT_CONTEXT_REQUIRED' });
+      }
+
+      const merchant = await resolveActiveMerchant(sb, merchantId);
+
+      const activeStatuses = ['HELD', 'DISPUTED'];
+      const historicalStatuses = ['HELD', 'DISPUTED', 'RELEASED', 'REFUNDED'];
+      const statuses = request.includeHistory ? historicalStatuses : activeStatuses;
+      let query = sb
+        .from('escrow_agreements')
+        .select('id,transaction_id,sender_id,receiver_id,amount,currency,conditions,status,dispute_metadata,expires_at,created_at,updated_at')
+        .contains('conditions', { merchantId })
+        .in('status', statuses)
+        .order('created_at', { ascending: false })
+        .limit(request.includeHistory ? 100 : 50);
+      if (user) {
+        query = query.or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`);
+      }
+      const { data, error } = await query;
+
+      if (error) throw error;
+
+      const projection = user
+        ? buildPaySafeBalanceProjection(user, data || [])
+        : {
+            user: null,
+            totals: buildPaySafeBalanceProjection({ id: merchant.owner_user_id || '00000000-0000-0000-0000-000000000000' }, data || []).totals,
+            escrows: (data || []).map((row: Record<string, any>) => ({
+              escrowId: row.id,
+              transactionId: row.transaction_id || undefined,
+              direction: String(row.receiver_id) === String(merchant.owner_user_id) ? 'incoming' : 'outgoing',
+              amount: numberFromDb(row.amount),
+              currency: String(row.currency || 'TZS').toUpperCase(),
+              status: String(row.status || '').toUpperCase(),
+              reference: referenceFromEscrow(row),
+              conditions: row.conditions || {},
+              disputeMetadata: row.dispute_metadata || {},
+              createdAt: row.created_at || undefined,
+              updatedAt: row.updated_at || undefined,
+              expiresAt: row.expires_at || undefined,
+            })),
+          };
+      await Audit.log('FINANCIAL', user ? String(user.id) : String(merchant.owner_user_id || workerId), 'PAYSAFE_BALANCE_QUERY_READ', {
+        serviceCode: request.serviceCode,
+        includeHistory: request.includeHistory,
+        escrowCount: projection.escrows.length,
+        totals: projection.totals.map((total) => ({
+          currency: total.currency,
+          incomingHeld: total.incomingHeld,
+          incomingDisputed: total.incomingDisputed,
+          outgoingHeld: total.outgoingHeld,
+          outgoingDisputed: total.outgoingDisputed,
+        })),
+        merchantId,
+        ...getInternalAuditMetadata(req),
+      });
+
+      return res.json({
+        success: true,
+        data: {
+          serviceCode: request.serviceCode,
+          merchant: {
+            id: merchant.id,
+            businessName: merchant.business_name,
+          },
+          ...projection,
+        },
+      });
+    } catch (e: any) {
+      const message = String(e?.message || e || 'PAYSAFE_BALANCE_QUERY_FAILED');
+      await Audit.log('FINANCIAL', workerId, 'PAYSAFE_BALANCE_QUERY_FAILED', {
+        serviceCode: request.serviceCode,
+        userId: request.userId || null,
+        error: message,
+        ...getInternalAuditMetadata(req),
+      });
+      return res.status(message === 'DB_OFFLINE' ? 503 : 500).json({ success: false, error: message });
+    }
+  });
+
+  internal.post('/pay-gateway/merchant-order-payment-status', requireWorkerScope(['gateway:merchant-payments:read']), async (req, res) => {
+    const parsed = MerchantOrderPaymentStatusRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        error: 'MERCHANT_ORDER_PAYMENT_STATUS_REQUEST_INVALID',
+        issues: parsed.error.issues.map((issue) => ({ path: issue.path.join('.'), message: issue.message })),
+      });
+    }
+
+    const workerId = String((req as any).internalWorker?.id || req.get('x-worker-id') || 'payment-gateway');
+    const request = parsed.data;
+    try {
+      const sb = getAdminSupabase() || getSupabase();
+      if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+      const merchant = await resolveActiveMerchant(sb, request.merchantId);
+      const orderId = request.orderId;
+
+      const { data: escrows, error: escrowError } = await sb
+        .from('escrow_agreements')
+        .select('id,transaction_id,sender_id,receiver_id,amount,currency,conditions,status,dispute_metadata,expires_at,created_at,updated_at')
+        .contains('conditions', { merchantId: request.merchantId, orderId })
+        .order('created_at', { ascending: false })
+        .limit(20);
+      if (escrowError) throw escrowError;
+
+      const transactionIds = (escrows || [])
+        .map((row: any) => row.transaction_id)
+        .filter(Boolean);
+      const { data: merchantTransactions, error: mtError } = transactionIds.length
+        ? await sb
+            .from('merchant_transactions')
+            .select('id,transaction_id,merchant_id,merchant_wallet_id,customer_user_id,direction,amount,currency,status,service_type,metadata,created_at,updated_at')
+            .eq('merchant_id', request.merchantId)
+            .in('transaction_id', transactionIds)
+        : { data: [], error: null } as any;
+      if (mtError) throw mtError;
+
+      const latestEscrow = (escrows || [])[0] || null;
+      const paymentStatus = latestEscrow
+        ? String(latestEscrow.status || '').toLowerCase()
+        : merchantTransactions?.[0]?.status || 'not_found';
+
+      await Audit.log('FINANCIAL', String(merchant.owner_user_id || workerId), 'MERCHANT_ORDER_PAYMENT_STATUS_READ', {
+        serviceCode: request.serviceCode,
+        merchantId: request.merchantId,
+        orderId,
+        paymentStatus,
+        escrowCount: escrows?.length || 0,
+        ...getInternalAuditMetadata(req),
+      });
+
+      return res.json({
+        success: true,
+        data: {
+          serviceCode: request.serviceCode,
+          merchant: {
+            id: merchant.id,
+            businessName: merchant.business_name,
+          },
+          orderId,
+          paymentStatus,
+          escrows: (escrows || []).map((row: Record<string, any>) => ({
+            escrowId: row.id,
+            transactionId: row.transaction_id || undefined,
+            amount: numberFromDb(row.amount),
+            currency: String(row.currency || 'TZS').toUpperCase(),
+            status: String(row.status || '').toUpperCase(),
+            reference: referenceFromEscrow(row),
+            conditions: row.conditions || {},
+            disputeMetadata: row.dispute_metadata || {},
+            createdAt: row.created_at || undefined,
+            updatedAt: row.updated_at || undefined,
+            expiresAt: row.expires_at || undefined,
+          })),
+          merchantTransactions: merchantTransactions || [],
+        },
+      });
+    } catch (e: any) {
+      const message = String(e?.message || e || 'MERCHANT_ORDER_PAYMENT_STATUS_FAILED');
+      await Audit.log('FINANCIAL', workerId, 'MERCHANT_ORDER_PAYMENT_STATUS_FAILED', {
+        serviceCode: request.serviceCode,
+        merchantId: request.merchantId,
+        orderId: request.orderId,
+        error: message,
+        ...getInternalAuditMetadata(req),
+      });
+      const status = message === 'MERCHANT_NOT_FOUND' ? 404 : message === 'MERCHANT_NOT_ACTIVE' ? 403 : 500;
+      return res.status(status).json({ success: false, error: message });
+    }
+  });
+
+  internal.post('/pay-gateway/merchant-settlements', requireWorkerScope(['gateway:merchant-settlements:read']), async (req, res) => {
+    const parsed = MerchantSettlementsRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        error: 'MERCHANT_SETTLEMENTS_REQUEST_INVALID',
+        issues: parsed.error.issues.map((issue) => ({ path: issue.path.join('.'), message: issue.message })),
+      });
+    }
+
+    const workerId = String((req as any).internalWorker?.id || req.get('x-worker-id') || 'payment-gateway');
+    const request = parsed.data;
+    try {
+      const sb = getAdminSupabase() || getSupabase();
+      if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+      const merchant = await resolveActiveMerchant(sb, request.merchantId);
+
+      let query = sb
+        .from('merchant_settlement_reports')
+        .select('id,merchant_id,owner_user_id,period_start,period_end,currency,gross_amount,fee_amount,net_amount,transaction_count,status,metadata,created_at,updated_at')
+        .eq('merchant_id', request.merchantId)
+        .order('period_end', { ascending: false })
+        .range(request.offset, request.offset + request.limit - 1);
+      if (request.currency) query = query.eq('currency', request.currency.toUpperCase());
+      if (request.status) query = query.eq('status', request.status);
+      const { data, error } = await query;
+      if (error) throw error;
+
+      await Audit.log('FINANCIAL', String(merchant.owner_user_id || workerId), 'MERCHANT_SETTLEMENTS_READ', {
+        serviceCode: request.serviceCode,
+        merchantId: request.merchantId,
+        count: data?.length || 0,
+        ...getInternalAuditMetadata(req),
+      });
+
+      return res.json({
+        success: true,
+        data: {
+          serviceCode: request.serviceCode,
+          merchant: {
+            id: merchant.id,
+            businessName: merchant.business_name,
+          },
+          settlements: data || [],
+        },
+      });
+    } catch (e: any) {
+      const message = String(e?.message || e || 'MERCHANT_SETTLEMENTS_FAILED');
+      await Audit.log('FINANCIAL', workerId, 'MERCHANT_SETTLEMENTS_FAILED', {
+        serviceCode: request.serviceCode,
+        merchantId: request.merchantId,
+        error: message,
+        ...getInternalAuditMetadata(req),
+      });
+      const status = message === 'MERCHANT_NOT_FOUND' ? 404 : message === 'MERCHANT_NOT_ACTIVE' ? 403 : 500;
+      return res.status(status).json({ success: false, error: message });
     }
   });
 

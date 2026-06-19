@@ -1,270 +1,429 @@
-
 import { getSupabase, getAdminSupabase } from '../services/supabaseClient.js';
 import { TransactionService } from './transactionService.js';
-import { WalletService } from '../wealth/walletService.js';
 import { Messaging } from '../backend/features/MessagingService.js';
 import { Audit } from '../backend/security/audit.js';
+import { WalletResolverService } from '../backend/wealth/WalletResolver.js';
+import { platformFeeService } from '../backend/payments/PlatformFeeService.js';
 import { UUID } from '../services/utils.js';
 
-export type EscrowStatus = 'LOCKED' | 'RELEASED' | 'DISPUTED' | 'REFUNDED';
+export type EscrowStatus = 'HELD' | 'RELEASED' | 'DISPUTED' | 'REFUNDED';
+
+type EscrowAgreementRecord = {
+    id: string;
+    transaction_id: string;
+    reference_id: string;
+    sender_id: string;
+    receiver_id: string;
+    source_vault_id: string;
+    escrow_vault_id: string;
+    receiver_vault_id?: string | null;
+    merchant_id?: string | null;
+    service_code?: string | null;
+    amount: number | string;
+    currency: string;
+    conditions?: Record<string, unknown>;
+    status: EscrowStatus;
+    metadata?: Record<string, unknown>;
+    transaction?: Record<string, any> | null;
+};
 
 export class EscrowService {
-    private txService = new TransactionService();
-    private walletService = new WalletService();
+    private readonly txService = new TransactionService();
 
-    /**
-     * CREATE CONDITIONAL ESCROW
-     * Locks funds in the sender's PaySafe vault until conditions are met.
-     */
-    public async createEscrow(senderId: string, recipientCustomerId: string, amount: number, description: string, conditions: any): Promise<string> {
+    public async createEscrow(
+        senderId: string,
+        recipientIdentifier: string,
+        amount: number,
+        description: string,
+        conditions: Record<string, unknown> = {},
+    ): Promise<string> {
         const sb = getAdminSupabase() || getSupabase();
-        if (!sb) throw new Error("VAULT_OFFLINE");
+        if (!sb) throw new Error('VAULT_OFFLINE');
+        if (!Number.isFinite(amount) || amount <= 0) throw new Error('PAYSAFE_AMOUNT_INVALID');
+        if (!String(description || '').trim()) throw new Error('PAYSAFE_DESCRIPTION_REQUIRED');
 
-        // 1. Resolve Recipient
-        const { data: recipient } = await sb.from('users').select('id, full_name').eq('customer_id', recipientCustomerId).single();
-        if (!recipient) throw new Error("RECIPIENT_NOT_FOUND");
+        const recipient = await WalletResolverService.resolveWallet(recipientIdentifier, 'OPERATING');
+        if (!recipient) throw new Error('RECIPIENT_NOT_FOUND');
+        if (recipient.userId === senderId) throw new Error('PAYSAFE_SELF_ESCROW_NOT_ALLOWED');
 
-        // 2. Resolve Sender's PaySafe Vault
-        const wallets = await this.walletService.fetchForUser(senderId);
-        const paySafe = wallets.find(w => w.name === 'PaySafe');
-        if (!paySafe) throw new Error("PAYSAFE_VAULT_NOT_FOUND");
+        const [
+            { data: accountRecords, error: accountError },
+            { data: senderVaults, error: senderVaultError },
+            { data: recipientVaults, error: recipientVaultError },
+        ] = await Promise.all([
+            sb
+                .from('users')
+                .select('id,account_status,registry_type')
+                .in('id', [senderId, recipient.userId]),
+            sb
+                .from('platform_vaults')
+                .select('id,user_id,vault_role,currency,status,is_locked')
+                .eq('user_id', senderId)
+                .in('vault_role', ['OPERATING', 'INTERNAL_TRANSFER']),
+            sb
+                .from('platform_vaults')
+                .select('id,user_id,vault_role,currency,status,is_locked')
+                .eq('user_id', recipient.userId)
+                .eq('vault_role', 'OPERATING'),
+        ]);
+        if (accountError) throw new Error('PAYSAFE_ACCOUNT_LOOKUP_FAILED');
+        const accountById = new Map((accountRecords || []).map((record: any) => [String(record.id), record]));
+        const senderAccount = accountById.get(senderId);
+        const recipientAccount = accountById.get(recipient.userId);
+        if (!senderAccount || String(senderAccount.account_status || '').toLowerCase() !== 'active') {
+            throw new Error('PAYSAFE_SENDER_ACCOUNT_NOT_ACTIVE');
+        }
+        if (!recipientAccount || String(recipientAccount.account_status || '').toLowerCase() !== 'active') {
+            throw new Error('PAYSAFE_RECIPIENT_ACCOUNT_NOT_ACTIVE');
+        }
+        if (String(senderAccount.registry_type || '').toUpperCase() !== 'CONSUMER') {
+            throw new Error('PAYSAFE_SENDER_REGISTRY_INVALID');
+        }
+        if (String(recipientAccount.registry_type || '').toUpperCase() !== 'CONSUMER') {
+            throw new Error('PAYSAFE_RECIPIENT_REGISTRY_INVALID');
+        }
+        if (senderVaultError || recipientVaultError) throw new Error('PAYSAFE_VAULT_LOOKUP_FAILED');
+        const sourceVault = (senderVaults || []).find((vault: any) => vault.vault_role === 'OPERATING');
+        const paySafeVault = (senderVaults || []).find((vault: any) => vault.vault_role === 'INTERNAL_TRANSFER');
+        const recipientVault = (recipientVaults || [])[0];
+        if (!sourceVault) throw new Error('OPERATING_WALLET_REQUIRED');
+        if (!paySafeVault) throw new Error('PAYSAFE_VAULT_NOT_FOUND');
+        if (!recipientVault) throw new Error('RECIPIENT_VAULT_NOT_FOUND');
 
-        const referenceId = `ESC-${UUID.generateShortCode(8)}`;
+        const vaultIds = [sourceVault.id, paySafeVault.id, recipientVault.id];
+        const { data: activeVaults, error: activeVaultError } = await sb
+            .from('platform_vaults')
+            .select('id,user_id,vault_role,currency,status,is_locked')
+            .in('id', vaultIds);
+        if (activeVaultError || (activeVaults || []).length !== 3) throw new Error('PAYSAFE_VAULT_LOOKUP_FAILED');
+        if ((activeVaults || []).some((vault: any) =>
+            Boolean(vault.is_locked)
+            || ['locked', 'frozen', 'blocked', 'suspended'].includes(String(vault.status || '').toLowerCase())
+        )) {
+            throw new Error('PAYSAFE_VAULT_UNAVAILABLE');
+        }
 
-        // 3. Initiate Transaction (Status: authorized/locked)
-        // This moves money from Operating -> PaySafe (Internal Escrow)
+        const currency = String(sourceVault.currency || 'TZS').toUpperCase();
+        if (
+            currency !== String(paySafeVault.currency || 'TZS').toUpperCase()
+            || currency !== String(recipientVault.currency || 'TZS').toUpperCase()
+        ) {
+            throw new Error('PAYSAFE_CURRENCY_MISMATCH');
+        }
+
+        const referenceId = `ESC-${UUID.generateShortCode(16)}`;
+        const merchantId = typeof conditions.merchantId === 'string'
+            ? conditions.merchantId.trim()
+            : typeof conditions.merchant_id === 'string'
+                ? conditions.merchant_id.trim()
+                : '';
+        const serviceCode = typeof conditions.serviceCode === 'string'
+            ? conditions.serviceCode.trim()
+            : typeof conditions.service_code === 'string'
+                ? conditions.service_code.trim()
+                : '';
+        let merchantFeeSnapshot: Record<string, unknown> | null = null;
+        if (merchantId) {
+            const { data: merchant, error: merchantError } = await sb
+                .from('merchants')
+                .select('id,owner_user_id,status')
+                .eq('id', merchantId)
+                .maybeSingle();
+            if (merchantError) throw new Error('PAYSAFE_MERCHANT_LOOKUP_FAILED');
+            if (!merchant) throw new Error('PAYSAFE_MERCHANT_NOT_FOUND');
+            if (String(merchant.status || '').toLowerCase() !== 'active') {
+                throw new Error('PAYSAFE_MERCHANT_NOT_ACTIVE');
+            }
+            if (String(merchant.owner_user_id || '') !== recipient.userId) {
+                throw new Error('PAYSAFE_MERCHANT_RECIPIENT_MISMATCH');
+            }
+
+            const fee = await platformFeeService.resolveFee({
+                flowCode: 'MERCHANT_PAYMENT',
+                amount,
+                currency,
+                transactionModel: 'MERCHANT_PAYMENT',
+                transactionType: 'MERCHANT_PAYMENT',
+                operationType: 'PAYSAFE_RELEASE',
+                direction: 'INBOUND',
+                rail: 'WALLET',
+                channel: 'PAYSAFE',
+                metadata: {
+                    merchantId,
+                    serviceCode: serviceCode || null,
+                    referenceId,
+                },
+            });
+            if (fee.totalFee < 0 || fee.netAmount <= 0 || fee.totalFee >= amount) {
+                throw new Error('PAYSAFE_MERCHANT_FEE_INVALID');
+            }
+            merchantFeeSnapshot = {
+                flowCode: fee.flowCode,
+                configId: fee.configId,
+                configName: fee.configName,
+                currency: fee.currency,
+                grossAmount: fee.amount,
+                serviceFee: fee.serviceFee,
+                taxAmount: fee.taxAmount,
+                govFeeAmount: fee.govFeeAmount,
+                stampDutyFixed: fee.stampDutyFixed,
+                totalFee: fee.totalFee,
+                netAmount: fee.netAmount,
+                capturedAt: new Date().toISOString(),
+            };
+        }
+        const expiresAt = typeof conditions.expiresAt === 'string'
+            ? conditions.expiresAt
+            : typeof conditions.expires_at === 'string'
+                ? conditions.expires_at
+                : null;
+        const metadata = {
+            is_conditional_escrow: true,
+            recipient_id: recipient.userId,
+            recipient_name: recipient.profile.full_name,
+            source_vault_id: sourceVault.id,
+            escrow_vault_id: paySafeVault.id,
+            receiver_vault_id: recipientVault.id,
+            escrow_amount_plain: amount,
+            currency,
+            conditions,
+            expires_at: expiresAt,
+            merchant_id: merchantId || null,
+            service_code: serviceCode || null,
+            merchant_fee_snapshot: merchantFeeSnapshot,
+            escrow_status: 'HELD',
+        };
+
         await this.txService.postTransactionWithLedger({
             user_id: senderId,
-            amount: amount,
-            description: `Escrow: ${description}`,
+            walletId: sourceVault.id,
+            toWalletId: paySafeVault.id,
+            amount,
+            currency,
+            description: `PaySafe escrow: ${description}`,
             type: 'escrow',
             status: 'authorized',
-            referenceId: referenceId,
-            metadata: {
-                is_conditional_escrow: true,
-                recipient_id: recipient.id,
-                recipient_name: recipient.full_name,
-                conditions: conditions,
-                escrow_status: 'LOCKED'
-            }
+            referenceId,
+            metadata,
         }, [
-            { 
-                transactionId: '', // Will be set by service
-                walletId: String(paySafe.id), 
-                type: 'CREDIT', 
-                amount, 
-                currency: 'TZS',
+            {
+                transactionId: '',
+                walletId: sourceVault.id,
+                type: 'DEBIT',
+                amount,
+                currency,
                 timestamp: new Date().toISOString(),
-                description: `Escrow Lock: ${description}` 
-            }
+                description: `PaySafe hold: ${description}`,
+            },
+            {
+                transactionId: '',
+                walletId: paySafeVault.id,
+                type: 'CREDIT',
+                amount,
+                currency,
+                timestamp: new Date().toISOString(),
+                description: `PaySafe escrow reserve: ${description}`,
+            },
         ]);
 
-        // 4. Notify Recipient
-        const { data: recipientUser } = await sb.from('users').select('language').eq('id', recipient.id).maybeSingle();
-        const recipientLang = recipientUser?.language || 'en';
-        const subject = recipientLang === 'sw' ? 'Malipo ya Escrow Yanayoingia' : 'Inbound Escrow Payment';
-        const body = recipientLang === 'sw' 
-            ? `Una malipo yanayosubiri ya TZS ${amount} kutoka kwa mteja. Fedha zimefungwa kwenye Orbi PaySafe na zitatolewa baada ya uthibitisho wa uwasilishaji.` 
-            : `You have a pending payment of ${amount} TZS from a customer. Funds are locked in Orbi PaySafe and will be released upon delivery confirmation.`;
-
-        await Messaging.dispatch(recipient.id, 'info', subject, body, { 
-            sms: true,
-            email: true,
+        await this.notifySafely(recipient.userId, 'info', 'Inbound PaySafe payment', {
+            sw: `Una malipo yanayosubiri ya ${currency} ${amount.toLocaleString()} kwenye Orbi PaySafe.`,
+            en: `You have a pending ${currency} ${amount.toLocaleString()} payment in Orbi PaySafe.`,
+        }, {
             template: 'Escrow_Created',
             variables: {
                 amount: amount.toLocaleString(),
-                currency: 'TZS',
-                recipientName: recipient.full_name,
+                currency,
+                recipientName: recipient.profile.full_name,
                 refId: referenceId,
-            }
+            },
         });
-
-        await Audit.log('FINANCIAL', senderId, 'ESCROW_CREATED', { referenceId, recipientId: recipient.id, amount });
-
+        await Audit.log('FINANCIAL', senderId, 'ESCROW_CREATED', {
+            referenceId,
+            recipientId: recipient.userId,
+            sourceVaultId: sourceVault.id,
+            escrowVaultId: paySafeVault.id,
+            amount,
+            currency,
+        });
         return referenceId;
     }
 
-    /**
-     * RELEASE ESCROW
-     * Finalizes the payment to the recipient.
-     */
     public async releaseEscrow(referenceId: string, actorId: string): Promise<boolean> {
-        const sb = getAdminSupabase() || getSupabase();
-        if (!sb) return false;
+        const agreement = await this.getAgreement(referenceId);
+        if (agreement.sender_id !== actorId) throw new Error('UNAUTHORIZED_RELEASE');
+        const result = agreement.merchant_id
+            ? await this.settleMerchantEscrow(referenceId, actorId)
+            : await this.transition(referenceId, actorId, 'RELEASE');
 
-        // 1. Fetch Escrow Transaction
-        const { data: tx } = await sb.from('transactions').select('*').eq('reference_id', referenceId).single();
-        if (!tx || tx.type !== 'escrow' || tx.status !== 'authorized') throw new Error("INVALID_ESCROW_STATE");
-
-        // 2. Verify Actor (Only sender or system can release)
-        if (tx.user_id !== actorId && actorId !== 'system') throw new Error("UNAUTHORIZED_RELEASE");
-
-        const recipientId = tx.metadata.recipient_id;
-        const amount = Number(tx.amount_decrypted || 0); // Assuming we have decrypted amount or fetch it
-
-        // 3. Move funds from PaySafe -> Recipient's Operating Vault
-        // In a real system, we'd fetch the recipient's operating vault
-        const { data: recipientWallets } = await sb.from('platform_vaults').select('id').eq('user_id', recipientId).eq('vault_role', 'OPERATING').single();
-        if (!recipientWallets) throw new Error("RECIPIENT_VAULT_NOT_FOUND");
-
-        // Update transaction status
-        await sb.from('transactions').update({ 
-            status: 'completed',
-            metadata: { ...tx.metadata, escrow_status: 'RELEASED', released_at: new Date().toISOString() }
-        }).eq('id', tx.id);
-
-        // Notify Recipient
-        const { data: recipientUser } = await sb.from('users').select('language').eq('id', recipientId).maybeSingle();
-        const recipientLang = recipientUser?.language || 'en';
-        const subject = recipientLang === 'sw' ? 'Fedha za Escrow Zimetolewa' : 'Escrow Funds Released';
-        const body = recipientLang === 'sw' 
-            ? `Malipo ya TZS ${tx.amount} yametolewa kwenye akaunti yako ya uendeshaji.` 
-            : `The payment of ${tx.amount} TZS has been released to your operating vault.`;
-
-        await Messaging.dispatch(recipientId, 'info', subject, body, { 
-            sms: true,
-            email: true,
+        await this.notifySafely(agreement.receiver_id, 'info', 'PaySafe funds released', {
+            sw: `Malipo ya ${agreement.currency} ${Number(agreement.amount).toLocaleString()} yametolewa kwenye akaunti yako.`,
+            en: `${agreement.currency} ${Number(agreement.amount).toLocaleString()} has been released to your account.`,
+        }, {
             template: 'Escrow_Released',
             variables: {
-                amount: tx.amount.toLocaleString(),
-                currency: tx.currency || 'TZS',
-                recipientName: tx.metadata?.recipient_name,
+                amount: Number(agreement.amount).toLocaleString(),
+                currency: agreement.currency,
                 refId: referenceId,
-            }
+            },
         });
-
-        await Audit.log('FINANCIAL', actorId, 'ESCROW_RELEASED', { referenceId, recipientId });
-
+        await Audit.log('FINANCIAL', actorId, 'ESCROW_RELEASED', {
+            referenceId,
+            recipientId: agreement.receiver_id,
+            transactionId: agreement.transaction_id,
+            idempotent: Boolean(result?.idempotent),
+        });
         return true;
     }
 
-    /**
-     * DISPUTE ESCROW
-     * Freezes the transaction for manual review.
-     */
     public async disputeEscrow(referenceId: string, userId: string, reason: string): Promise<void> {
-        const sb = getAdminSupabase() || getSupabase();
-        if (!sb) return;
+        const agreement = await this.getAgreement(referenceId);
+        if (![agreement.sender_id, agreement.receiver_id].includes(userId)) {
+            throw new Error('UNAUTHORIZED_DISPUTE');
+        }
+        if (!String(reason || '').trim()) throw new Error('DISPUTE_REASON_REQUIRED');
+        const result = await this.transition(referenceId, userId, 'DISPUTE', null, reason);
 
-        const { data: tx } = await sb.from('transactions').select('*').eq('reference_id', referenceId).single();
-        if (!tx || tx.status !== 'authorized') throw new Error("INVALID_ESCROW_STATE");
-
-        await sb.from('transactions').update({ 
-            status: 'held_for_review',
-            metadata: { ...tx.metadata, escrow_status: 'DISPUTED', dispute_reason: reason, disputed_by: userId }
-        }).eq('id', tx.id);
-
-        const { data: senderUser } = await sb.from('users').select('language').eq('id', tx.user_id).maybeSingle();
-        const senderLang = senderUser?.language || 'en';
-        const senderSubject = senderLang === 'sw' ? 'Mzozo wa Escrow' : 'Escrow Disputed';
-        const senderBody = senderLang === 'sw' 
-            ? `Malipo yako ya escrow ${referenceId} yamewekwa chini ya ukaguzi wa mzozo.` 
-            : `Your escrow payment ${referenceId} has been placed under dispute review.`;
-
-        await Messaging.dispatch(tx.user_id, 'security', senderSubject, senderBody, { 
-            sms: true,
-            email: true,
-            template: 'Security_Alert_Message',
-            variables: {
-                subject: senderSubject,
-                body: senderBody,
-                refId: referenceId,
-            }
+        await Promise.all([
+            this.notifySafely(agreement.sender_id, 'security', 'PaySafe dispute opened', {
+                sw: `Malipo ya PaySafe ${referenceId} yamewekwa chini ya ukaguzi.`,
+                en: `PaySafe payment ${referenceId} has been placed under review.`,
+            }),
+            this.notifySafely(agreement.receiver_id, 'security', 'PaySafe dispute opened', {
+                sw: `Malipo ya PaySafe ${referenceId} yamewekwa chini ya ukaguzi.`,
+                en: `PaySafe payment ${referenceId} has been placed under review.`,
+            }),
+        ]);
+        await Audit.log('SECURITY', userId, 'ESCROW_DISPUTED', {
+            referenceId,
+            reason,
+            transactionId: agreement.transaction_id,
+            idempotent: Boolean(result?.idempotent),
         });
-
-        const { data: recipientUser } = await sb.from('users').select('language').eq('id', tx.metadata.recipient_id).maybeSingle();
-        const recipientLang = recipientUser?.language || 'en';
-        const recipientSubject = recipientLang === 'sw' ? 'Mzozo wa Escrow' : 'Escrow Disputed';
-        const recipientBody = recipientLang === 'sw' 
-            ? `Malipo kwako (${referenceId}) yamepingwa na mtumaji.` 
-            : `A payment to you (${referenceId}) has been disputed by the sender.`;
-
-        await Messaging.dispatch(tx.metadata.recipient_id, 'security', recipientSubject, recipientBody, { 
-            sms: true,
-            email: true,
-            template: 'Security_Alert_Message',
-            variables: {
-                subject: recipientSubject,
-                body: recipientBody,
-                refId: referenceId,
-            }
-        });
-
-        await Audit.log('SECURITY', userId, 'ESCROW_DISPUTED', { referenceId, reason });
     }
 
-    /**
-     * REFUND ESCROW
-     * Returns funds to the sender (Admin only or after dispute resolution).
-     */
-    public async refundEscrow(referenceId: string, adminId: string): Promise<void> {
-        const sb = getAdminSupabase() || getSupabase();
-        if (!sb) return;
+    public async refundEscrow(referenceId: string, adminId: string, reason = 'Administrative PaySafe refund'): Promise<void> {
+        const agreement = await this.getAgreement(referenceId);
+        const result = await this.transition(referenceId, adminId, 'REFUND', agreement.source_vault_id, reason);
 
-        const { data: tx } = await sb.from('transactions').select('*').eq('reference_id', referenceId).single();
-        if (!tx || tx.status === 'completed' || tx.status === 'reversed') throw new Error("INVALID_ESCROW_STATE");
-
-        await this.txService.reverseTransactionWithReason(
-            tx.id,
-            adminId,
-            `ESCROW_REFUND: Escrow ${referenceId} returned to sender from original ledger transaction.`,
-            adminId === 'system' ? 'SYSTEM' : 'STAFF'
-        );
-
-        await sb.from('transactions').update({
-            metadata: {
-                ...tx.metadata,
-                escrow_status: 'REFUNDED',
-                refunded_by: adminId,
-                refunded_at: new Date().toISOString(),
-                refund_source_transaction_id: tx.id,
-            }
-        }).eq('id', tx.id);
-
-        const { data: senderUser } = await sb.from('users').select('language').eq('id', tx.user_id).maybeSingle();
-        const senderLang = senderUser?.language || 'en';
-        const subject = senderLang === 'sw' ? 'Escrow Imerejeshwa' : 'Escrow Refunded';
-        const body = senderLang === 'sw' 
-            ? `Malipo yako ya escrow ${referenceId} yamerejeshwa kwenye akaunti yako.` 
-            : `Your escrow payment ${referenceId} has been refunded to your vault.`;
-
-        await Messaging.dispatch(tx.user_id, 'info', subject, body, { 
-            sms: true,
-            email: true,
-            template: 'Transactional_Message',
-            variables: {
-                body,
-                refId: referenceId,
-            }
+        await this.notifySafely(agreement.sender_id, 'info', 'PaySafe payment refunded', {
+            sw: `Malipo yako ya PaySafe ${referenceId} yamerejeshwa kwenye akaunti yako.`,
+            en: `Your PaySafe payment ${referenceId} has been refunded to your account.`,
         });
-
-        await Audit.log('FINANCIAL', adminId, 'ESCROW_REFUNDED', { referenceId, senderId: tx.user_id });
+        await Audit.log('FINANCIAL', adminId, 'ESCROW_REFUNDED', {
+            referenceId,
+            senderId: agreement.sender_id,
+            transactionId: agreement.transaction_id,
+            reason,
+            idempotent: Boolean(result?.idempotent),
+        });
     }
 
-    /**
-     * GET ESCROW BY REFERENCE
-     */
-    public async getEscrow(referenceId: string): Promise<any> {
-        const sb = getAdminSupabase() || getSupabase();
-        if (!sb) throw new Error("VAULT_OFFLINE");
-
-        const { data: tx } = await sb.from('transactions').select('*').eq('reference_id', referenceId).single();
-        return tx;
+    public async getEscrow(referenceId: string, actorId: string): Promise<EscrowAgreementRecord | null> {
+        const agreement = await this.findAgreement(referenceId);
+        if (!agreement) return null;
+        if (![agreement.sender_id, agreement.receiver_id].includes(actorId)) {
+            throw new Error('ESCROW_ACCESS_DENIED');
+        }
+        return agreement;
     }
 
-    /**
-     * GET ALL ESCROWS FOR USER
-     */
-    public async getEscrows(userId: string): Promise<any[]> {
+    public async getEscrows(userId: string): Promise<EscrowAgreementRecord[]> {
         const sb = getAdminSupabase() || getSupabase();
         if (!sb) return [];
+        const { data, error } = await sb
+            .from('escrow_agreements')
+            .select('*,transaction:transactions(*)')
+            .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
+            .order('created_at', { ascending: false });
+        if (error) throw new Error('PAYSAFE_ESCROW_QUERY_FAILED');
+        return (data || []) as EscrowAgreementRecord[];
+    }
 
-        // Find escrows where user is sender OR recipient
-        const { data: txs } = await sb.from('transactions')
-            .select('*')
-            .eq('type', 'escrow')
-            .or(`user_id.eq.${userId},metadata->>recipient_id.eq.${userId}`);
-            
-        return txs || [];
+    private async getAgreement(referenceId: string): Promise<EscrowAgreementRecord> {
+        const agreement = await this.findAgreement(referenceId);
+        if (!agreement) throw new Error('ESCROW_NOT_FOUND');
+        return agreement;
+    }
+
+    private async findAgreement(referenceId: string): Promise<EscrowAgreementRecord | null> {
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) throw new Error('VAULT_OFFLINE');
+        const { data, error } = await sb
+            .from('escrow_agreements')
+            .select('*,transaction:transactions(*)')
+            .eq('reference_id', referenceId)
+            .maybeSingle();
+        if (error) throw new Error('PAYSAFE_ESCROW_QUERY_FAILED');
+        return data as EscrowAgreementRecord | null;
+    }
+
+    private async transition(
+        referenceId: string,
+        actorId: string,
+        action: 'RELEASE' | 'DISPUTE' | 'REFUND',
+        receiverVaultId: string | null = null,
+        reason: string | null = null,
+    ): Promise<Record<string, any>> {
+        const sb = getAdminSupabase();
+        if (!sb) throw new Error('SERVICE_ROLE_REQUIRED');
+        const { data, error } = await sb.rpc('transition_paysafe_escrow_v1', {
+            p_reference_id: referenceId,
+            p_actor_id: actorId,
+            p_action: action,
+            p_receiver_vault_id: receiverVaultId,
+            p_reason: reason,
+        });
+        if (error) {
+            const domainError = String(error.message || '').match(/PAYSAFE_[A-Z0-9_]+(?::[^"]+)?/)?.[0];
+            throw new Error(domainError || 'PAYSAFE_TRANSITION_FAILED');
+        }
+        return (data || {}) as Record<string, any>;
+    }
+
+    private async settleMerchantEscrow(
+        referenceId: string,
+        actorId: string,
+    ): Promise<Record<string, any>> {
+        const sb = getAdminSupabase();
+        if (!sb) throw new Error('SERVICE_ROLE_REQUIRED');
+        const { data, error } = await sb.rpc('settle_merchant_paysafe_v1', {
+            p_reference_id: referenceId,
+            p_actor_id: actorId,
+        });
+        if (error) {
+            const domainError = String(error.message || '').match(/PAYSAFE_[A-Z0-9_]+(?::[^"]+)?/)?.[0];
+            throw new Error(domainError || 'PAYSAFE_MERCHANT_SETTLEMENT_FAILED');
+        }
+        return (data || {}) as Record<string, any>;
+    }
+
+    private async notifySafely(
+        userId: string,
+        type: 'info' | 'security',
+        subject: string,
+        body: { sw: string; en: string },
+        options: Record<string, any> = {},
+    ): Promise<void> {
+        try {
+            const sb = getAdminSupabase() || getSupabase();
+            const { data: user } = sb
+                ? await sb.from('users').select('language').eq('id', userId).maybeSingle()
+                : { data: null };
+            await Messaging.dispatch(
+                userId,
+                type,
+                subject,
+                user?.language === 'sw' ? body.sw : body.en,
+                { sms: true, email: true, ...options },
+            );
+        } catch (error) {
+            console.error('[EscrowService] Notification dispatch failed.', {
+                userId,
+                subject,
+                error: error instanceof Error ? error.message : String(error),
+            });
+            // Notification delivery is a side effect and must not roll back a committed escrow action.
+        }
     }
 }

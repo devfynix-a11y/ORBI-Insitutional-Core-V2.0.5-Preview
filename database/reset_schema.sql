@@ -9,6 +9,9 @@ DROP FUNCTION IF EXISTS public.append_ledger_entries_v1(UUID, JSONB) CASCADE;
 DROP FUNCTION IF EXISTS public.append_ledger_entries_v1(UUID, JSONB, TEXT, TEXT) CASCADE;
 DROP FUNCTION IF EXISTS public.shared_pot_contribute_v1(UUID, UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, JSONB) CASCADE;
 DROP FUNCTION IF EXISTS public.shared_pot_withdraw_v1(UUID, UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, JSONB, TEXT, JSONB) CASCADE;
+DROP FUNCTION IF EXISTS public.shared_pot_withdraw_v1(UUID, UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, JSONB) CASCADE;
+DROP FUNCTION IF EXISTS public.create_shared_pot_v1(UUID, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB) CASCADE;
+DROP FUNCTION IF EXISTS public.respond_shared_pot_invitation_v1(UUID, UUID, TEXT, TEXT) CASCADE;
 DROP FUNCTION IF EXISTS public.card_settle_v1(TEXT, UUID, UUID, NUMERIC) CASCADE;
 DROP FUNCTION IF EXISTS public.bill_reserve_adjust_v1(UUID, UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, JSONB, NUMERIC) CASCADE;
 DROP FUNCTION IF EXISTS public.settle_bill_payment_from_reserve_v1(UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, TEXT, TEXT) CASCADE;
@@ -17,6 +20,12 @@ DROP FUNCTION IF EXISTS public.update_wallet_balance(UUID, NUMERIC, TEXT, TEXT, 
 DROP FUNCTION IF EXISTS public.repair_wallet_balance_emergency(UUID, NUMERIC, TEXT, TEXT, TEXT) CASCADE;
 DROP FUNCTION IF EXISTS public.claim_internal_transfer_settlement(UUID, TEXT, TEXT) CASCADE;
 DROP FUNCTION IF EXISTS public.complete_internal_transfer_settlement(UUID, TEXT, TEXT, TEXT, BOOLEAN) CASCADE;
+DROP FUNCTION IF EXISTS public.transition_paysafe_escrow_v1(TEXT, UUID, TEXT, UUID, TEXT) CASCADE;
+DROP FUNCTION IF EXISTS public.settle_merchant_paysafe_v1(TEXT, UUID) CASCADE;
+DROP FUNCTION IF EXISTS public.persist_gateway_payment_intent_v1(TEXT, TEXT, TEXT, TEXT, TEXT, UUID, UUID, NUMERIC, TEXT, TEXT, JSONB, JSONB, TEXT, TEXT, TIMESTAMP WITH TIME ZONE, JSONB) CASCADE;
+DROP FUNCTION IF EXISTS public.record_gateway_payment_event_delivery_v1(TEXT, BOOLEAN, TEXT) CASCADE;
+DROP FUNCTION IF EXISTS public.create_escrow_agreement_from_transaction() CASCADE;
+DROP FUNCTION IF EXISTS public.apply_transaction_currency_from_metadata() CASCADE;
 DROP FUNCTION IF EXISTS public.delete_old_activity() CASCADE;
 DROP FUNCTION IF EXISTS public.get_auth_role() CASCADE;
 DROP FUNCTION IF EXISTS public.set_settlement_lifecycle_updated_at() CASCADE;
@@ -29,6 +38,10 @@ DROP TABLE IF EXISTS public.provider_config_versions CASCADE;
 DROP TABLE IF EXISTS public.schema_migrations CASCADE;
 DROP TABLE IF EXISTS public.background_jobs CASCADE;
 DROP TABLE IF EXISTS public.outbox_events CASCADE;
+DROP TABLE IF EXISTS public.gateway_payment_event_outbox CASCADE;
+DROP TABLE IF EXISTS public.gateway_payment_challenges CASCADE;
+DROP TABLE IF EXISTS public.gateway_payment_intents CASCADE;
+DROP TABLE IF EXISTS public.merchant_paysafe_settlements CASCADE;
 DROP TABLE IF EXISTS public.merchant_card_settings CASCADE;
 DROP TABLE IF EXISTS public.settlement_lifecycle CASCADE;
 DROP TABLE IF EXISTS public.ledger_append_markers CASCADE;
@@ -1285,14 +1298,24 @@ CREATE TABLE IF NOT EXISTS public.organizations (
 CREATE TABLE IF NOT EXISTS public.escrow_agreements (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     transaction_id UUID NOT NULL REFERENCES public.transactions(id) ON DELETE CASCADE,
+    reference_id TEXT,
     sender_id UUID NOT NULL REFERENCES auth.users(id),
     receiver_id UUID NOT NULL REFERENCES auth.users(id),
+    source_vault_id UUID REFERENCES public.platform_vaults(id),
+    escrow_vault_id UUID REFERENCES public.platform_vaults(id),
+    receiver_vault_id UUID REFERENCES public.platform_vaults(id),
+    merchant_id UUID,
+    service_code TEXT,
     amount NUMERIC NOT NULL,
     currency TEXT NOT NULL,
     conditions JSONB DEFAULT '{}'::jsonb,
     status TEXT DEFAULT 'HELD' CHECK (status IN ('HELD', 'RELEASED', 'DISPUTED', 'REFUNDED')),
     dispute_metadata JSONB DEFAULT '{}'::jsonb,
+    metadata JSONB DEFAULT '{}'::jsonb,
     expires_at TIMESTAMP WITH TIME ZONE,
+    released_at TIMESTAMP WITH TIME ZONE,
+    refunded_at TIMESTAMP WITH TIME ZONE,
+    disputed_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -6101,3 +6124,1958 @@ CREATE TABLE IF NOT EXISTS public.revoked_tokens (
     jti TEXT PRIMARY KEY,
     revoked_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- BEGIN 20260618 SHARED FINANCE AND PAYSAFE HARDENING SYNC
+
+-- BEGIN SYNCED MIGRATION: 20260618_paysafe_escrow_hardening.sql
+-- Canonical PaySafe escrow lifecycle.
+-- Financial movement and lifecycle state changes remain SQL-authoritative.
+
+ALTER TABLE public.escrow_agreements
+    ADD COLUMN IF NOT EXISTS reference_id TEXT,
+    ADD COLUMN IF NOT EXISTS source_vault_id UUID REFERENCES public.platform_vaults(id),
+    ADD COLUMN IF NOT EXISTS escrow_vault_id UUID REFERENCES public.platform_vaults(id),
+    ADD COLUMN IF NOT EXISTS receiver_vault_id UUID REFERENCES public.platform_vaults(id),
+    ADD COLUMN IF NOT EXISTS merchant_id UUID REFERENCES public.merchants(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS service_code TEXT,
+    ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb,
+    ADD COLUMN IF NOT EXISTS released_at TIMESTAMP WITH TIME ZONE,
+    ADD COLUMN IF NOT EXISTS refunded_at TIMESTAMP WITH TIME ZONE,
+    ADD COLUMN IF NOT EXISTS disputed_at TIMESTAMP WITH TIME ZONE;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'escrow_agreements_merchant_id_fkey'
+          AND conrelid = 'public.escrow_agreements'::regclass
+    ) THEN
+        ALTER TABLE public.escrow_agreements
+            ADD CONSTRAINT escrow_agreements_merchant_id_fkey
+            FOREIGN KEY (merchant_id) REFERENCES public.merchants(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_escrow_agreements_reference
+    ON public.escrow_agreements(reference_id)
+    WHERE reference_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_escrow_agreements_transaction
+    ON public.escrow_agreements(transaction_id);
+
+CREATE INDEX IF NOT EXISTS idx_escrow_agreements_merchant_status
+    ON public.escrow_agreements(merchant_id, status, created_at DESC);
+
+CREATE OR REPLACE FUNCTION public.apply_transaction_currency_from_metadata()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+    IF NULLIF(BTRIM(COALESCE(NEW.metadata->>'currency', '')), '') IS NOT NULL THEN
+        NEW.currency := UPPER(BTRIM(NEW.metadata->>'currency'));
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_apply_transaction_currency_from_metadata ON public.transactions;
+CREATE TRIGGER trg_apply_transaction_currency_from_metadata
+BEFORE INSERT ON public.transactions
+FOR EACH ROW
+EXECUTE FUNCTION public.apply_transaction_currency_from_metadata();
+
+CREATE OR REPLACE FUNCTION public.create_escrow_agreement_from_transaction()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_receiver_id UUID;
+    v_amount NUMERIC;
+    v_source_vault_id UUID;
+    v_escrow_vault_id UUID;
+    v_merchant_id UUID;
+BEGIN
+    IF LOWER(COALESCE(NEW.type, '')) <> 'escrow'
+       OR COALESCE((NEW.metadata->>'is_conditional_escrow')::BOOLEAN, FALSE) IS NOT TRUE THEN
+        RETURN NEW;
+    END IF;
+
+    v_receiver_id := NULLIF(NEW.metadata->>'recipient_id', '')::UUID;
+    v_amount := NULLIF(NEW.metadata->>'escrow_amount_plain', '')::NUMERIC;
+    v_source_vault_id := COALESCE(
+        NULLIF(NEW.metadata->>'source_vault_id', '')::UUID,
+        NEW.wallet_id
+    );
+    v_escrow_vault_id := NULLIF(NEW.metadata->>'escrow_vault_id', '')::UUID;
+    v_merchant_id := NULLIF(NEW.metadata->>'merchant_id', '')::UUID;
+
+    IF v_receiver_id IS NULL OR v_amount IS NULL OR v_amount <= 0
+       OR v_source_vault_id IS NULL OR v_escrow_vault_id IS NULL THEN
+        RAISE EXCEPTION 'PAYSAFE_ESCROW_METADATA_INVALID: canonical escrow metadata is incomplete';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM public.users WHERE id = v_receiver_id) THEN
+        RAISE EXCEPTION 'PAYSAFE_RECEIVER_NOT_FOUND: receiver % does not exist', v_receiver_id;
+    END IF;
+
+    INSERT INTO public.escrow_agreements (
+        transaction_id,
+        reference_id,
+        sender_id,
+        receiver_id,
+        source_vault_id,
+        escrow_vault_id,
+        merchant_id,
+        service_code,
+        amount,
+        currency,
+        conditions,
+        status,
+        expires_at,
+        metadata
+    )
+    VALUES (
+        NEW.id,
+        NEW.reference_id,
+        NEW.user_id,
+        v_receiver_id,
+        v_source_vault_id,
+        v_escrow_vault_id,
+        v_merchant_id,
+        NULLIF(NEW.metadata->>'service_code', ''),
+        v_amount,
+        UPPER(COALESCE(NULLIF(NEW.currency, ''), 'TZS')),
+        COALESCE(NEW.metadata->'conditions', '{}'::jsonb),
+        'HELD',
+        NULLIF(NEW.metadata->>'expires_at', '')::TIMESTAMP WITH TIME ZONE,
+        jsonb_build_object(
+            'created_from', 'post_transaction_v2',
+            'created_at', NOW(),
+            'idempotency_reference', NEW.reference_id
+        )
+    )
+    ON CONFLICT (transaction_id) DO NOTHING;
+
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_create_escrow_agreement_from_transaction ON public.transactions;
+CREATE TRIGGER trg_create_escrow_agreement_from_transaction
+AFTER INSERT ON public.transactions
+FOR EACH ROW
+EXECUTE FUNCTION public.create_escrow_agreement_from_transaction();
+
+CREATE OR REPLACE FUNCTION public.transition_paysafe_escrow_v1(
+    p_reference_id TEXT,
+    p_actor_id UUID,
+    p_action TEXT,
+    p_receiver_vault_id UUID DEFAULT NULL,
+    p_reason TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_action TEXT := UPPER(BTRIM(COALESCE(p_action, '')));
+    v_now TIMESTAMP WITH TIME ZONE := NOW();
+    v_agreement public.escrow_agreements%ROWTYPE;
+    v_tx public.transactions%ROWTYPE;
+    v_escrow_vault public.platform_vaults%ROWTYPE;
+    v_target_vault public.platform_vaults%ROWTYPE;
+    v_target_vault_id UUID;
+    v_target_user_id UUID;
+    v_next_escrow_balance NUMERIC;
+    v_next_target_balance NUMERIC;
+    v_append_key TEXT;
+BEGIN
+    IF NULLIF(BTRIM(COALESCE(p_reference_id, '')), '') IS NULL THEN
+        RAISE EXCEPTION 'PAYSAFE_REFERENCE_REQUIRED';
+    END IF;
+
+    IF v_action NOT IN ('RELEASE', 'DISPUTE', 'REFUND') THEN
+        RAISE EXCEPTION 'PAYSAFE_ACTION_INVALID: %', v_action;
+    END IF;
+
+    SELECT ea.* INTO v_agreement
+    FROM public.escrow_agreements ea
+    WHERE ea.reference_id = p_reference_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'PAYSAFE_ESCROW_NOT_FOUND';
+    END IF;
+
+    SELECT t.* INTO v_tx
+    FROM public.transactions t
+    WHERE t.id = v_agreement.transaction_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'PAYSAFE_TRANSACTION_NOT_FOUND';
+    END IF;
+
+    IF v_action = 'DISPUTE' THEN
+        IF p_actor_id NOT IN (v_agreement.sender_id, v_agreement.receiver_id) THEN
+            RAISE EXCEPTION 'PAYSAFE_ACTOR_UNAUTHORIZED';
+        END IF;
+        IF v_agreement.status = 'DISPUTED' THEN
+            RETURN jsonb_build_object(
+                'referenceId', p_reference_id,
+                'transactionId', v_agreement.transaction_id,
+                'status', v_agreement.status,
+                'idempotent', TRUE
+            );
+        END IF;
+        IF v_agreement.status <> 'HELD' THEN
+            RAISE EXCEPTION 'PAYSAFE_STATE_INVALID: cannot dispute escrow in state %', v_agreement.status;
+        END IF;
+        IF NULLIF(BTRIM(COALESCE(p_reason, '')), '') IS NULL THEN
+            RAISE EXCEPTION 'PAYSAFE_DISPUTE_REASON_REQUIRED';
+        END IF;
+
+        UPDATE public.escrow_agreements
+        SET
+            status = 'DISPUTED',
+            disputed_at = v_now,
+            dispute_metadata = COALESCE(dispute_metadata, '{}'::jsonb) || jsonb_build_object(
+                'reason', p_reason,
+                'actor_id', p_actor_id,
+                'disputed_at', v_now
+            ),
+            updated_at = v_now
+        WHERE id = v_agreement.id;
+
+        UPDATE public.transactions
+        SET
+            status = 'held_for_review',
+            status_notes = p_reason,
+            metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+                'escrow_status', 'DISPUTED',
+                'dispute_reason', p_reason,
+                'disputed_by', p_actor_id,
+                'disputed_at', v_now
+            ),
+            updated_at = v_now
+        WHERE id = v_tx.id;
+
+        INSERT INTO public.transaction_events (transaction_id, old_state, new_state, actor, metadata)
+        VALUES (v_tx.id, v_tx.status, 'held_for_review', p_actor_id::TEXT, jsonb_build_object('reason', p_reason));
+
+        RETURN jsonb_build_object(
+            'referenceId', p_reference_id,
+            'transactionId', v_tx.id,
+            'status', 'DISPUTED',
+            'idempotent', FALSE
+        );
+    END IF;
+
+    IF v_action = 'RELEASE' THEN
+        IF p_actor_id <> v_agreement.sender_id THEN
+            RAISE EXCEPTION 'PAYSAFE_ACTOR_UNAUTHORIZED';
+        END IF;
+        IF v_agreement.status = 'RELEASED' THEN
+            RETURN jsonb_build_object(
+                'referenceId', p_reference_id,
+                'transactionId', v_agreement.transaction_id,
+                'status', v_agreement.status,
+                'idempotent', TRUE
+            );
+        END IF;
+        IF v_agreement.status <> 'HELD' THEN
+            RAISE EXCEPTION 'PAYSAFE_STATE_INVALID: cannot release escrow in state %', v_agreement.status;
+        END IF;
+        v_target_user_id := v_agreement.receiver_id;
+        v_target_vault_id := p_receiver_vault_id;
+    ELSE
+        IF v_agreement.status = 'REFUNDED' THEN
+            RETURN jsonb_build_object(
+                'referenceId', p_reference_id,
+                'transactionId', v_agreement.transaction_id,
+                'status', v_agreement.status,
+                'idempotent', TRUE
+            );
+        END IF;
+        IF v_agreement.status NOT IN ('HELD', 'DISPUTED') THEN
+            RAISE EXCEPTION 'PAYSAFE_STATE_INVALID: cannot refund escrow in state %', v_agreement.status;
+        END IF;
+        IF NULLIF(BTRIM(COALESCE(p_reason, '')), '') IS NULL THEN
+            RAISE EXCEPTION 'PAYSAFE_REFUND_REASON_REQUIRED';
+        END IF;
+        v_target_user_id := v_agreement.sender_id;
+        v_target_vault_id := COALESCE(p_receiver_vault_id, v_agreement.source_vault_id);
+    END IF;
+
+    SELECT pv.* INTO v_escrow_vault
+    FROM public.platform_vaults pv
+    WHERE pv.id = v_agreement.escrow_vault_id
+      AND pv.user_id = v_agreement.sender_id
+      AND pv.vault_role = 'INTERNAL_TRANSFER'
+      AND NOT COALESCE(pv.is_locked, FALSE)
+      AND LOWER(COALESCE(pv.status, 'active')) NOT IN ('locked', 'frozen', 'blocked', 'suspended')
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'PAYSAFE_ESCROW_VAULT_UNAVAILABLE';
+    END IF;
+
+    IF v_target_vault_id IS NULL THEN
+        SELECT pv.id INTO v_target_vault_id
+        FROM public.platform_vaults pv
+        WHERE pv.user_id = v_target_user_id
+          AND pv.vault_role = 'OPERATING'
+          AND UPPER(COALESCE(pv.currency, 'TZS')) = UPPER(v_agreement.currency)
+          AND NOT COALESCE(pv.is_locked, FALSE)
+          AND LOWER(COALESCE(pv.status, 'active')) NOT IN ('locked', 'frozen', 'blocked', 'suspended')
+        ORDER BY pv.created_at
+        LIMIT 1;
+    END IF;
+
+    SELECT pv.* INTO v_target_vault
+    FROM public.platform_vaults pv
+    WHERE pv.id = v_target_vault_id
+      AND pv.user_id = v_target_user_id
+      AND pv.vault_role = 'OPERATING'
+      AND UPPER(COALESCE(pv.currency, 'TZS')) = UPPER(v_agreement.currency)
+      AND NOT COALESCE(pv.is_locked, FALSE)
+      AND LOWER(COALESCE(pv.status, 'active')) NOT IN ('locked', 'frozen', 'blocked', 'suspended')
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'PAYSAFE_TARGET_VAULT_UNAVAILABLE';
+    END IF;
+
+    IF UPPER(COALESCE(v_escrow_vault.currency, 'TZS')) <> UPPER(v_agreement.currency) THEN
+        RAISE EXCEPTION 'PAYSAFE_CURRENCY_MISMATCH';
+    END IF;
+
+    IF COALESCE(v_escrow_vault.balance, 0) < v_agreement.amount THEN
+        RAISE EXCEPTION 'PAYSAFE_ESCROW_BALANCE_INSUFFICIENT';
+    END IF;
+
+    v_append_key := 'paysafe:' || v_agreement.id::TEXT || ':' || LOWER(v_action) || ':v1';
+    INSERT INTO public.ledger_append_markers (transaction_id, append_key, append_phase, metadata)
+    VALUES (
+        v_tx.id,
+        v_append_key,
+        'PAYSAFE_' || v_action,
+        jsonb_build_object('actor_id', p_actor_id, 'reference_id', p_reference_id)
+    );
+
+    v_next_escrow_balance := ROUND((COALESCE(v_escrow_vault.balance, 0) - v_agreement.amount)::NUMERIC, 4);
+    v_next_target_balance := ROUND((COALESCE(v_target_vault.balance, 0) + v_agreement.amount)::NUMERIC, 4);
+
+    UPDATE public.platform_vaults
+    SET balance = v_next_escrow_balance, updated_at = v_now
+    WHERE id = v_escrow_vault.id;
+
+    UPDATE public.platform_vaults
+    SET balance = v_next_target_balance, updated_at = v_now
+    WHERE id = v_target_vault.id;
+
+    INSERT INTO public.financial_ledger (
+        transaction_id, user_id, wallet_id, entry_type, amount, balance_after, description
+    )
+    VALUES
+        (
+            v_tx.id,
+            v_agreement.sender_id,
+            v_escrow_vault.id,
+            'DEBIT',
+            v_tx.amount,
+            v_next_escrow_balance::TEXT,
+            'PaySafe ' || INITCAP(LOWER(v_action)) || ': ' || p_reference_id
+        ),
+        (
+            v_tx.id,
+            v_target_user_id,
+            v_target_vault.id,
+            'CREDIT',
+            v_tx.amount,
+            v_next_target_balance::TEXT,
+            'PaySafe ' || INITCAP(LOWER(v_action)) || ': ' || p_reference_id
+        );
+
+    UPDATE public.escrow_agreements
+    SET
+        status = CASE WHEN v_action = 'RELEASE' THEN 'RELEASED' ELSE 'REFUNDED' END,
+        receiver_vault_id = CASE WHEN v_action = 'RELEASE' THEN v_target_vault.id ELSE receiver_vault_id END,
+        released_at = CASE WHEN v_action = 'RELEASE' THEN v_now ELSE released_at END,
+        refunded_at = CASE WHEN v_action = 'REFUND' THEN v_now ELSE refunded_at END,
+        metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+            'last_action', v_action,
+            'last_actor_id', p_actor_id,
+            'last_action_at', v_now,
+            'target_vault_id', v_target_vault.id,
+            'reason', p_reason
+        ),
+        updated_at = v_now
+    WHERE id = v_agreement.id;
+
+    UPDATE public.transactions
+    SET
+        status = CASE WHEN v_action = 'RELEASE' THEN 'completed' ELSE 'refunded' END,
+        status_notes = COALESCE(NULLIF(BTRIM(p_reason), ''), 'PaySafe ' || LOWER(v_action) || ' completed.'),
+        metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+            'escrow_status', CASE WHEN v_action = 'RELEASE' THEN 'RELEASED' ELSE 'REFUNDED' END,
+            'escrow_action_at', v_now,
+            'escrow_action_by', p_actor_id,
+            'escrow_target_vault_id', v_target_vault.id
+        ),
+        updated_at = v_now
+    WHERE id = v_tx.id;
+
+    INSERT INTO public.transaction_events (transaction_id, old_state, new_state, actor, metadata)
+    VALUES (
+        v_tx.id,
+        v_tx.status,
+        CASE WHEN v_action = 'RELEASE' THEN 'completed' ELSE 'refunded' END,
+        p_actor_id::TEXT,
+        jsonb_build_object('paysafe_action', v_action, 'reason', p_reason)
+    );
+
+    RETURN jsonb_build_object(
+        'referenceId', p_reference_id,
+        'transactionId', v_tx.id,
+        'status', CASE WHEN v_action = 'RELEASE' THEN 'RELEASED' ELSE 'REFUNDED' END,
+        'amount', v_agreement.amount,
+        'currency', v_agreement.currency,
+        'targetVaultId', v_target_vault.id,
+        'idempotent', FALSE
+    );
+EXCEPTION
+    WHEN unique_violation THEN
+        IF v_append_key IS NOT NULL AND EXISTS (
+            SELECT 1 FROM public.ledger_append_markers WHERE append_key = v_append_key
+        ) THEN
+            RAISE EXCEPTION 'PAYSAFE_ACTION_ALREADY_APPLIED';
+        END IF;
+        RAISE;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.create_escrow_agreement_from_transaction() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.apply_transaction_currency_from_metadata() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.transition_paysafe_escrow_v1(TEXT, UUID, TEXT, UUID, TEXT) FROM PUBLIC;
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+        EXECUTE 'REVOKE ALL ON FUNCTION public.transition_paysafe_escrow_v1(TEXT, UUID, TEXT, UUID, TEXT) FROM anon';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+        EXECUTE 'REVOKE ALL ON FUNCTION public.transition_paysafe_escrow_v1(TEXT, UUID, TEXT, UUID, TEXT) FROM authenticated';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        EXECUTE 'GRANT EXECUTE ON FUNCTION public.transition_paysafe_escrow_v1(TEXT, UUID, TEXT, UUID, TEXT) TO service_role';
+    END IF;
+END $$;
+-- END SYNCED MIGRATION: 20260618_paysafe_escrow_hardening.sql
+
+-- BEGIN SYNCED MIGRATION: 20260618_merchant_paysafe_settlement.sql
+-- Merchant PaySafe settlement and fee lifecycle.
+-- Fee values are snapshotted at escrow authorization and consumed atomically.
+
+INSERT INTO public.platform_fee_configs (
+    name,
+    flow_code,
+    transaction_model,
+    transaction_type,
+    operation_type,
+    direction,
+    rail,
+    channel,
+    percentage_rate,
+    fixed_amount,
+    minimum_fee,
+    tax_rate,
+    gov_fee_rate,
+    stamp_duty_fixed,
+    priority,
+    status,
+    metadata
+)
+SELECT
+    'Base PaySafe merchant release fee policy',
+    'MERCHANT_PAYMENT',
+    'MERCHANT_PAYMENT',
+    'MERCHANT_PAYMENT',
+    'PAYSAFE_RELEASE',
+    'INBOUND',
+    'WALLET',
+    'PAYSAFE',
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1000,
+    'ACTIVE',
+    jsonb_build_object(
+        'seeded_by', 'database/migrations/20260618_merchant_paysafe_settlement.sql',
+        'purpose', 'safe zero-rate baseline; configure commercial PaySafe merchant fees before monetized launch'
+    )
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM public.platform_fee_configs existing
+    WHERE existing.flow_code = 'MERCHANT_PAYMENT'
+      AND existing.operation_type = 'PAYSAFE_RELEASE'
+      AND existing.rail = 'WALLET'
+      AND existing.channel = 'PAYSAFE'
+      AND existing.status = 'ACTIVE'
+);
+
+CREATE TABLE IF NOT EXISTS public.merchant_paysafe_settlements (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    escrow_agreement_id UUID NOT NULL UNIQUE REFERENCES public.escrow_agreements(id) ON DELETE RESTRICT,
+    transaction_id UUID NOT NULL UNIQUE REFERENCES public.transactions(id) ON DELETE RESTRICT,
+    merchant_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE RESTRICT,
+    owner_user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
+    merchant_wallet_id UUID NOT NULL REFERENCES public.merchant_wallets(id) ON DELETE RESTRICT,
+    fee_collector_wallet_id UUID REFERENCES public.fee_collector_wallets(id) ON DELETE RESTRICT,
+    fee_config_id UUID REFERENCES public.platform_fee_configs(id) ON DELETE SET NULL,
+    gross_amount NUMERIC NOT NULL CHECK (gross_amount > 0),
+    fee_amount NUMERIC NOT NULL DEFAULT 0 CHECK (fee_amount >= 0),
+    tax_amount NUMERIC NOT NULL DEFAULT 0 CHECK (tax_amount >= 0),
+    net_amount NUMERIC NOT NULL CHECK (net_amount > 0),
+    currency TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'SETTLED'
+        CHECK (status IN ('SETTLED', 'REVERSED', 'HELD_FOR_REVIEW')),
+    settled_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    reversed_at TIMESTAMP WITH TIME ZONE,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT merchant_paysafe_settlement_amounts_balance
+        CHECK (ABS(gross_amount - (fee_amount + tax_amount + net_amount)) <= 0.01)
+);
+
+CREATE INDEX IF NOT EXISTS idx_merchant_paysafe_settlements_merchant_period
+    ON public.merchant_paysafe_settlements(merchant_id, settled_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_merchant_paysafe_settlements_status
+    ON public.merchant_paysafe_settlements(status, settled_at DESC);
+
+ALTER TABLE public.merchant_paysafe_settlements ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS merchant_paysafe_settlements_service_role
+    ON public.merchant_paysafe_settlements;
+CREATE POLICY merchant_paysafe_settlements_service_role
+    ON public.merchant_paysafe_settlements
+    FOR ALL TO service_role
+    USING (TRUE)
+    WITH CHECK (TRUE);
+
+CREATE OR REPLACE FUNCTION public.settle_merchant_paysafe_v1(
+    p_reference_id TEXT,
+    p_actor_id UUID
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_now TIMESTAMP WITH TIME ZONE := NOW();
+    v_agreement public.escrow_agreements%ROWTYPE;
+    v_tx public.transactions%ROWTYPE;
+    v_merchant public.merchants%ROWTYPE;
+    v_escrow_vault public.platform_vaults%ROWTYPE;
+    v_merchant_wallet public.merchant_wallets%ROWTYPE;
+    v_fee_collector public.fee_collector_wallets%ROWTYPE;
+    v_fee_vault public.platform_vaults%ROWTYPE;
+    v_settlement_config_id UUID;
+    v_fee_snapshot JSONB;
+    v_fee_config_id UUID;
+    v_gross NUMERIC;
+    v_service_fee NUMERIC;
+    v_tax NUMERIC;
+    v_total_fee NUMERIC;
+    v_net NUMERIC;
+    v_next_escrow_balance NUMERIC;
+    v_next_merchant_balance NUMERIC;
+    v_next_fee_balance NUMERIC;
+    v_append_key TEXT;
+    v_existing public.merchant_paysafe_settlements%ROWTYPE;
+BEGIN
+    IF NULLIF(BTRIM(COALESCE(p_reference_id, '')), '') IS NULL THEN
+        RAISE EXCEPTION 'PAYSAFE_REFERENCE_REQUIRED';
+    END IF;
+
+    SELECT ea.* INTO v_agreement
+    FROM public.escrow_agreements ea
+    WHERE ea.reference_id = p_reference_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'PAYSAFE_ESCROW_NOT_FOUND';
+    END IF;
+
+    IF v_agreement.merchant_id IS NULL THEN
+        RAISE EXCEPTION 'PAYSAFE_MERCHANT_CONTEXT_REQUIRED';
+    END IF;
+
+    IF p_actor_id <> v_agreement.sender_id THEN
+        RAISE EXCEPTION 'PAYSAFE_ACTOR_UNAUTHORIZED';
+    END IF;
+
+    SELECT * INTO v_existing
+    FROM public.merchant_paysafe_settlements
+    WHERE escrow_agreement_id = v_agreement.id;
+
+    IF FOUND THEN
+        RETURN jsonb_build_object(
+            'referenceId', p_reference_id,
+            'transactionId', v_existing.transaction_id,
+            'settlementId', v_existing.id,
+            'merchantId', v_existing.merchant_id,
+            'status', v_existing.status,
+            'grossAmount', v_existing.gross_amount,
+            'feeAmount', v_existing.fee_amount,
+            'taxAmount', v_existing.tax_amount,
+            'netAmount', v_existing.net_amount,
+            'currency', v_existing.currency,
+            'idempotent', TRUE
+        );
+    END IF;
+
+    IF v_agreement.status <> 'HELD' THEN
+        RAISE EXCEPTION 'PAYSAFE_STATE_INVALID: cannot settle merchant escrow in state %', v_agreement.status;
+    END IF;
+
+    SELECT t.* INTO v_tx
+    FROM public.transactions t
+    WHERE t.id = v_agreement.transaction_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'PAYSAFE_TRANSACTION_NOT_FOUND';
+    END IF;
+
+    SELECT m.* INTO v_merchant
+    FROM public.merchants m
+    WHERE m.id = v_agreement.merchant_id
+      AND LOWER(COALESCE(m.status, '')) = 'active'
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'PAYSAFE_MERCHANT_NOT_ACTIVE';
+    END IF;
+
+    IF v_merchant.owner_user_id IS NULL
+       OR v_merchant.owner_user_id <> v_agreement.receiver_id THEN
+        RAISE EXCEPTION 'PAYSAFE_MERCHANT_RECIPIENT_MISMATCH';
+    END IF;
+
+    SELECT mw.* INTO v_merchant_wallet
+    FROM public.merchant_wallets mw
+    WHERE mw.merchant_id = v_merchant.id
+      AND LOWER(COALESCE(mw.status, 'active')) = 'active'
+      AND LOWER(COALESCE(mw.wallet_type, 'operating')) IN ('settlement', 'operating')
+      AND UPPER(COALESCE(mw.currency, 'TZS')) = UPPER(v_agreement.currency)
+    ORDER BY
+      CASE WHEN LOWER(COALESCE(mw.wallet_type, '')) = 'settlement' THEN 0 ELSE 1 END,
+      mw.is_primary DESC,
+      mw.created_at
+    LIMIT 1
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'PAYSAFE_MERCHANT_SETTLEMENT_WALLET_UNAVAILABLE';
+    END IF;
+
+    SELECT pv.* INTO v_escrow_vault
+    FROM public.platform_vaults pv
+    WHERE pv.id = v_agreement.escrow_vault_id
+      AND pv.user_id = v_agreement.sender_id
+      AND pv.vault_role = 'INTERNAL_TRANSFER'
+      AND NOT COALESCE(pv.is_locked, FALSE)
+      AND LOWER(COALESCE(pv.status, 'active')) NOT IN ('locked', 'frozen', 'blocked', 'suspended')
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'PAYSAFE_ESCROW_VAULT_UNAVAILABLE';
+    END IF;
+
+    IF UPPER(COALESCE(v_escrow_vault.currency, 'TZS')) <> UPPER(v_agreement.currency) THEN
+        RAISE EXCEPTION 'PAYSAFE_CURRENCY_MISMATCH';
+    END IF;
+
+    v_fee_snapshot := COALESCE(
+        v_agreement.metadata->'merchant_fee_snapshot',
+        v_tx.metadata->'merchant_fee_snapshot'
+    );
+    IF v_fee_snapshot IS NULL OR jsonb_typeof(v_fee_snapshot) <> 'object' THEN
+        RAISE EXCEPTION 'PAYSAFE_MERCHANT_FEE_SNAPSHOT_REQUIRED';
+    END IF;
+
+    v_gross := ROUND(v_agreement.amount::NUMERIC, 2);
+    v_service_fee := ROUND(COALESCE(NULLIF(v_fee_snapshot->>'serviceFee', '')::NUMERIC, 0), 2);
+    v_tax := ROUND((
+        COALESCE(NULLIF(v_fee_snapshot->>'taxAmount', '')::NUMERIC, 0)
+        + COALESCE(NULLIF(v_fee_snapshot->>'govFeeAmount', '')::NUMERIC, 0)
+        + COALESCE(NULLIF(v_fee_snapshot->>'stampDutyFixed', '')::NUMERIC, 0)
+    )::NUMERIC, 2);
+    v_total_fee := ROUND(COALESCE(NULLIF(v_fee_snapshot->>'totalFee', '')::NUMERIC, 0), 2);
+    v_net := ROUND(COALESCE(NULLIF(v_fee_snapshot->>'netAmount', '')::NUMERIC, 0), 2);
+    v_fee_config_id := NULLIF(v_fee_snapshot->>'configId', '')::UUID;
+
+    IF UPPER(COALESCE(v_fee_snapshot->>'currency', '')) <> UPPER(v_agreement.currency)
+       OR v_gross <= 0
+       OR v_service_fee < 0
+       OR v_tax < 0
+       OR v_total_fee < 0
+       OR v_net <= 0
+       OR ABS(v_total_fee - (v_service_fee + v_tax)) > 0.01
+       OR ABS(v_gross - (v_total_fee + v_net)) > 0.01 THEN
+        RAISE EXCEPTION 'PAYSAFE_MERCHANT_FEE_SNAPSHOT_INVALID';
+    END IF;
+
+    IF COALESCE(v_escrow_vault.balance, 0) < v_gross THEN
+        RAISE EXCEPTION 'PAYSAFE_ESCROW_BALANCE_INSUFFICIENT';
+    END IF;
+
+    IF v_total_fee > 0 THEN
+        SELECT fcw.* INTO v_fee_collector
+        FROM public.fee_collector_wallets fcw
+        WHERE UPPER(COALESCE(fcw.currency, 'TZS')) = UPPER(v_agreement.currency)
+          AND LOWER(fcw.fee_type) IN ('platform_fee', 'service_fee', 'merchant_fee')
+        ORDER BY
+          CASE LOWER(fcw.fee_type)
+            WHEN 'merchant_fee' THEN 0
+            WHEN 'platform_fee' THEN 1
+            ELSE 2
+          END,
+          fcw.created_at
+        LIMIT 1
+        FOR UPDATE;
+
+        IF NOT FOUND OR v_fee_collector.vault_id IS NULL THEN
+            RAISE EXCEPTION 'PAYSAFE_FEE_COLLECTOR_UNAVAILABLE';
+        END IF;
+
+        SELECT pv.* INTO v_fee_vault
+        FROM public.platform_vaults pv
+        WHERE pv.id = v_fee_collector.vault_id
+          AND UPPER(COALESCE(pv.currency, 'TZS')) = UPPER(v_agreement.currency)
+          AND NOT COALESCE(pv.is_locked, FALSE)
+          AND LOWER(COALESCE(pv.status, 'active')) NOT IN ('locked', 'frozen', 'blocked', 'suspended')
+        FOR UPDATE;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'PAYSAFE_FEE_COLLECTOR_UNAVAILABLE';
+        END IF;
+    END IF;
+
+    v_append_key := 'paysafe:' || v_agreement.id::TEXT || ':merchant_settlement:v1';
+    INSERT INTO public.ledger_append_markers (
+        transaction_id,
+        append_key,
+        append_phase,
+        metadata
+    ) VALUES (
+        v_tx.id,
+        v_append_key,
+        'PAYSAFE_MERCHANT_SETTLEMENT',
+        jsonb_build_object(
+            'merchant_id', v_merchant.id,
+            'merchant_wallet_id', v_merchant_wallet.id,
+            'actor_id', p_actor_id,
+            'reference_id', p_reference_id
+        )
+    );
+
+    v_next_escrow_balance := ROUND((COALESCE(v_escrow_vault.balance, 0) - v_gross)::NUMERIC, 2);
+    v_next_merchant_balance := ROUND((COALESCE(v_merchant_wallet.balance, 0) + v_net)::NUMERIC, 2);
+
+    UPDATE public.platform_vaults
+    SET balance = v_next_escrow_balance, updated_at = v_now
+    WHERE id = v_escrow_vault.id;
+
+    UPDATE public.merchant_wallets
+    SET balance = v_next_merchant_balance, updated_at = v_now
+    WHERE id = v_merchant_wallet.id;
+
+    INSERT INTO public.financial_ledger (
+        transaction_id, user_id, wallet_id, entry_type, amount, balance_after, description
+    ) VALUES
+        (
+            v_tx.id, v_agreement.sender_id, v_escrow_vault.id, 'DEBIT',
+            v_gross::TEXT, v_next_escrow_balance::TEXT,
+            'PaySafe merchant settlement debit: ' || p_reference_id
+        ),
+        (
+            v_tx.id, v_merchant.owner_user_id, v_merchant_wallet.id, 'CREDIT',
+            v_net::TEXT, v_next_merchant_balance::TEXT,
+            'PaySafe merchant net settlement: ' || p_reference_id
+        );
+
+    IF v_total_fee > 0 THEN
+        v_next_fee_balance := ROUND((COALESCE(v_fee_vault.balance, 0) + v_total_fee)::NUMERIC, 2);
+
+        UPDATE public.platform_vaults
+        SET balance = v_next_fee_balance, updated_at = v_now
+        WHERE id = v_fee_vault.id;
+
+        UPDATE public.fee_collector_wallets
+        SET balance = ROUND((COALESCE(balance, 0) + v_total_fee)::NUMERIC, 2),
+            updated_at = v_now
+        WHERE id = v_fee_collector.id;
+
+        INSERT INTO public.financial_ledger (
+            transaction_id, user_id, wallet_id, entry_type, amount, balance_after, description
+        ) VALUES (
+            v_tx.id, v_fee_vault.user_id, v_fee_vault.id, 'CREDIT',
+            v_total_fee::TEXT, v_next_fee_balance::TEXT,
+            'PaySafe merchant fee settlement: ' || p_reference_id
+        );
+    END IF;
+
+    INSERT INTO public.merchant_paysafe_settlements (
+        escrow_agreement_id,
+        transaction_id,
+        merchant_id,
+        owner_user_id,
+        merchant_wallet_id,
+        fee_collector_wallet_id,
+        fee_config_id,
+        gross_amount,
+        fee_amount,
+        tax_amount,
+        net_amount,
+        currency,
+        status,
+        settled_at,
+        metadata
+    ) VALUES (
+        v_agreement.id,
+        v_tx.id,
+        v_merchant.id,
+        v_merchant.owner_user_id,
+        v_merchant_wallet.id,
+        CASE WHEN v_total_fee > 0 THEN v_fee_collector.id ELSE NULL END,
+        v_fee_config_id,
+        v_gross,
+        v_service_fee,
+        v_tax,
+        v_net,
+        UPPER(v_agreement.currency),
+        'SETTLED',
+        v_now,
+        jsonb_build_object(
+            'reference_id', p_reference_id,
+            'fee_snapshot', v_fee_snapshot,
+            'settled_by', p_actor_id
+        )
+    )
+    RETURNING * INTO v_existing;
+
+    INSERT INTO public.merchant_transactions (
+        transaction_id,
+        merchant_id,
+        owner_user_id,
+        merchant_wallet_id,
+        customer_user_id,
+        direction,
+        amount,
+        currency,
+        status,
+        service_type,
+        metadata
+    ) VALUES (
+        v_tx.id,
+        v_merchant.id,
+        v_merchant.owner_user_id,
+        v_merchant_wallet.id,
+        v_agreement.sender_id,
+        'inbound',
+        v_gross,
+        UPPER(v_agreement.currency),
+        'completed',
+        'paysafe',
+        jsonb_build_object(
+            'reference_id', p_reference_id,
+            'settlement_id', v_existing.id,
+            'gross_amount', v_gross,
+            'fee_amount', v_service_fee,
+            'tax_amount', v_tax,
+            'net_amount', v_net
+        )
+    )
+    ON CONFLICT (transaction_id) DO UPDATE
+    SET
+        merchant_wallet_id = EXCLUDED.merchant_wallet_id,
+        status = 'completed',
+        amount = EXCLUDED.amount,
+        currency = EXCLUDED.currency,
+        metadata = COALESCE(merchant_transactions.metadata, '{}'::jsonb)
+            || EXCLUDED.metadata,
+        updated_at = v_now;
+
+    SELECT ms.id INTO v_settlement_config_id
+    FROM public.merchant_settlements ms
+    WHERE ms.merchant_id = v_merchant.id;
+
+    INSERT INTO public.settlement_lifecycle (
+        transaction_id,
+        merchant_settlement_id,
+        lifecycle_key,
+        settlement_batch_id,
+        rail,
+        direction,
+        operation_type,
+        currency,
+        gross_amount,
+        fee_amount,
+        tax_amount,
+        net_amount,
+        stage,
+        status,
+        initiated_at,
+        provider_confirmed_at,
+        settled_at,
+        metadata
+    ) VALUES (
+        v_tx.id,
+        v_settlement_config_id,
+        'merchant-paysafe:' || v_agreement.id::TEXT,
+        'PAYSAFE-' || TO_CHAR(v_now, 'YYYYMMDD'),
+        'WALLET',
+        'INBOUND',
+        'PAYSAFE_MERCHANT_SETTLEMENT',
+        UPPER(v_agreement.currency),
+        v_gross,
+        v_service_fee,
+        v_tax,
+        v_net,
+        'SETTLED',
+        'COMPLETED',
+        COALESCE(v_tx.created_at, v_now),
+        v_now,
+        v_now,
+        jsonb_build_object(
+            'merchant_id', v_merchant.id,
+            'escrow_agreement_id', v_agreement.id,
+            'merchant_paysafe_settlement_id', v_existing.id,
+            'fee_snapshot', v_fee_snapshot
+        )
+    )
+    ON CONFLICT (lifecycle_key) DO NOTHING;
+
+    UPDATE public.escrow_agreements
+    SET
+        status = 'RELEASED',
+        released_at = v_now,
+        metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+            'last_action', 'MERCHANT_SETTLEMENT',
+            'last_actor_id', p_actor_id,
+            'last_action_at', v_now,
+            'merchant_wallet_id', v_merchant_wallet.id,
+            'merchant_paysafe_settlement_id', v_existing.id,
+            'merchant_fee_snapshot', v_fee_snapshot
+        ),
+        updated_at = v_now
+    WHERE id = v_agreement.id;
+
+    UPDATE public.transactions
+    SET
+        status = 'completed',
+        status_notes = 'PaySafe merchant settlement completed.',
+        settlement_status = 'SETTLED',
+        metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+            'escrow_status', 'RELEASED',
+            'merchant_settlement_id', v_existing.id,
+            'merchant_wallet_id', v_merchant_wallet.id,
+            'gross_amount', v_gross,
+            'fee_amount', v_service_fee,
+            'tax_amount', v_tax,
+            'net_amount', v_net,
+            'settled_at', v_now
+        ),
+        updated_at = v_now
+    WHERE id = v_tx.id;
+
+    INSERT INTO public.transaction_events (
+        transaction_id, old_state, new_state, actor, metadata
+    ) VALUES (
+        v_tx.id,
+        v_tx.status,
+        'completed',
+        p_actor_id::TEXT,
+        jsonb_build_object(
+            'paysafe_action', 'MERCHANT_SETTLEMENT',
+            'merchant_id', v_merchant.id,
+            'settlement_id', v_existing.id
+        )
+    );
+
+    RETURN jsonb_build_object(
+        'referenceId', p_reference_id,
+        'transactionId', v_tx.id,
+        'settlementId', v_existing.id,
+        'merchantId', v_merchant.id,
+        'merchantWalletId', v_merchant_wallet.id,
+        'status', 'SETTLED',
+        'grossAmount', v_gross,
+        'feeAmount', v_service_fee,
+        'taxAmount', v_tax,
+        'netAmount', v_net,
+        'currency', UPPER(v_agreement.currency),
+        'idempotent', FALSE
+    );
+EXCEPTION
+    WHEN unique_violation THEN
+        SELECT * INTO v_existing
+        FROM public.merchant_paysafe_settlements
+        WHERE escrow_agreement_id = v_agreement.id;
+
+        IF FOUND THEN
+            RETURN jsonb_build_object(
+                'referenceId', p_reference_id,
+                'transactionId', v_existing.transaction_id,
+                'settlementId', v_existing.id,
+                'merchantId', v_existing.merchant_id,
+                'status', v_existing.status,
+                'grossAmount', v_existing.gross_amount,
+                'feeAmount', v_existing.fee_amount,
+                'taxAmount', v_existing.tax_amount,
+                'netAmount', v_existing.net_amount,
+                'currency', v_existing.currency,
+                'idempotent', TRUE
+            );
+        END IF;
+        RAISE;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.settle_merchant_paysafe_v1(TEXT, UUID) FROM PUBLIC;
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+        EXECUTE 'REVOKE ALL ON FUNCTION public.settle_merchant_paysafe_v1(TEXT, UUID) FROM anon';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+        EXECUTE 'REVOKE ALL ON FUNCTION public.settle_merchant_paysafe_v1(TEXT, UUID) FROM authenticated';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        EXECUTE 'GRANT EXECUTE ON FUNCTION public.settle_merchant_paysafe_v1(TEXT, UUID) TO service_role';
+    END IF;
+END $$;
+
+NOTIFY pgrst, 'reload schema';
+-- END SYNCED MIGRATION: 20260618_merchant_paysafe_settlement.sql
+
+-- BEGIN SYNCED MIGRATION: 20260618_gateway_intent_challenge_store.sql
+-- Durable ORBI Pay Gateway intent, challenge, and result-event outbox.
+-- Authorization evidence must be verified by ORBI Core before challenges are consumed.
+
+CREATE TABLE IF NOT EXISTS public.gateway_payment_intents (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    intent_id TEXT NOT NULL UNIQUE,
+    service_code TEXT NOT NULL,
+    reference TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    customer_user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    merchant_id UUID REFERENCES public.merchants(id) ON DELETE SET NULL,
+    amount NUMERIC NOT NULL DEFAULT 0 CHECK (amount >= 0),
+    currency TEXT NOT NULL,
+    status TEXT NOT NULL
+        CHECK (status IN (
+            'RECEIVED',
+            'REQUIRES_ACTION',
+            'AUTHORIZED',
+            'PROCESSING',
+            'COMPLETED',
+            'FAILED',
+            'CANCELLED',
+            'EXPIRED'
+        )),
+    request_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    response_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    authorized_at TIMESTAMP WITH TIME ZONE,
+    processing_at TIMESTAMP WITH TIME ZONE,
+    completed_at TIMESTAMP WITH TIME ZONE,
+    failed_at TIMESTAMP WITH TIME ZONE,
+    cancelled_at TIMESTAMP WITH TIME ZONE,
+    expires_at TIMESTAMP WITH TIME ZONE,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.gateway_payment_challenges (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    challenge_id TEXT NOT NULL UNIQUE,
+    intent_id UUID NOT NULL REFERENCES public.gateway_payment_intents(id) ON DELETE CASCADE,
+    customer_user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
+    challenge_type TEXT NOT NULL
+        CHECK (challenge_type IN ('PIN', 'OTP', 'PASSKEY', 'BIOMETRIC', '3DS')),
+    status TEXT NOT NULL DEFAULT 'PENDING'
+        CHECK (status IN ('PENDING', 'VERIFIED', 'REJECTED', 'EXPIRED', 'CANCELLED')),
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    max_attempts INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts > 0),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    verified_at TIMESTAMP WITH TIME ZONE,
+    rejected_at TIMESTAMP WITH TIME ZONE,
+    consumed_at TIMESTAMP WITH TIME ZONE,
+    authorization_method TEXT,
+    authorization_reference TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    UNIQUE(intent_id, challenge_type)
+);
+
+CREATE TABLE IF NOT EXISTS public.gateway_payment_event_outbox (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_key TEXT NOT NULL UNIQUE,
+    intent_id UUID NOT NULL REFERENCES public.gateway_payment_intents(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL DEFAULT 'SERVICE_PAYMENT_RESULT',
+    payload JSONB NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING'
+        CHECK (status IN ('PENDING', 'DELIVERING', 'DELIVERED', 'FAILED')),
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    next_attempt_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    last_error TEXT,
+    delivered_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_gateway_payment_intents_status
+    ON public.gateway_payment_intents(status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_gateway_payment_intents_customer
+    ON public.gateway_payment_intents(customer_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_gateway_payment_challenges_pending
+    ON public.gateway_payment_challenges(status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_gateway_payment_event_outbox_pending
+    ON public.gateway_payment_event_outbox(status, next_attempt_at);
+
+ALTER TABLE public.gateway_payment_intents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.gateway_payment_challenges ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.gateway_payment_event_outbox ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS gateway_payment_intents_service_role
+    ON public.gateway_payment_intents;
+CREATE POLICY gateway_payment_intents_service_role
+    ON public.gateway_payment_intents
+    FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+DROP POLICY IF EXISTS gateway_payment_challenges_service_role
+    ON public.gateway_payment_challenges;
+CREATE POLICY gateway_payment_challenges_service_role
+    ON public.gateway_payment_challenges
+    FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+DROP POLICY IF EXISTS gateway_payment_event_outbox_service_role
+    ON public.gateway_payment_event_outbox;
+CREATE POLICY gateway_payment_event_outbox_service_role
+    ON public.gateway_payment_event_outbox
+    FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+CREATE OR REPLACE FUNCTION public.persist_gateway_payment_intent_v1(
+    p_intent_id TEXT,
+    p_service_code TEXT,
+    p_reference TEXT,
+    p_operation TEXT,
+    p_request_hash TEXT,
+    p_customer_user_id UUID,
+    p_merchant_id UUID,
+    p_amount NUMERIC,
+    p_currency TEXT,
+    p_status TEXT,
+    p_request_payload JSONB,
+    p_response_payload JSONB,
+    p_challenge_id TEXT DEFAULT NULL,
+    p_challenge_type TEXT DEFAULT NULL,
+    p_challenge_expires_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+    p_challenge_metadata JSONB DEFAULT '{}'::jsonb
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_intent public.gateway_payment_intents%ROWTYPE;
+    v_status TEXT := UPPER(BTRIM(COALESCE(p_status, '')));
+    v_event_key TEXT;
+BEGIN
+    IF NULLIF(BTRIM(COALESCE(p_intent_id, '')), '') IS NULL
+       OR NULLIF(BTRIM(COALESCE(p_request_hash, '')), '') IS NULL THEN
+        RAISE EXCEPTION 'GATEWAY_INTENT_IDEMPOTENCY_REQUIRED';
+    END IF;
+
+    SELECT * INTO v_intent
+    FROM public.gateway_payment_intents
+    WHERE intent_id = p_intent_id
+    FOR UPDATE;
+
+    IF FOUND THEN
+        IF v_intent.request_hash <> p_request_hash THEN
+            RAISE EXCEPTION 'GATEWAY_INTENT_REPLAY_MISMATCH';
+        END IF;
+        SELECT event_key INTO v_event_key
+        FROM public.gateway_payment_event_outbox
+        WHERE intent_id = v_intent.id
+        ORDER BY created_at DESC
+        LIMIT 1;
+        RETURN jsonb_build_object(
+            'intentId', v_intent.intent_id,
+            'status', v_intent.status,
+            'response', v_intent.response_payload,
+            'outboxEventKey', v_event_key,
+            'replayed', TRUE
+        );
+    END IF;
+
+    IF v_status NOT IN ('REQUIRES_ACTION', 'FAILED', 'PENDING', 'PROCESSING', 'COMPLETED') THEN
+        RAISE EXCEPTION 'GATEWAY_INTENT_STATUS_INVALID';
+    END IF;
+
+    INSERT INTO public.gateway_payment_intents (
+        intent_id,
+        service_code,
+        reference,
+        operation,
+        request_hash,
+        customer_user_id,
+        merchant_id,
+        amount,
+        currency,
+        status,
+        request_payload,
+        response_payload,
+        expires_at,
+        failed_at,
+        completed_at,
+        metadata
+    ) VALUES (
+        p_intent_id,
+        p_service_code,
+        p_reference,
+        UPPER(p_operation),
+        p_request_hash,
+        p_customer_user_id,
+        p_merchant_id,
+        ROUND(COALESCE(p_amount, 0)::NUMERIC, 2),
+        UPPER(p_currency),
+        CASE v_status
+            WHEN 'REQUIRES_ACTION' THEN 'REQUIRES_ACTION'
+            WHEN 'FAILED' THEN 'FAILED'
+            WHEN 'COMPLETED' THEN 'COMPLETED'
+            WHEN 'PROCESSING' THEN 'PROCESSING'
+            ELSE 'RECEIVED'
+        END,
+        COALESCE(p_request_payload, '{}'::jsonb),
+        COALESCE(p_response_payload, '{}'::jsonb),
+        p_challenge_expires_at,
+        CASE WHEN v_status = 'FAILED' THEN NOW() ELSE NULL END,
+        CASE WHEN v_status = 'COMPLETED' THEN NOW() ELSE NULL END,
+        jsonb_build_object('persisted_by', 'persist_gateway_payment_intent_v1')
+    )
+    RETURNING * INTO v_intent;
+
+    IF v_status = 'REQUIRES_ACTION' THEN
+        IF p_customer_user_id IS NULL
+           OR NULLIF(BTRIM(COALESCE(p_challenge_id, '')), '') IS NULL
+           OR NULLIF(BTRIM(COALESCE(p_challenge_type, '')), '') IS NULL
+           OR p_challenge_expires_at IS NULL THEN
+            RAISE EXCEPTION 'GATEWAY_CHALLENGE_DETAILS_REQUIRED';
+        END IF;
+
+        INSERT INTO public.gateway_payment_challenges (
+            challenge_id,
+            intent_id,
+            customer_user_id,
+            challenge_type,
+            status,
+            expires_at,
+            metadata
+        ) VALUES (
+            p_challenge_id,
+            v_intent.id,
+            p_customer_user_id,
+            UPPER(p_challenge_type),
+            'PENDING',
+            p_challenge_expires_at,
+            COALESCE(p_challenge_metadata, '{}'::jsonb)
+        );
+    END IF;
+
+    v_event_key := 'service-payment-result:' || p_intent_id || ':' || LOWER(v_status);
+    INSERT INTO public.gateway_payment_event_outbox (
+        event_key,
+        intent_id,
+        payload,
+        status
+    ) VALUES (
+        v_event_key,
+        v_intent.id,
+        COALESCE(p_response_payload, '{}'::jsonb),
+        'PENDING'
+    );
+
+    RETURN jsonb_build_object(
+        'intentId', v_intent.intent_id,
+        'status', v_intent.status,
+        'response', v_intent.response_payload,
+        'outboxEventKey', v_event_key,
+        'replayed', FALSE
+    );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.record_gateway_payment_event_delivery_v1(
+    p_event_key TEXT,
+    p_delivered BOOLEAN,
+    p_error TEXT DEFAULT NULL
+)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    UPDATE public.gateway_payment_event_outbox
+    SET
+        status = CASE WHEN p_delivered THEN 'DELIVERED' ELSE 'FAILED' END,
+        attempt_count = attempt_count + 1,
+        delivered_at = CASE WHEN p_delivered THEN NOW() ELSE delivered_at END,
+        next_attempt_at = CASE
+            WHEN p_delivered THEN next_attempt_at
+            ELSE NOW() + (LEAST(POWER(2, attempt_count + 1), 60)::TEXT || ' minutes')::INTERVAL
+        END,
+        last_error = CASE WHEN p_delivered THEN NULL ELSE LEFT(COALESCE(p_error, 'DELIVERY_FAILED'), 1000) END,
+        updated_at = NOW()
+    WHERE event_key = p_event_key;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.persist_gateway_payment_intent_v1(
+    TEXT, TEXT, TEXT, TEXT, TEXT, UUID, UUID, NUMERIC, TEXT, TEXT,
+    JSONB, JSONB, TEXT, TEXT, TIMESTAMP WITH TIME ZONE, JSONB
+) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.record_gateway_payment_event_delivery_v1(TEXT, BOOLEAN, TEXT)
+    FROM PUBLIC;
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+        EXECUTE 'REVOKE ALL ON FUNCTION public.persist_gateway_payment_intent_v1(TEXT, TEXT, TEXT, TEXT, TEXT, UUID, UUID, NUMERIC, TEXT, TEXT, JSONB, JSONB, TEXT, TEXT, TIMESTAMP WITH TIME ZONE, JSONB) FROM anon';
+        EXECUTE 'REVOKE ALL ON FUNCTION public.record_gateway_payment_event_delivery_v1(TEXT, BOOLEAN, TEXT) FROM anon';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+        EXECUTE 'REVOKE ALL ON FUNCTION public.persist_gateway_payment_intent_v1(TEXT, TEXT, TEXT, TEXT, TEXT, UUID, UUID, NUMERIC, TEXT, TEXT, JSONB, JSONB, TEXT, TEXT, TIMESTAMP WITH TIME ZONE, JSONB) FROM authenticated';
+        EXECUTE 'REVOKE ALL ON FUNCTION public.record_gateway_payment_event_delivery_v1(TEXT, BOOLEAN, TEXT) FROM authenticated';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        EXECUTE 'GRANT EXECUTE ON FUNCTION public.persist_gateway_payment_intent_v1(TEXT, TEXT, TEXT, TEXT, TEXT, UUID, UUID, NUMERIC, TEXT, TEXT, JSONB, JSONB, TEXT, TEXT, TIMESTAMP WITH TIME ZONE, JSONB) TO service_role';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION public.record_gateway_payment_event_delivery_v1(TEXT, BOOLEAN, TEXT) TO service_role';
+    END IF;
+END $$;
+
+NOTIFY pgrst, 'reload schema';
+-- END SYNCED MIGRATION: 20260618_gateway_intent_challenge_store.sql
+
+-- BEGIN SYNCED MIGRATION: 20260618_shared_pot_hardening.sql
+-- Atomic Shared Pot lifecycle hardening.
+-- Financial and membership mutations are service-role-only and database authoritative.
+
+ALTER TABLE public.shared_pots
+    ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shared_pots_owner_idempotency
+    ON public.shared_pots(owner_user_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+
+ALTER TABLE public.shared_pot_invitations
+    ADD COLUMN IF NOT EXISTS response_idempotency_key TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shared_pot_invitation_response_idempotency
+    ON public.shared_pot_invitations(invitee_user_id, response_idempotency_key)
+    WHERE response_idempotency_key IS NOT NULL;
+
+ALTER TABLE public.shared_pots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.shared_pot_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.shared_pot_invitations ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS shared_pots_service_role ON public.shared_pots;
+CREATE POLICY shared_pots_service_role ON public.shared_pots
+    FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+DROP POLICY IF EXISTS shared_pot_members_service_role ON public.shared_pot_members;
+CREATE POLICY shared_pot_members_service_role ON public.shared_pot_members
+    FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+DROP POLICY IF EXISTS shared_pot_invitations_service_role ON public.shared_pot_invitations;
+CREATE POLICY shared_pot_invitations_service_role ON public.shared_pot_invitations
+    FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+DROP FUNCTION IF EXISTS public.shared_pot_contribute_v1(
+    UUID, UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, JSONB
+);
+DROP FUNCTION IF EXISTS public.shared_pot_withdraw_v1(
+    UUID, UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, JSONB, TEXT, JSONB
+);
+
+CREATE OR REPLACE FUNCTION public.create_shared_pot_v1(
+    p_actor_user_id UUID,
+    p_name TEXT,
+    p_purpose TEXT DEFAULT NULL,
+    p_currency TEXT DEFAULT 'TZS',
+    p_target_amount NUMERIC DEFAULT 0,
+    p_access_model TEXT DEFAULT 'INVITE',
+    p_idempotency_key TEXT DEFAULT NULL,
+    p_metadata JSONB DEFAULT '{}'::jsonb
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_actor UUID := COALESCE(auth.uid(), p_actor_user_id);
+    v_pot public.shared_pots%ROWTYPE;
+    v_currency TEXT := UPPER(BTRIM(COALESCE(p_currency, 'TZS')));
+    v_access_model TEXT := UPPER(BTRIM(COALESCE(p_access_model, 'INVITE')));
+    v_key TEXT := NULLIF(BTRIM(COALESCE(p_idempotency_key, '')), '');
+BEGIN
+    IF v_actor IS NULL OR (auth.uid() IS NOT NULL AND auth.uid() <> p_actor_user_id) THEN
+        RAISE EXCEPTION 'SHARED_POT_ACTOR_INVALID';
+    END IF;
+    IF NULLIF(BTRIM(COALESCE(p_name, '')), '') IS NULL THEN
+        RAISE EXCEPTION 'SHARED_POT_NAME_REQUIRED';
+    END IF;
+    IF COALESCE(p_target_amount, 0) < 0 THEN
+        RAISE EXCEPTION 'SHARED_POT_TARGET_INVALID';
+    END IF;
+    IF v_access_model NOT IN ('INVITE', 'PRIVATE', 'ORG') THEN
+        RAISE EXCEPTION 'SHARED_POT_ACCESS_MODEL_INVALID';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM public.users
+        WHERE id = v_actor AND LOWER(COALESCE(account_status, '')) = 'active'
+    ) THEN
+        RAISE EXCEPTION 'SHARED_POT_ACTOR_NOT_ACTIVE';
+    END IF;
+
+    IF v_key IS NOT NULL THEN
+        SELECT * INTO v_pot
+        FROM public.shared_pots
+        WHERE owner_user_id = v_actor AND idempotency_key = v_key
+        FOR UPDATE;
+
+        IF FOUND THEN
+            IF v_pot.name <> BTRIM(p_name)
+               OR UPPER(COALESCE(v_pot.currency, '')) <> v_currency
+               OR COALESCE(v_pot.target_amount, 0) <> COALESCE(p_target_amount, 0) THEN
+                RAISE EXCEPTION 'SHARED_POT_CREATE_REPLAY_MISMATCH';
+            END IF;
+            RETURN jsonb_build_object('pot', to_jsonb(v_pot), 'idempotent', TRUE);
+        END IF;
+    END IF;
+
+    INSERT INTO public.shared_pots (
+        owner_user_id, name, purpose, currency, target_amount, current_amount,
+        status, access_model, idempotency_key, metadata
+    ) VALUES (
+        v_actor,
+        BTRIM(p_name),
+        NULLIF(BTRIM(COALESCE(p_purpose, '')), ''),
+        v_currency,
+        COALESCE(p_target_amount, 0),
+        0,
+        'ACTIVE',
+        v_access_model,
+        v_key,
+        COALESCE(p_metadata, '{}'::jsonb)
+            || jsonb_build_object('created_by', v_actor, 'created_atomically', TRUE)
+    )
+    RETURNING * INTO v_pot;
+
+    INSERT INTO public.shared_pot_members (
+        pot_id, user_id, role, contributed_amount, metadata
+    ) VALUES (
+        v_pot.id, v_actor, 'OWNER', 0,
+        jsonb_build_object('owner_membership', TRUE, 'created_atomically', TRUE)
+    );
+
+    RETURN jsonb_build_object('pot', to_jsonb(v_pot), 'idempotent', FALSE);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.respond_shared_pot_invitation_v1(
+    p_actor_user_id UUID,
+    p_invitation_id UUID,
+    p_action TEXT,
+    p_idempotency_key TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_actor UUID := COALESCE(auth.uid(), p_actor_user_id);
+    v_action TEXT := UPPER(BTRIM(COALESCE(p_action, '')));
+    v_key TEXT := NULLIF(BTRIM(COALESCE(p_idempotency_key, '')), '');
+    v_invite public.shared_pot_invitations%ROWTYPE;
+    v_member public.shared_pot_members%ROWTYPE;
+BEGIN
+    IF v_actor IS NULL OR (auth.uid() IS NOT NULL AND auth.uid() <> p_actor_user_id) THEN
+        RAISE EXCEPTION 'SHARED_POT_ACTOR_INVALID';
+    END IF;
+    IF v_action NOT IN ('ACCEPT', 'REJECT') THEN
+        RAISE EXCEPTION 'SHARED_POT_INVITE_ACTION_INVALID';
+    END IF;
+
+    SELECT * INTO v_invite
+    FROM public.shared_pot_invitations
+    WHERE id = p_invitation_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'SHARED_POT_INVITE_NOT_FOUND';
+    END IF;
+    IF v_invite.invitee_user_id <> v_actor THEN
+        RAISE EXCEPTION 'SHARED_POT_INVITE_ACCESS_DENIED';
+    END IF;
+
+    IF v_invite.status IN ('ACCEPTED', 'REJECTED')
+       AND ((v_action = 'ACCEPT' AND v_invite.status = 'ACCEPTED')
+         OR (v_action = 'REJECT' AND v_invite.status = 'REJECTED')) THEN
+        SELECT * INTO v_member
+        FROM public.shared_pot_members
+        WHERE pot_id = v_invite.pot_id AND user_id = v_actor;
+        RETURN jsonb_build_object(
+            'invitation', to_jsonb(v_invite),
+            'member', CASE WHEN v_member.id IS NULL THEN NULL ELSE to_jsonb(v_member) END,
+            'idempotent', TRUE
+        );
+    END IF;
+
+    IF v_invite.status <> 'PENDING' THEN
+        RAISE EXCEPTION 'SHARED_POT_INVITE_NOT_PENDING';
+    END IF;
+    IF v_invite.expires_at IS NOT NULL AND v_invite.expires_at <= NOW() THEN
+        UPDATE public.shared_pot_invitations
+        SET status = 'EXPIRED', responded_at = NOW(), updated_at = NOW()
+        WHERE id = v_invite.id
+        RETURNING * INTO v_invite;
+        RAISE EXCEPTION 'SHARED_POT_INVITE_EXPIRED';
+    END IF;
+
+    IF v_action = 'ACCEPT' THEN
+        INSERT INTO public.shared_pot_members (
+            pot_id, user_id, role, contributed_amount, metadata
+        ) VALUES (
+            v_invite.pot_id,
+            v_actor,
+            v_invite.role,
+            0,
+            jsonb_build_object(
+                'joined_via_invitation', v_invite.id,
+                'invited_by', v_invite.inviter_user_id,
+                'created_atomically', TRUE
+            )
+        )
+        ON CONFLICT (pot_id, user_id) DO NOTHING
+        RETURNING * INTO v_member;
+
+        IF v_member.id IS NULL THEN
+            RAISE EXCEPTION 'SHARED_POT_MEMBER_ALREADY_EXISTS';
+        END IF;
+    END IF;
+
+    UPDATE public.shared_pot_invitations
+    SET
+        status = CASE WHEN v_action = 'ACCEPT' THEN 'ACCEPTED' ELSE 'REJECTED' END,
+        response_idempotency_key = v_key,
+        responded_at = NOW(),
+        updated_at = NOW()
+    WHERE id = v_invite.id
+    RETURNING * INTO v_invite;
+
+    RETURN jsonb_build_object(
+        'invitation', to_jsonb(v_invite),
+        'member', CASE WHEN v_member.id IS NULL THEN NULL ELSE to_jsonb(v_member) END,
+        'idempotent', FALSE
+    );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.shared_pot_contribute_v1(
+    p_user_id UUID,
+    p_pot_id UUID,
+    p_source_wallet_id UUID,
+    p_amount NUMERIC,
+    p_currency TEXT DEFAULT 'TZS',
+    p_description TEXT DEFAULT NULL,
+    p_reference_id TEXT DEFAULT NULL,
+    p_metadata JSONB DEFAULT '{}'::jsonb
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_actor UUID := COALESCE(auth.uid(), p_user_id);
+    v_pot public.shared_pots%ROWTYPE;
+    v_member public.shared_pot_members%ROWTYPE;
+    v_source_wallet public.wallets%ROWTYPE;
+    v_source_vault public.platform_vaults%ROWTYPE;
+    v_existing public.transactions%ROWTYPE;
+    v_source_table TEXT;
+    v_source_currency TEXT;
+    v_source_balance NUMERIC;
+    v_source_balance_after NUMERIC;
+    v_pot_balance_after NUMERIC;
+    v_tx_id UUID := gen_random_uuid();
+    v_reference_id TEXT := NULLIF(BTRIM(COALESCE(p_reference_id, '')), '');
+BEGIN
+    IF v_actor IS NULL OR (auth.uid() IS NOT NULL AND auth.uid() <> p_user_id) THEN
+        RAISE EXCEPTION 'SHARED_POT_ACTOR_INVALID';
+    END IF;
+    IF p_amount IS NULL OR p_amount <= 0 THEN
+        RAISE EXCEPTION 'INVALID_AMOUNT';
+    END IF;
+    IF v_reference_id IS NULL THEN
+        RAISE EXCEPTION 'SHARED_POT_IDEMPOTENCY_REQUIRED';
+    END IF;
+
+    SELECT * INTO v_pot
+    FROM public.shared_pots
+    WHERE id = p_pot_id
+    FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'SHARED_POT_NOT_FOUND'; END IF;
+    IF v_pot.status <> 'ACTIVE' THEN RAISE EXCEPTION 'SHARED_POT_NOT_ACTIVE'; END IF;
+
+    SELECT * INTO v_member
+    FROM public.shared_pot_members
+    WHERE pot_id = p_pot_id AND user_id = v_actor
+    FOR UPDATE;
+    IF NOT FOUND OR v_member.role NOT IN ('OWNER', 'MANAGER', 'CONTRIBUTOR') THEN
+        RAISE EXCEPTION 'SHARED_POT_CONTRIBUTION_DENIED';
+    END IF;
+
+    SELECT * INTO v_existing
+    FROM public.transactions
+    WHERE reference_id = v_reference_id
+    FOR UPDATE;
+    IF FOUND THEN
+        IF v_existing.user_id <> v_actor
+           OR v_existing.wallet_id <> p_source_wallet_id
+           OR v_existing.amount::NUMERIC <> p_amount
+           OR v_existing.allocation_source <> 'SHARED_POT_CONTRIBUTION'
+           OR v_existing.metadata->>'shared_pot_id' <> p_pot_id::TEXT THEN
+            RAISE EXCEPTION 'SHARED_POT_REPLAY_MISMATCH';
+        END IF;
+        RETURN jsonb_build_object(
+            'transaction_id', v_existing.id,
+            'reference_id', v_reference_id,
+            'pot_balance_after', v_pot.current_amount,
+            'idempotent', TRUE
+        );
+    END IF;
+
+    SELECT * INTO v_source_vault
+    FROM public.platform_vaults
+    WHERE id = p_source_wallet_id AND user_id = v_actor
+    FOR UPDATE;
+    IF FOUND THEN
+        IF COALESCE(v_source_vault.is_locked, FALSE)
+           OR LOWER(COALESCE(v_source_vault.status, 'active')) <> 'active' THEN
+            RAISE EXCEPTION 'SOURCE_WALLET_UNAVAILABLE';
+        END IF;
+        v_source_table := 'platform_vaults';
+        v_source_balance := COALESCE(v_source_vault.balance, 0);
+        v_source_currency := UPPER(COALESCE(v_source_vault.currency, 'TZS'));
+    ELSE
+        SELECT * INTO v_source_wallet
+        FROM public.wallets
+        WHERE id = p_source_wallet_id AND user_id = v_actor
+        FOR UPDATE;
+        IF NOT FOUND THEN RAISE EXCEPTION 'NO_OPERATING_WALLET'; END IF;
+        IF COALESCE(v_source_wallet.is_locked, FALSE)
+           OR LOWER(COALESCE(v_source_wallet.status, 'active')) <> 'active' THEN
+            RAISE EXCEPTION 'SOURCE_WALLET_UNAVAILABLE';
+        END IF;
+        v_source_table := 'wallets';
+        v_source_balance := COALESCE(v_source_wallet.balance, 0);
+        v_source_currency := UPPER(COALESCE(v_source_wallet.currency, 'TZS'));
+    END IF;
+
+    IF v_source_currency <> UPPER(COALESCE(v_pot.currency, 'TZS'))
+       OR UPPER(BTRIM(COALESCE(p_currency, v_pot.currency, 'TZS'))) <> UPPER(COALESCE(v_pot.currency, 'TZS')) THEN
+        RAISE EXCEPTION 'SHARED_POT_CURRENCY_MISMATCH';
+    END IF;
+    IF v_source_balance < p_amount THEN RAISE EXCEPTION 'INSUFFICIENT_FUNDS'; END IF;
+
+    v_source_balance_after := v_source_balance - p_amount;
+    v_pot_balance_after := COALESCE(v_pot.current_amount, 0) + p_amount;
+
+    INSERT INTO public.transactions (
+        id, reference_id, user_id, wallet_id, amount, currency, description,
+        type, status, date, wealth_impact_type, protection_state, allocation_source, metadata
+    ) VALUES (
+        v_tx_id, v_reference_id, v_actor, p_source_wallet_id, p_amount::TEXT,
+        UPPER(v_pot.currency),
+        COALESCE(NULLIF(BTRIM(COALESCE(p_description, '')), ''), 'Shared pot contribution'),
+        'internal_transfer', 'completed', CURRENT_DATE, 'GROWING', 'OPEN',
+        'SHARED_POT_CONTRIBUTION',
+        COALESCE(p_metadata, '{}'::jsonb)
+            || jsonb_build_object('shared_pot_id', p_pot_id, 'actor_user_id', v_actor)
+    );
+
+    IF v_source_table = 'wallets' THEN
+        UPDATE public.wallets SET balance = v_source_balance_after, updated_at = NOW()
+        WHERE id = p_source_wallet_id AND user_id = v_actor;
+    ELSE
+        UPDATE public.platform_vaults SET balance = v_source_balance_after, updated_at = NOW()
+        WHERE id = p_source_wallet_id AND user_id = v_actor;
+    END IF;
+
+    UPDATE public.shared_pots
+    SET current_amount = v_pot_balance_after, updated_at = NOW()
+    WHERE id = p_pot_id;
+
+    UPDATE public.shared_pot_members
+    SET contributed_amount = COALESCE(contributed_amount, 0) + p_amount
+    WHERE id = v_member.id;
+
+    INSERT INTO public.financial_ledger (
+        transaction_id, user_id, wallet_id, shared_pot_id, bucket_type,
+        entry_side, entry_type, amount, balance_after, description
+    ) VALUES
+    (
+        v_tx_id, v_actor, p_source_wallet_id, p_pot_id, 'OPERATING',
+        'DEBIT', 'DEBIT', p_amount::TEXT, v_source_balance_after::TEXT,
+        'Shared pot contribution debit: ' || v_pot.name
+    ),
+    (
+        v_tx_id, v_actor, p_source_wallet_id, p_pot_id, 'GROWING',
+        'CREDIT', 'CREDIT', p_amount::TEXT, v_pot_balance_after::TEXT,
+        'Shared pot contribution credit: ' || v_pot.name
+    );
+
+    RETURN jsonb_build_object(
+        'transaction_id', v_tx_id,
+        'reference_id', v_reference_id,
+        'source_balance_after', v_source_balance_after,
+        'pot_balance_after', v_pot_balance_after,
+        'source_table', v_source_table,
+        'idempotent', FALSE
+    );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.shared_pot_withdraw_v1(
+    p_user_id UUID,
+    p_pot_id UUID,
+    p_target_wallet_id UUID,
+    p_amount NUMERIC,
+    p_currency TEXT DEFAULT 'TZS',
+    p_description TEXT DEFAULT NULL,
+    p_reference_id TEXT DEFAULT NULL,
+    p_metadata JSONB DEFAULT '{}'::jsonb
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_actor UUID := COALESCE(auth.uid(), p_user_id);
+    v_pot public.shared_pots%ROWTYPE;
+    v_member public.shared_pot_members%ROWTYPE;
+    v_target_wallet public.wallets%ROWTYPE;
+    v_target_vault public.platform_vaults%ROWTYPE;
+    v_existing public.transactions%ROWTYPE;
+    v_target_table TEXT;
+    v_target_currency TEXT;
+    v_target_balance NUMERIC;
+    v_target_balance_after NUMERIC;
+    v_pot_balance_after NUMERIC;
+    v_tx_id UUID := gen_random_uuid();
+    v_reference_id TEXT := NULLIF(BTRIM(COALESCE(p_reference_id, '')), '');
+BEGIN
+    IF v_actor IS NULL OR (auth.uid() IS NOT NULL AND auth.uid() <> p_user_id) THEN
+        RAISE EXCEPTION 'SHARED_POT_ACTOR_INVALID';
+    END IF;
+    IF p_amount IS NULL OR p_amount <= 0 THEN RAISE EXCEPTION 'INVALID_AMOUNT'; END IF;
+    IF v_reference_id IS NULL THEN RAISE EXCEPTION 'SHARED_POT_IDEMPOTENCY_REQUIRED'; END IF;
+
+    SELECT * INTO v_pot
+    FROM public.shared_pots
+    WHERE id = p_pot_id
+    FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'SHARED_POT_NOT_FOUND'; END IF;
+    IF v_pot.status <> 'ACTIVE' THEN RAISE EXCEPTION 'SHARED_POT_NOT_ACTIVE'; END IF;
+
+    SELECT * INTO v_member
+    FROM public.shared_pot_members
+    WHERE pot_id = p_pot_id AND user_id = v_actor
+    FOR UPDATE;
+    IF NOT FOUND OR v_member.role NOT IN ('OWNER', 'MANAGER') THEN
+        RAISE EXCEPTION 'SHARED_POT_WITHDRAW_DENIED';
+    END IF;
+
+    SELECT * INTO v_existing
+    FROM public.transactions
+    WHERE reference_id = v_reference_id
+    FOR UPDATE;
+    IF FOUND THEN
+        IF v_existing.user_id <> v_actor
+           OR v_existing.wallet_id <> p_target_wallet_id
+           OR v_existing.amount::NUMERIC <> p_amount
+           OR v_existing.allocation_source <> 'SHARED_POT_WITHDRAWAL'
+           OR v_existing.metadata->>'shared_pot_id' <> p_pot_id::TEXT THEN
+            RAISE EXCEPTION 'SHARED_POT_REPLAY_MISMATCH';
+        END IF;
+        RETURN jsonb_build_object(
+            'transaction_id', v_existing.id,
+            'reference_id', v_reference_id,
+            'pot_balance_after', v_pot.current_amount,
+            'idempotent', TRUE
+        );
+    END IF;
+
+    IF COALESCE(v_pot.current_amount, 0) < p_amount THEN
+        RAISE EXCEPTION 'INSUFFICIENT_POT_FUNDS';
+    END IF;
+
+    SELECT * INTO v_target_vault
+    FROM public.platform_vaults
+    WHERE id = p_target_wallet_id AND user_id = v_actor
+    FOR UPDATE;
+    IF FOUND THEN
+        IF COALESCE(v_target_vault.is_locked, FALSE)
+           OR LOWER(COALESCE(v_target_vault.status, 'active')) <> 'active' THEN
+            RAISE EXCEPTION 'TARGET_WALLET_UNAVAILABLE';
+        END IF;
+        v_target_table := 'platform_vaults';
+        v_target_balance := COALESCE(v_target_vault.balance, 0);
+        v_target_currency := UPPER(COALESCE(v_target_vault.currency, 'TZS'));
+    ELSE
+        SELECT * INTO v_target_wallet
+        FROM public.wallets
+        WHERE id = p_target_wallet_id AND user_id = v_actor
+        FOR UPDATE;
+        IF NOT FOUND THEN RAISE EXCEPTION 'NO_OPERATING_WALLET'; END IF;
+        IF COALESCE(v_target_wallet.is_locked, FALSE)
+           OR LOWER(COALESCE(v_target_wallet.status, 'active')) <> 'active' THEN
+            RAISE EXCEPTION 'TARGET_WALLET_UNAVAILABLE';
+        END IF;
+        v_target_table := 'wallets';
+        v_target_balance := COALESCE(v_target_wallet.balance, 0);
+        v_target_currency := UPPER(COALESCE(v_target_wallet.currency, 'TZS'));
+    END IF;
+
+    IF v_target_currency <> UPPER(COALESCE(v_pot.currency, 'TZS'))
+       OR UPPER(BTRIM(COALESCE(p_currency, v_pot.currency, 'TZS'))) <> UPPER(COALESCE(v_pot.currency, 'TZS')) THEN
+        RAISE EXCEPTION 'SHARED_POT_CURRENCY_MISMATCH';
+    END IF;
+
+    v_target_balance_after := v_target_balance + p_amount;
+    v_pot_balance_after := COALESCE(v_pot.current_amount, 0) - p_amount;
+
+    INSERT INTO public.transactions (
+        id, reference_id, user_id, wallet_id, amount, currency, description,
+        type, status, date, wealth_impact_type, protection_state, allocation_source, metadata
+    ) VALUES (
+        v_tx_id, v_reference_id, v_actor, p_target_wallet_id, p_amount::TEXT,
+        UPPER(v_pot.currency),
+        COALESCE(NULLIF(BTRIM(COALESCE(p_description, '')), ''), 'Shared pot withdrawal'),
+        'internal_transfer', 'completed', CURRENT_DATE, 'GROWING', 'OPEN',
+        'SHARED_POT_WITHDRAWAL',
+        COALESCE(p_metadata, '{}'::jsonb)
+            || jsonb_build_object('shared_pot_id', p_pot_id, 'actor_user_id', v_actor)
+    );
+
+    IF v_target_table = 'wallets' THEN
+        UPDATE public.wallets SET balance = v_target_balance_after, updated_at = NOW()
+        WHERE id = p_target_wallet_id AND user_id = v_actor;
+    ELSE
+        UPDATE public.platform_vaults SET balance = v_target_balance_after, updated_at = NOW()
+        WHERE id = p_target_wallet_id AND user_id = v_actor;
+    END IF;
+
+    UPDATE public.shared_pots
+    SET current_amount = v_pot_balance_after, updated_at = NOW()
+    WHERE id = p_pot_id;
+
+    INSERT INTO public.financial_ledger (
+        transaction_id, user_id, wallet_id, shared_pot_id, bucket_type,
+        entry_side, entry_type, amount, balance_after, description
+    ) VALUES
+    (
+        v_tx_id, v_actor, p_target_wallet_id, p_pot_id, 'GROWING',
+        'DEBIT', 'DEBIT', p_amount::TEXT, v_pot_balance_after::TEXT,
+        'Shared pot withdrawal debit: ' || v_pot.name
+    ),
+    (
+        v_tx_id, v_actor, p_target_wallet_id, p_pot_id, 'OPERATING',
+        'CREDIT', 'CREDIT', p_amount::TEXT, v_target_balance_after::TEXT,
+        'Shared pot withdrawal credit: ' || v_pot.name
+    );
+
+    RETURN jsonb_build_object(
+        'transaction_id', v_tx_id,
+        'reference_id', v_reference_id,
+        'target_balance_after', v_target_balance_after,
+        'pot_balance_after', v_pot_balance_after,
+        'target_table', v_target_table,
+        'idempotent', FALSE
+    );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.create_shared_pot_v1(
+    UUID, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB
+) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.respond_shared_pot_invitation_v1(UUID, UUID, TEXT, TEXT)
+    FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.shared_pot_contribute_v1(
+    UUID, UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, JSONB
+) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.shared_pot_withdraw_v1(
+    UUID, UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, JSONB
+) FROM PUBLIC;
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+        EXECUTE 'REVOKE ALL ON FUNCTION public.create_shared_pot_v1(UUID, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB) FROM anon';
+        EXECUTE 'REVOKE ALL ON FUNCTION public.respond_shared_pot_invitation_v1(UUID, UUID, TEXT, TEXT) FROM anon';
+        EXECUTE 'REVOKE ALL ON FUNCTION public.shared_pot_contribute_v1(UUID, UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, JSONB) FROM anon';
+        EXECUTE 'REVOKE ALL ON FUNCTION public.shared_pot_withdraw_v1(UUID, UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, JSONB) FROM anon';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+        EXECUTE 'REVOKE ALL ON FUNCTION public.create_shared_pot_v1(UUID, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB) FROM authenticated';
+        EXECUTE 'REVOKE ALL ON FUNCTION public.respond_shared_pot_invitation_v1(UUID, UUID, TEXT, TEXT) FROM authenticated';
+        EXECUTE 'REVOKE ALL ON FUNCTION public.shared_pot_contribute_v1(UUID, UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, JSONB) FROM authenticated';
+        EXECUTE 'REVOKE ALL ON FUNCTION public.shared_pot_withdraw_v1(UUID, UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, JSONB) FROM authenticated';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        EXECUTE 'GRANT EXECUTE ON FUNCTION public.create_shared_pot_v1(UUID, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB) TO service_role';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION public.respond_shared_pot_invitation_v1(UUID, UUID, TEXT, TEXT) TO service_role';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION public.shared_pot_contribute_v1(UUID, UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, JSONB) TO service_role';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION public.shared_pot_withdraw_v1(UUID, UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, JSONB) TO service_role';
+    END IF;
+END $$;
+
+NOTIFY pgrst, 'reload schema';
+-- END SYNCED MIGRATION: 20260618_shared_pot_hardening.sql
+
+-- END 20260618 SHARED FINANCE AND PAYSAFE HARDENING SYNC
