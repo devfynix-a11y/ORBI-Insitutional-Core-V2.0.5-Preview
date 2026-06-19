@@ -362,7 +362,7 @@ CEO, ORBI`
 
         // 0. Real-Time Nexus Push (Decrypted for immediate display)
         console.log(`[Messaging] Attempting to send Socket notification to ${userId}`);
-        const socketSent = SocketRegistry.send(userId, {
+        const socketSent = await SocketRegistry.send(userId, {
             type: 'NOTIFICATION',
             payload: {
                 id,
@@ -501,15 +501,25 @@ CEO, ORBI`
         // Try SMS
         if (options.sms && profile.phone) {
             if (templatePlan.templateName) {
-                await orbiTalkGatewayService.sendTemplate(templatePlan.templateName as TemplateName, formattedPhone, vars as any, { 
+                const templateSent = await orbiTalkGatewayService.sendTemplate(templatePlan.templateName as TemplateName, formattedPhone, vars as any, {
                     language, 
                     messageType: category === 'promo' ? 'promotional' : 'transactional',
                     channel: 'sms',
                     fcmToken: profile.fcm_token,
                     requestId: id
                 });
+                if (!templateSent && category !== 'promo') {
+                    await orbiTalkGatewayService.sendSms(
+                        formattedPhone,
+                        `${displaySubject}: ${displayBody}`,
+                        language,
+                        undefined,
+                        undefined,
+                        id,
+                    );
+                }
             } else if (templatePlan.systemCustomBypass) {
-                await orbiTalkGatewayService.sendSms(formattedPhone, `${subject}: ${body}`, language, undefined, undefined, id);
+                await orbiTalkGatewayService.sendSms(formattedPhone, `${displaySubject}: ${displayBody}`, language, undefined, undefined, id);
             }
         }
 
@@ -524,6 +534,18 @@ CEO, ORBI`
                     fcmToken: profile.fcm_token,
                     requestId: id
                 });
+            }
+            if (!emailSent && category !== 'promo') {
+                await orbiTalkGatewayService.sendEmail(
+                    profile.email,
+                    displaySubject,
+                    displayBody,
+                    undefined,
+                    language,
+                    undefined,
+                    undefined,
+                    id,
+                );
             }
         }
 

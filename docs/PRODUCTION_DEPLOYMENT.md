@@ -151,13 +151,16 @@ ORBI_ALLOW_STUB_PROVIDER_RECONCILIATION=false
 ## Database Migration Order
 1. Apply core schema: `database/reset_schema.sql`
 2. Apply main schema updates: `database/main.sql`
-3. Validate critical RPCs exist:
+3. Apply capability migrations in timestamp order. PaySafe escrow hardening requires
+   `database/migrations/20260618_paysafe_escrow_hardening.sql` before deploying
+   the matching backend build.
+4. Validate critical RPCs exist:
    - `post_transaction_v2`
    - `append_ledger_entries_v1`
    - `claim_internal_transfer_settlement`
    - `complete_internal_transfer_settlement`
    - `repair_wallet_balance_emergency`
-4. Run post-migration health checks (see below).
+5. Run post-migration health checks (see below).
 
 ## Background Worker Requirements
 - At least one worker process for internal settlement flows and ledger reapers.

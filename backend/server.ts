@@ -552,8 +552,8 @@ class OrbiServer {
     async getEscrows(userId: string) {
         return this.escrow.getEscrows(userId);
     }
-    async getEscrow(referenceId: string) {
-        return this.escrow.getEscrow(referenceId);
+    async getEscrow(referenceId: string, actorId: string) {
+        return this.escrow.getEscrow(referenceId, actorId);
     }
     async releaseEscrow(referenceId: string, actorId: string) {
         return this.escrow.releaseEscrow(referenceId, actorId);
@@ -561,8 +561,8 @@ class OrbiServer {
     async disputeEscrow(referenceId: string, userId: string, reason: string) {
         return this.escrow.disputeEscrow(referenceId, userId, reason);
     }
-    async refundEscrow(referenceId: string, adminId: string) {
-        return this.escrow.refundEscrow(referenceId, adminId);
+    async refundEscrow(referenceId: string, adminId: string, reason?: string) {
+        return this.escrow.refundEscrow(referenceId, adminId, reason);
     }
 
     // --- RECONCILIATION ---

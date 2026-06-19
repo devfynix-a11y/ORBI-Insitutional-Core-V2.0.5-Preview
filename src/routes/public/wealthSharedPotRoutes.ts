@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { type RequestHandler, type Router } from 'express';
 import { Messaging } from '../../../backend/features/MessagingService.js';
 import { contributeToSharedPot, withdrawFromSharedPot } from './wealthSharedPotFinance.js';
@@ -90,29 +91,22 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
       const payload = SharedPotCreateSchema.parse(req.body);
       const sb = getAdminSupabase() || getSupabase();
       if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
-      const { data, error } = await sb
-        .from('shared_pots')
-        .insert({
-          owner_user_id: session.sub,
-          name: payload.name,
-          purpose: payload.purpose,
-          currency: payload.currency?.toUpperCase() || 'TZS',
-          target_amount: payload.target_amount || 0,
-          current_amount: 0,
-          access_model: payload.access_model || 'INVITE',
-          status: 'ACTIVE',
-          metadata: { created_from: 'mobile_app' },
-        })
-        .select('*')
-        .single();
-      if (error) return res.status(400).json({ success: false, error: error.message });
-      await sb.from('shared_pot_members').insert({
-        pot_id: data.id,
-        user_id: session.sub,
-        role: 'OWNER',
-        contributed_amount: 0,
+      const { data, error } = await sb.rpc('create_shared_pot_v1', {
+        p_actor_user_id: session.sub,
+        p_name: payload.name,
+        p_purpose: payload.purpose || null,
+        p_currency: payload.currency?.toUpperCase() || 'TZS',
+        p_target_amount: payload.target_amount || 0,
+        p_access_model: payload.access_model || 'INVITE',
+        p_idempotency_key: payload.idempotency_key || crypto.randomUUID(),
+        p_metadata: { created_from: 'mobile_app' },
       });
-      res.json({ success: true, data });
+      if (error) return res.status(400).json({ success: false, error: error.message });
+      res.json({
+        success: true,
+        data: data?.pot || null,
+        idempotent: Boolean(data?.idempotent),
+      });
     } catch (e: any) {
       res.status(400).json({ success: false, error: e.message });
     }
@@ -279,23 +273,30 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
         .single();
       if (error) return res.status(400).json({ success: false, error: error.message });
 
-      await Messaging.dispatch(
-        String(memberUser.id),
-        'info',
-        'Shared pot invitation',
-        `${session.user?.user_metadata?.full_name || 'A member'} invited you to join "${pot.name}" as ${String(payload.role || 'CONTRIBUTOR').toLowerCase()}.`,
-        {
-          push: true,
-          sms: false,
-          email: true,
-          eventCode: 'SHARED_POT_INVITATION',
-          variables: {
-            pot_name: pot.name,
-            role: payload.role || 'CONTRIBUTOR',
-            invite_id: data.id,
+      try {
+        await Messaging.dispatch(
+          String(memberUser.id),
+          'info',
+          'Shared pot invitation',
+          `${session.user?.user_metadata?.full_name || 'A member'} invited you to join "${pot.name}" as ${String(payload.role || 'CONTRIBUTOR').toLowerCase()}.`,
+          {
+            push: true,
+            sms: false,
+            email: true,
+            eventCode: 'SHARED_POT_INVITATION',
+            variables: {
+              pot_name: pot.name,
+              role: payload.role || 'CONTRIBUTOR',
+              invite_id: data.id,
+            },
           },
-        },
-      );
+        );
+      } catch (notificationError: any) {
+        console.warn('[Wealth][SharedPot] Invitation notification deferred', {
+          invitationId: data.id,
+          code: String(notificationError?.code || ''),
+        });
+      }
 
       res.json({
         success: true,
@@ -323,77 +324,14 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
       const sb = getAdminSupabase() || getSupabase();
       if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
 
-      const { data: inviteRaw, error: inviteError } = await sb
-        .from('shared_pot_invitations')
-        .select('*')
-        .eq('id', req.params.id)
-        .maybeSingle();
-      if (inviteError) return res.status(400).json({ success: false, error: inviteError.message });
-      if (!inviteRaw) return res.status(404).json({ success: false, error: 'SHARED_POT_INVITE_NOT_FOUND' });
-      const invite = await expireSharedPotInvitationIfNeeded(sb, inviteRaw);
-
-      if (String(invite.invitee_user_id || '') !== String(session.sub)) {
-        return res.status(403).json({ success: false, error: 'SHARED_POT_INVITE_ACCESS_DENIED' });
-      }
-      if (String(invite.status || '').toUpperCase() !== 'PENDING') {
-        return res.status(400).json({ success: false, error: 'SHARED_POT_INVITE_NOT_PENDING' });
-      }
-
-      if (payload.action === 'REJECT') {
-        const { data, error } = await sb
-          .from('shared_pot_invitations')
-          .update({
-            status: 'REJECTED',
-            responded_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', invite.id)
-          .select('*')
-          .single();
-        if (error) return res.status(400).json({ success: false, error: error.message });
-        return res.json({ success: true, data: { invitation: data } });
-      }
-
-      const { data: existingMember, error: existingMemberError } = await sb
-        .from('shared_pot_members')
-        .select('id')
-        .eq('pot_id', invite.pot_id)
-        .eq('user_id', session.sub)
-        .maybeSingle();
-      if (existingMemberError) return res.status(400).json({ success: false, error: existingMemberError.message });
-      if (existingMember) {
-        return res.status(400).json({ success: false, error: 'SHARED_POT_MEMBER_ALREADY_EXISTS' });
-      }
-
-      const { data: member, error: memberError } = await sb
-        .from('shared_pot_members')
-        .insert({
-          pot_id: invite.pot_id,
-          user_id: session.sub,
-          role: invite.role || 'CONTRIBUTOR',
-          contributed_amount: 0,
-          metadata: {
-            joined_via_invitation: invite.id,
-            invited_by: invite.inviter_user_id,
-          },
-        })
-        .select('*')
-        .single();
-      if (memberError) return res.status(400).json({ success: false, error: memberError.message });
-
-      const { data: updatedInvite, error: updateInviteError } = await sb
-        .from('shared_pot_invitations')
-        .update({
-          status: 'ACCEPTED',
-          responded_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', invite.id)
-        .select('*')
-        .single();
-      if (updateInviteError) return res.status(400).json({ success: false, error: updateInviteError.message });
-
-      res.json({ success: true, data: { invitation: updatedInvite, member } });
+      const { data, error } = await sb.rpc('respond_shared_pot_invitation_v1', {
+        p_actor_user_id: session.sub,
+        p_invitation_id: req.params.id,
+        p_action: payload.action,
+        p_idempotency_key: payload.idempotency_key || crypto.randomUUID(),
+      });
+      if (error) return res.status(400).json({ success: false, error: error.message });
+      res.json({ success: true, data });
     } catch (e: any) {
       const status = e.message === 'SHARED_POT_INVITE_ACCESS_DENIED' ? 403 : 400;
       res.status(status).json({ success: false, error: e.message });

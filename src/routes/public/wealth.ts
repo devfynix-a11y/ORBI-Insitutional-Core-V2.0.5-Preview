@@ -83,6 +83,7 @@ const SharedPotCreateSchema = z.object({
     currency: z.string().min(3).max(8).optional(),
     target_amount: z.coerce.number().nonnegative().optional(),
     access_model: z.enum(['INVITE', 'PRIVATE', 'ORG']).optional(),
+    idempotency_key: z.string().min(8).max(128).optional(),
 });
 
 const BillReserveUpdateSchema = BillReserveCreateSchema.partial().extend({
@@ -97,6 +98,7 @@ const SharedPotUpdateSchema = SharedPotCreateSchema.partial().extend({
 const SharedPotContributionSchema = z.object({
     amount: z.coerce.number().positive(),
     source_wallet_id: z.string().uuid().optional(),
+    idempotency_key: z.string().min(8).max(128).optional(),
 });
 
 const SharedPotMemberAddSchema = z.object({
@@ -107,11 +109,13 @@ const SharedPotMemberAddSchema = z.object({
 
 const SharedPotInviteResponseSchema = z.object({
     action: z.enum(['ACCEPT', 'REJECT']),
+    idempotency_key: z.string().min(8).max(128).optional(),
 });
 
 const SharedPotWithdrawSchema = z.object({
     amount: z.coerce.number().positive(),
     target_wallet_id: z.string().uuid().optional(),
+    idempotency_key: z.string().min(8).max(128).optional(),
 });
 
 const SharedBudgetCreateSchema = z.object({
