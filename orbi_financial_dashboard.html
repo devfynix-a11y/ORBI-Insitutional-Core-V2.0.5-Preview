@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ORBI Financial Platform</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .card-glass {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .card-glass:hover {
+            background: rgba(255, 255, 255, 0.08);
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+        }
+        .progress-bar {
+            background: linear-gradient(90deg, #10b981 0%, #f59e0b 70%, #ef4444 100%);
+        }
+        .tab-active {
+            background: rgba(59, 130, 246, 0.2);
+            border-color: #3b82f6;
+        }
+        .mini-chart {
+            max-height: 60px;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .fade-in {
+            animation: fadeIn 0.3s ease-out;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen font-sans">
+    <div class="container mx-auto px-4 py-8 max-w-7xl">
+        <!-- Header -->
+        <div class="mb-8">
+            <h1 class="text-3xl font-bold mb-2">ORBI Financial Dashboard</h1>
+            <p class="text-gray-400">Manage your budgets, goals, and tasks with precision</p>
+            <div class="flex flex-wrap gap-4 mt-4 text-sm">
+                <div class="bg-blue-500/20 text-blue-400 px-3 py-1 rounded-full">6 Active Budgets</div>
+                <div class="bg-green-500/20 text-green-400 px-3 py-1 rounded-full">4 Goals On Track</div>
+                <div class="bg-purple-500/20 text-purple-400 px-3 py-1 rounded-full">8 Tasks Pending</div>
+            </div>
+        </div>
+
+        <!-- Tab Navigation -->
+        <div class="flex mb-8 bg-gray-800/50 p-1 rounded-xl backdrop-blur-sm">
+            <button id="budgetTab" class="tab-active flex-1 py-3 px-6 rounded-lg font-medium transition-all duration-300">Budgets</button>
+            <button id="goalTab" class="flex-1 py-3 px-6 rounded-lg font-medium transition-all duration-300">Goals</button>
+            <button id="taskTab" class="flex-1 py-3 px-6 rounded-lg font-medium transition-all duration-300">Tasks</button>
+        </div>
+
+        <!-- Budget Section -->
+        <div id="budgetSection" class="tab-content">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-2xl font-semibold">Budget Management</h2>
+                <div class="text-sm text-gray-400">Total Allocated: $12,450</div>
+            </div>
+            
+            <!-- Mini Analytics -->
+            <div class="card-glass rounded-2xl p-6 mb-8">
+                <h3 class="text-lg font-medium mb-4">Spending Distribution</h3>
+                <canvas id="budgetChart" class="mini-chart w-full"></canvas>
+            </div>
+
+            <!-- Budget Cards Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Budget Cards will be inserted here -->
+            </div>
+        </div>
+
+        <!-- Goal Section -->
+        <div id="goalSection" class="tab-content hidden">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-2xl font-semibold">Savings Goals</h2>
+                <div class="text-sm text-gray-400">Total Target: $45,000</div>
+            </div>
+            
+            <!-- Mini Analytics -->
+            <div class="card-glass rounded-2xl p-6 mb-8">
+                <h3 class="text-lg font-medium mb-4">Savings Progress</h3>
+                <canvas id="goalChart" class="mini-chart w-full"></canvas>
+            </div>
+
+            <!-- Goal Cards Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Goal Cards will be inserted here -->
+            </div>
+        </div>
+
+        <!-- Task Section -->
+        <div id="taskSection" class="tab-content hidden">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-2xl font-semibold">Task Management</h2>
+                <div class="text-sm text-gray-400">8 Active Tasks</div>
+            </div>
+            
+            <!-- Mini Analytics -->
+            <div class="card-glass rounded-2xl p-6 mb-8">
+                <h3 class="text-lg font-medium mb-4">Task Completion</h3>
+                <canvas id="taskChart" class="mini-chart w-full"></canvas>
+            </div>
+
+            <!-- Task Cards Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Task Cards will be inserted here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Mock Data
+        const budgets = [
+            { id: 1, name: 'Food & Dining', allocated: 800, used: 620, remaining: 180, status: 'healthy', trend: '+5%', icon: '🍽️' },
+            { id: 2, name: 'Transportation', allocated: 400, used: 380, remaining: 20, status: 'warning', trend: '+12%', icon: '🚗' },
+            { id: 3, name: 'Rent & Housing', allocated: 2500, used: 2500, remaining: 0, status: 'over', trend: '0%', icon: '🏠' },
+            { id: 4, name: 'Utilities', allocated: 300, used: 280, remaining: 20, status: 'healthy', trend: '-2%', icon: '⚡' },
+            { id: 5, name: 'Education', allocated: 600, used: 450, remaining: 150, status: 'healthy', trend: '+8%', icon: '📚' },
+            { id: 6, name: 'Business Expenses', allocated: 1000, used: 920, remaining: 80, status: 'warning', trend: '+15%', icon: '💼' },
+            { id: 7, name: 'Entertainment', allocated: 250, used: 200, remaining: 50, status: 'healthy', trend: '+3%', icon: '🎬' },
+            { id: 8, name: 'Healthcare', allocated: 500, used: 320, remaining: 180, status: 'healthy', trend: '+7%', icon: '🏥' }
+        ];
+
+        const goals = [
+            { id: 1, title: 'Emergency Fund', target: 10000, saved: 7500, deadline: '2024-12-31', status: 'on-track', pace: '$625/mo', insight: 'On track' },
+            { id: 2, title: 'House Down Payment', target: 25000, saved: 18000, deadline: '2025-06-30', status: 'ahead', pace: '$1500/mo', insight: 'Ahead of schedule' },
+            { id: 3, title: 'Business Capital', target: 15000, saved: 12000, deadline: '2024-09-15', status: 'on-track', pace: '$1000/mo', insight: 'Strong progress' },
+            { id: 4, title: 'School Fees', target: 8000, saved: 6000, deadline: '2024-08-01', status: 'warning', pace: '$667/mo', insight: 'Needs attention' },
+            { id: 5, title: 'Car Fund', target: 12000, saved: 8500, deadline: '2025-03-31', status: 'on-track', pace: '$708/mo', insight: 'Good momentum' },
+            { id: 6, title: 'Travel Fund', target: 5000, saved: 3200, deadline: '2024-11-30', status: 'on-track', pace: '$400/mo', insight: 'Steady savings' }
+        ];
+
+        const tasks = [
+            { id: 1, title: 'Review monthly budget', category: 'Budget', priority: 'high', status: 'pending', dueDate: '2024-04-10', progress: 0 },
+            { id: 2, title: 'Approve group contribution', category: 'Goals', priority: 'medium', status: 'in-progress', dueDate: '2024-04-08', progress: 60 },
+            { id: 3, title: 'Update savings target', category: 'Goals', priority: 'high', status: 'pending', dueDate: '2024-04-12', progress: 0 },
+            { id: 4, title: 'Reconcile wallet entries', category: 'Budget', priority: 'medium', status: 'completed', dueDate: '2024-04-05', progress: 100 },
+            { id: 5, title: 'Submit supplier payment', category: 'Business', priority: 'high', status: 'pending', dueDate: '2024-04-09', progress: 0 },
+            { id: 6, title: 'Complete risk audit note', category: 'Compliance', priority: 'low', status: 'in-progress', dueDate: '2024-04-15', progress: 40 }
+        ];
+
+        // Tab Switching
+        const tabs = ['budgetTab', 'goalTab', 'taskTab'];
+        const sections = ['budgetSection', 'goalSection', 'taskSection'];
+
+        tabs.forEach((tabId, index) => {
+            document.getElementById(tabId).addEventListener('click', () => {
+                // Update tab styles
+                tabs.forEach(id => document.getElementById(id).classList.remove('tab-active'));
+                document.getElementById(tabId).classList.add('tab-active');
+                
+                // Show/hide sections
+                sections.forEach(id => document.getElementById(id).classList.add('hidden'));
+                document.getElementById(sections[index]).classList.remove('hidden');
+                
+                // Animate content
+                document.getElementById(sections[index]).classList.add('fade-in');
+                setTimeout(() => document.getElementById(sections[index]).classList.remove('fade-in'), 300);
+            });
+        });
+
+        // Render Functions
+        function renderBudgetCards() {
+            const container = document.querySelector('#budgetSection .grid');
+            container.innerHTML = budgets.map(budget => {
+                const percentage = (budget.used / budget.allocated * 100).toFixed(1);
+                const statusColor = budget.status === 'healthy' ? 'text-green-400' : budget.status === 'warning' ? 'text-yellow-400' : 'text-red-400';
+                const statusBg = budget.status === 'healthy' ? 'bg-green-500/20' : budget.status === 'warning' ? 'bg-yellow-500/20' : 'bg-red-500/20';
+                
+                return `
+                    <div class="card-glass rounded-2xl p-6 fade-in">
+                        <div class="flex justify-between items-start mb-4">
+                            <div class="flex items-center">
+                                <span class="text-2xl mr-3">${budget.icon}</span>
+                                <div>
+                                    <h3 class="font-semibold text-lg">${budget.name}</h3>
+                                    <div class="text-sm ${statusColor} ${statusBg} px-2 py-1 rounded-full inline-block mt-1">
+                                        ${budget.status === 'healthy' ? 'Healthy' : budget.status === 'warning' ? 'Warning' : 'Over Limit'}
+                                    </div>
+                                </div>
+                            </div>
+                            <button class="text-gray-400 hover:text-white p-2 rounded-lg hover:bg-white/10 transition-colors">
+                                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                    <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z"></path>
+                                </svg>
+                            </button>
+                        </div>
+                        
+                        <div class="space-y-3 mb-4">
+                            <div class="flex justify-between text-sm">
+                                <span class="text-gray-400">Allocated</span>
+                                <span class="font-medium">\$${budget.allocated.toLocaleString()}</span>
+                            </div>
+                            <div class="flex justify-between text-sm">
+                                <span class="text-gray-400">Used</span>
+                                <span class="font-medium">\$${budget.used.toLocaleString()}</span>
+                            </div>
+                            <div class="flex justify-between text-sm">
+                                <span class="text-gray-400">Remaining</span>
+                                <span class="font-medium">\$${budget.remaining.toLocaleString()}</span>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <div class="flex justify-between text-sm mb-2">
+                                <span>Usage</span>
+                                <span class="font-medium">${percentage}%</span>
+                            </div>
+                            <div class="w-full bg-gray-700 rounded-full h-2">
+                                <div class="progress-bar h-2 rounded-full transition-all duration-500" style="width: ${percentage}%"></div>
+                            </div>
+                        </div>
+                        
+                        <div class="flex justify-between items-center text-sm">
+                            <span class="text-gray-400">Trend</span>
+                            <span class="font-medium ${budget.trend.startsWith('+') ? 'text-green-400' : 'text-red-400'}">${budget.trend}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderGoalCards() {
+            const container = document.querySelector('#goalSection .grid');
+            container.innerHTML = goals.map(goal => {
+                const percentage = (goal.saved / goal.target * 100).toFixed(1);
+                const remaining = goal.target - goal.saved;
+                const statusColor = goal.status === 'on-track' ? 'text-green-400' : goal.status === 'ahead' ? 'text-blue-400' : 'text-yellow-400';
+                const statusBg = goal.status === 'on-track' ? 'bg-green-500/20' : goal.status === 'ahead' ? 'bg-blue-500/20' : 'bg-yellow-500/20';
+                
+                return `
+                    <div class="card-glass rounded-2xl p-6 fade-in">
+                        <div class="flex justify-between items-start mb-4">
+                            <div>
+                                <h3 class="font-semibold text-lg mb-1">${goal.title}</h3>
+                                <div class="text-sm ${statusColor} ${statusBg} px-2 py-1 rounded-full inline-block">
+                                    ${goal.insight}
+                                </div>
+                            </div>
+                            <button class="text-gray-400 hover:text-white p-2 rounded-lg hover:bg-white/10 transition-colors">
+                                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                    <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z"></path>
+                                </svg>
+                            </button>
+                        </div>
+                        
+                        <div class="grid grid-cols-2 gap-4 mb-4">
+                            <div>
+                                <div class="text-sm text-gray-400">Target</div>
+                                <div class="font-semibold">\$${goal.target.toLocaleString()}</div>
+                            </div>
+                            <div>
+                                <div class="text-sm text-gray-400">Saved</div>
+                                <div class="font-semibold text-green-400">\$${goal.saved.toLocaleString()}</div>
+                            </div>
+                            <div>
+                                <div class="text-sm text-gray-400">Remaining</div>
+                                <div class="font-semibold">\$${remaining.toLocaleString()}</div>
+                            </div>
+                            <div>
+                                <div class="text-sm text-gray-400">Progress</div>
+                                <div class="font-semibold">${percentage}%</div>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-4">
+                            <div class="w-full bg-gray-700 rounded-full h-2 mb-2">
+                                <div class="bg-green-500 h-2 rounded-full transition-all duration-500" style="width: ${percentage}%"></div>
+                            </div>
+                        </div>
+                        
+                        <div class="flex justify-between text-sm mb-4">
+                            <span class="text-gray-400">Deadline</span>
+                            <span class="font-medium">${new Date(goal.deadline).toLocaleDateString()}</span>
+                        </div>
+                        
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-400">Monthly Pace</span>
+                            <span class="font-medium">${goal.pace}</span>
+                        </div>
+                        
+                        <div class="mt-4">
+                            <canvas id="goalChart-${goal.id}" class="mini-chart w-full"></canvas>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            // Render mini charts for goals
+            goals.forEach(goal => {
+                const ctx = document.getElementById(`goalChart-${goal.id}`).getContext('2d');
+                new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: ['Jan', 'Feb', 'Mar', 'Apr'],
+                        datasets: [{
+                            data: [goal.saved * 0.2, goal.saved * 0.25, goal.saved * 0.3, goal.saved * 0.25],
+                            backgroundColor: 'rgba(16, 185, 129, 0.8)',
+                            borderRadius: 4,
+                            borderSkipped: false,
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false }
+                        },
+                        scales: {
+                            x: { display: false },
+                            y: { display: false }
+                        }
+                    }
+                });
+            });
+        }
+
+        function renderTaskCards() {
+            const container = document.querySelector('#taskSection .grid');
+            container.innerHTML = tasks.map(task => {
+                const priorityColor = task.priority === 'high' ? 'text-red-400 bg-red-500/20' : task.priority === 'medium' ? 'text-yellow-400 bg-yellow-500/20' : 'text-green-400 bg-green-500/20';
+                const statusColor = task.status === 'completed' ? 'text-green-400' : task.status === 'in-progress' ? 'text-blue-400' : 'text-gray-400';
+                
+                return `
+                    <div class="card-glass rounded-2xl p-6 fade-in">
+                        <div class="flex justify-between items-start mb-4">
+                            <div class="flex-1">
+                                <h3 class="font-semibold text-lg mb-2 ${task.status === 'completed' ? 'line-through text-gray-500' : ''}">${task.title}</h3>
+                                <div class="flex flex-wrap gap-2 mb-3">
+                                    <span class="text-sm ${priorityColor} px-2 py-1 rounded-full">${task.priority} priority</span>
+                                    <span class="text-sm text-gray-400 bg-gray-700 px-2 py-1 rounded-full">${task.category}</span>
+                                </div>
+                            </div>
+                            <button class="text-gray-400 hover:text-white p-2 rounded-lg hover:bg-white/10 transition-colors">
+                                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                    <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z"></path>
+                                </svg>
+                            </button>
+                        </div>
+                        
+                        <div class="space-y-3 mb-4">
+                            <div class="flex justify-between text-sm">
+                                <span class="text-gray-400">Status</span>
+                                <span class="font-medium ${statusColor}">${task.status.replace('-', ' ')}</span>
+                            </div>
+                            <div class="flex justify-between text-sm">
+                                <span class="text-gray-400">Due Date</span>
+                                <span class="font-medium">${new Date(task.dueDate).toLocaleDateString()}</span>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-4">
+                            <div class="flex justify-between text-sm mb-2">
+                                <span>Progress</span>
+                                <span class="font-medium">${task.progress}%</span>
+                            </div>
+                            <div class="w-full bg-gray-700 rounded-full h-2">
+                                <div class="bg-blue-500 h-2 rounded-full transition-all duration-500" style="width: ${task.progress}%"></div>
+                            </div>
+                        </div>
+                        
+                        <div class="flex gap-2">
+                            <button class="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg text-sm font-medium transition-colors">
+                                ${task.status === 'completed' ? 'Mark Incomplete' : 'Mark Complete'}
+                            </button>
+                            <button class="bg-gray-700 hover:bg-gray-600 text-white p-2 rounded-lg transition-colors">
+                                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                    <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"></path>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Render Charts
+        function renderBudgetChart() {
+            const ctx = document.getElementById('budgetChart').getContext('2d');
+            new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: budgets.slice(0, 6).map(b => b.name),
+                    datasets: [{
+                        data: budgets.slice(0, 6).map(b => b.allocated),
+                        backgroundColor: [
+                            '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'
+                        ],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    }
+                }
+            });
+        }
+
+        function renderGoalChart() {
+            const ctx = document.getElementById('goalChart').getContext('2d');
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
+                    datasets: [{
+                        data: [2000, 4500, 7000, 9500, 12000, 15000],
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: { display: false },
+                        y: { display: false }
+                    },
+                    elements: {
+                        point: { radius: 0 }
+                    }
+                }
+            });
+        }
+
+        function renderTaskChart() {
+            const ctx = document.getElementById('taskChart').getContext('2d');
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['Pending', 'In Progress', 'Completed'],
+                    datasets: [{
+                        data: [4, 2, 2],
+                        backgroundColor: ['#ef4444', '#f59e0b', '#10b981'],
+                        borderRadius: 4,
+                        borderSkipped: false,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: { display: false },
+                        y: { display: false }
+                    }
+                }
+            });
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            renderBudgetCards();
+            renderGoalCards();
+            renderTaskCards();
+            renderBudgetChart();
+            renderGoalChart();
+            renderTaskChart();
+        });
+    </script>
+</body>
+</html>

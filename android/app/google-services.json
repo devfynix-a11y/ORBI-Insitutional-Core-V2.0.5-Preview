@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "124200917002",
+    "project_id": "orbi-financial-os-app-dev",
+    "storage_bucket": "orbi-financial-os-app-dev.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:124200917002:android:cd5d8da5133c19b89ae7f3",
+        "android_client_info": {
+          "package_name": "com.orbi.mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDE3jAt4gS7chVLl_0MVdVG32V-1uqQFk8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
