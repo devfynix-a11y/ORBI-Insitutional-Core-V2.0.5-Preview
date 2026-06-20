@@ -445,6 +445,20 @@ export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
+  v1.get('/transactions/:id', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    try {
+      const transactionId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const transaction = await LogicCore.getTransactionForUser(session.sub, transactionId);
+      if (!transaction) {
+        return res.status(404).json({ success: false, error: 'TRANSACTION_NOT_FOUND' });
+      }
+      res.json({ success: true, data: transaction });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
   v1.post('/transactions/:id/lock', authenticate as any, validate(TransactionIssueSchema), async (req, res) => {
     const session = (req as any).session;
     try {

@@ -1228,10 +1228,14 @@ CREATE TABLE IF NOT EXISTS public.escrow_agreements (
     amount NUMERIC NOT NULL,
     currency TEXT NOT NULL,
     conditions JSONB DEFAULT '{}'::jsonb,
-    status TEXT DEFAULT 'HELD' CHECK (status IN ('HELD', 'RELEASED', 'DISPUTED', 'REFUNDED')),
+    status TEXT DEFAULT 'HELD' CHECK (status IN ('HELD', 'RELEASE_PENDING', 'RELEASED', 'DISPUTED', 'REFUNDED')),
     dispute_metadata JSONB DEFAULT '{}'::jsonb,
     metadata JSONB DEFAULT '{}'::jsonb,
     expires_at TIMESTAMP WITH TIME ZONE,
+    release_requested_at TIMESTAMP WITH TIME ZONE,
+    release_requested_by UUID REFERENCES auth.users(id),
+    receiver_accepted_at TIMESTAMP WITH TIME ZONE,
+    receiver_accepted_by UUID REFERENCES auth.users(id),
     released_at TIMESTAMP WITH TIME ZONE,
     refunded_at TIMESTAMP WITH TIME ZONE,
     disputed_at TIMESTAMP WITH TIME ZONE,
@@ -5643,9 +5647,30 @@ ALTER TABLE public.escrow_agreements
     ADD COLUMN IF NOT EXISTS merchant_id UUID REFERENCES public.merchants(id) ON DELETE SET NULL,
     ADD COLUMN IF NOT EXISTS service_code TEXT,
     ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb,
+    ADD COLUMN IF NOT EXISTS release_requested_at TIMESTAMP WITH TIME ZONE,
+    ADD COLUMN IF NOT EXISTS release_requested_by UUID REFERENCES auth.users(id),
+    ADD COLUMN IF NOT EXISTS receiver_accepted_at TIMESTAMP WITH TIME ZONE,
+    ADD COLUMN IF NOT EXISTS receiver_accepted_by UUID REFERENCES auth.users(id),
     ADD COLUMN IF NOT EXISTS released_at TIMESTAMP WITH TIME ZONE,
     ADD COLUMN IF NOT EXISTS refunded_at TIMESTAMP WITH TIME ZONE,
     ADD COLUMN IF NOT EXISTS disputed_at TIMESTAMP WITH TIME ZONE;
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'escrow_agreements_status_check'
+          AND conrelid = 'public.escrow_agreements'::regclass
+    ) THEN
+        ALTER TABLE public.escrow_agreements
+            DROP CONSTRAINT escrow_agreements_status_check;
+    END IF;
+END $$;
+
+ALTER TABLE public.escrow_agreements
+    ADD CONSTRAINT escrow_agreements_status_check
+    CHECK (status IN ('HELD', 'RELEASE_PENDING', 'RELEASED', 'DISPUTED', 'REFUNDED'));
 
 DO $$
 BEGIN
@@ -5803,7 +5828,7 @@ BEGIN
         RAISE EXCEPTION 'PAYSAFE_REFERENCE_REQUIRED';
     END IF;
 
-    IF v_action NOT IN ('RELEASE', 'DISPUTE', 'REFUND') THEN
+    IF v_action NOT IN ('RELEASE', 'ACCEPT', 'DISPUTE', 'REFUND') THEN
         RAISE EXCEPTION 'PAYSAFE_ACTION_INVALID: %', v_action;
     END IF;
 
@@ -5837,7 +5862,7 @@ BEGIN
                 'idempotent', TRUE
             );
         END IF;
-        IF v_agreement.status <> 'HELD' THEN
+        IF v_agreement.status NOT IN ('HELD', 'RELEASE_PENDING') THEN
             RAISE EXCEPTION 'PAYSAFE_STATE_INVALID: cannot dispute escrow in state %', v_agreement.status;
         END IF;
         IF NULLIF(BTRIM(COALESCE(p_reason, '')), '') IS NULL THEN
@@ -5884,7 +5909,7 @@ BEGIN
         IF p_actor_id <> v_agreement.sender_id THEN
             RAISE EXCEPTION 'PAYSAFE_ACTOR_UNAUTHORIZED';
         END IF;
-        IF v_agreement.status = 'RELEASED' THEN
+        IF v_agreement.status IN ('RELEASE_PENDING', 'RELEASED') THEN
             RETURN jsonb_build_object(
                 'referenceId', p_reference_id,
                 'transactionId', v_agreement.transaction_id,
@@ -5895,8 +5920,79 @@ BEGIN
         IF v_agreement.status <> 'HELD' THEN
             RAISE EXCEPTION 'PAYSAFE_STATE_INVALID: cannot release escrow in state %', v_agreement.status;
         END IF;
+        UPDATE public.escrow_agreements
+        SET
+            status = 'RELEASE_PENDING',
+            release_requested_at = v_now,
+            release_requested_by = p_actor_id,
+            expires_at = COALESCE(
+                CASE
+                    WHEN expires_at IS NOT NULL AND expires_at > v_now THEN expires_at
+                    ELSE NULL
+                END,
+                v_now + make_interval(hours => GREATEST(1, LEAST(168, COALESCE((metadata->>'hold_window_hours')::INT, 24))))
+            ),
+            metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+                'escrow_status', 'RELEASE_PENDING',
+                'release_requested_at', v_now,
+                'release_requested_by', p_actor_id
+            ),
+            updated_at = v_now
+        WHERE id = v_agreement.id;
+
+        UPDATE public.transactions
+        SET
+            status = 'awaiting_receiver_acceptance',
+            status_notes = 'PaySafe release requested and waiting for receiver acceptance.',
+            metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+                'escrow_status', 'RELEASE_PENDING',
+                'release_requested_at', v_now,
+                'release_requested_by', p_actor_id
+            ),
+            updated_at = v_now
+        WHERE id = v_tx.id;
+
+        INSERT INTO public.transaction_events (transaction_id, old_state, new_state, actor, metadata)
+        VALUES (
+            v_tx.id,
+            v_tx.status,
+            'awaiting_receiver_acceptance',
+            p_actor_id::TEXT,
+            jsonb_build_object('paysafe_action', v_action)
+        );
+
+        RETURN jsonb_build_object(
+            'referenceId', p_reference_id,
+            'transactionId', v_tx.id,
+            'status', 'RELEASE_PENDING',
+            'releaseRequestedAt', v_now,
+            'expiresAt', (
+                SELECT ea.expires_at
+                FROM public.escrow_agreements ea
+                WHERE ea.id = v_agreement.id
+            ),
+            'idempotent', FALSE
+        );
+    ELSIF v_action = 'ACCEPT' THEN
+        IF p_actor_id <> v_agreement.receiver_id THEN
+            RAISE EXCEPTION 'PAYSAFE_ACTOR_UNAUTHORIZED';
+        END IF;
+        IF v_agreement.status = 'RELEASED' THEN
+            RETURN jsonb_build_object(
+                'referenceId', p_reference_id,
+                'transactionId', v_agreement.transaction_id,
+                'status', v_agreement.status,
+                'idempotent', TRUE
+            );
+        END IF;
+        IF v_agreement.status <> 'RELEASE_PENDING' THEN
+            RAISE EXCEPTION 'PAYSAFE_STATE_INVALID: cannot accept escrow in state %', v_agreement.status;
+        END IF;
+        IF v_agreement.expires_at IS NOT NULL AND v_agreement.expires_at < v_now THEN
+            RAISE EXCEPTION 'PAYSAFE_RELEASE_WINDOW_EXPIRED';
+        END IF;
         v_target_user_id := v_agreement.receiver_id;
-        v_target_vault_id := p_receiver_vault_id;
+        v_target_vault_id := COALESCE(p_receiver_vault_id, v_agreement.receiver_vault_id);
     ELSE
         IF v_agreement.status = 'REFUNDED' THEN
             RETURN jsonb_build_object(
@@ -5906,7 +6002,10 @@ BEGIN
                 'idempotent', TRUE
             );
         END IF;
-        IF v_agreement.status NOT IN ('HELD', 'DISPUTED') THEN
+        IF p_actor_id <> v_agreement.sender_id THEN
+            RAISE EXCEPTION 'PAYSAFE_ACTOR_UNAUTHORIZED';
+        END IF;
+        IF v_agreement.status NOT IN ('HELD', 'RELEASE_PENDING', 'DISPUTED') THEN
             RAISE EXCEPTION 'PAYSAFE_STATE_INVALID: cannot refund escrow in state %', v_agreement.status;
         END IF;
         IF NULLIF(BTRIM(COALESCE(p_reason, '')), '') IS NULL THEN
@@ -6008,26 +6107,29 @@ BEGIN
 
     UPDATE public.escrow_agreements
     SET
-        status = CASE WHEN v_action = 'RELEASE' THEN 'RELEASED' ELSE 'REFUNDED' END,
-        receiver_vault_id = CASE WHEN v_action = 'RELEASE' THEN v_target_vault.id ELSE receiver_vault_id END,
-        released_at = CASE WHEN v_action = 'RELEASE' THEN v_now ELSE released_at END,
+        status = CASE WHEN v_action = 'ACCEPT' THEN 'RELEASED' ELSE 'REFUNDED' END,
+        receiver_vault_id = CASE WHEN v_action = 'ACCEPT' THEN v_target_vault.id ELSE receiver_vault_id END,
+        receiver_accepted_at = CASE WHEN v_action = 'ACCEPT' THEN v_now ELSE receiver_accepted_at END,
+        receiver_accepted_by = CASE WHEN v_action = 'ACCEPT' THEN p_actor_id ELSE receiver_accepted_by END,
+        released_at = CASE WHEN v_action = 'ACCEPT' THEN v_now ELSE released_at END,
         refunded_at = CASE WHEN v_action = 'REFUND' THEN v_now ELSE refunded_at END,
         metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
             'last_action', v_action,
             'last_actor_id', p_actor_id,
             'last_action_at', v_now,
             'target_vault_id', v_target_vault.id,
-            'reason', p_reason
+            'reason', p_reason,
+            'escrow_status', CASE WHEN v_action = 'ACCEPT' THEN 'RELEASED' ELSE 'REFUNDED' END
         ),
         updated_at = v_now
     WHERE id = v_agreement.id;
 
     UPDATE public.transactions
     SET
-        status = CASE WHEN v_action = 'RELEASE' THEN 'completed' ELSE 'refunded' END,
+        status = CASE WHEN v_action = 'ACCEPT' THEN 'completed' ELSE 'refunded' END,
         status_notes = COALESCE(NULLIF(BTRIM(p_reason), ''), 'PaySafe ' || LOWER(v_action) || ' completed.'),
         metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
-            'escrow_status', CASE WHEN v_action = 'RELEASE' THEN 'RELEASED' ELSE 'REFUNDED' END,
+            'escrow_status', CASE WHEN v_action = 'ACCEPT' THEN 'RELEASED' ELSE 'REFUNDED' END,
             'escrow_action_at', v_now,
             'escrow_action_by', p_actor_id,
             'escrow_target_vault_id', v_target_vault.id
@@ -6039,7 +6141,7 @@ BEGIN
     VALUES (
         v_tx.id,
         v_tx.status,
-        CASE WHEN v_action = 'RELEASE' THEN 'completed' ELSE 'refunded' END,
+        CASE WHEN v_action = 'ACCEPT' THEN 'completed' ELSE 'refunded' END,
         p_actor_id::TEXT,
         jsonb_build_object('paysafe_action', v_action, 'reason', p_reason)
     );
@@ -6047,7 +6149,7 @@ BEGIN
     RETURN jsonb_build_object(
         'referenceId', p_reference_id,
         'transactionId', v_tx.id,
-        'status', CASE WHEN v_action = 'RELEASE' THEN 'RELEASED' ELSE 'REFUNDED' END,
+        'status', CASE WHEN v_action = 'ACCEPT' THEN 'RELEASED' ELSE 'REFUNDED' END,
         'amount', v_agreement.amount,
         'currency', v_agreement.currency,
         'targetVaultId', v_target_vault.id,

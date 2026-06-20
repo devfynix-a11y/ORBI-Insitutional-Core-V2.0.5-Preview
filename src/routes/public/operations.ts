@@ -238,8 +238,19 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
     const { referenceId } = req.body;
     const userId = (req as any).session.sub;
     try {
-      const success = await LogicCore.releaseEscrow(referenceId, userId);
-      res.json({ success });
+      const result = await LogicCore.releaseEscrow(referenceId, userId);
+      res.json({ success: true, data: result });
+    } catch (e: any) {
+      res.status(400).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.post('/escrow/accept', authenticate as any, async (req, res) => {
+    const { referenceId } = req.body;
+    const userId = (req as any).session.sub;
+    try {
+      const result = await LogicCore.acceptEscrow(referenceId, userId);
+      res.json({ success: true, data: result });
     } catch (e: any) {
       res.status(400).json({ success: false, error: e.message });
     }
@@ -249,25 +260,20 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
     const { referenceId, reason } = req.body;
     const userId = (req as any).session.sub;
     try {
-      await LogicCore.disputeEscrow(referenceId, userId, reason);
-      res.json({ success: true });
+      const result = await LogicCore.disputeEscrow(referenceId, userId, reason);
+      res.json({ success: true, data: result ?? null });
     } catch (e: any) {
       res.status(400).json({ success: false, error: e.message });
     }
   });
 
   v1.post('/escrow/refund', authenticate as any, async (req, res) => {
-    const session = (req as any).session;
     const { referenceId, reason } = req.body;
-    const userId = session.sub;
-
-    if (!sessionHasAnyRole(session, [...SUPER_ADMIN_AND_ADMIN_ROLES])) {
-      return res.status(403).json({ success: false, error: 'UNAUTHORIZED_ADMIN_ONLY' });
-    }
+    const userId = (req as any).session.sub;
 
     try {
-      await LogicCore.refundEscrow(referenceId, userId, reason);
-      res.json({ success: true });
+      const result = await LogicCore.refundEscrow(referenceId, userId, reason);
+      res.json({ success: true, data: result });
     } catch (e: any) {
       res.status(400).json({ success: false, error: e.message });
     }

@@ -890,6 +890,61 @@ export class TransactionService {
         });
     }
 
+    public async getTransactionForUser(userId: string, transactionId: string): Promise<any | null> {
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) {
+            throw new Error('LEDGER_OFFLINE: Transaction status is unavailable.');
+        }
+
+        const identifier = String(transactionId || '').trim();
+        if (!identifier) return null;
+
+        const [{ data: wallets }, { data: vaults }] = await Promise.all([
+            sb.from('wallets').select('id').eq('user_id', userId),
+            sb.from('platform_vaults').select('id').eq('user_id', userId),
+        ]);
+        const ownedWalletIds = new Set<string>([
+            ...(wallets || []).map((wallet: any) => String(wallet.id)),
+            ...(vaults || []).map((vault: any) => String(vault.id)),
+        ]);
+
+        let row: any = null;
+        const { data: referenceMatch, error: referenceError } = await sb
+            .from('transactions')
+            .select('id, reference_id, user_id, amount, currency, description, type, status, created_at, wallet_id, to_wallet_id, metadata, category_id')
+            .eq('reference_id', identifier)
+            .maybeSingle();
+        if (referenceError) throw referenceError;
+        row = referenceMatch;
+
+        if (!row && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(identifier)) {
+            const { data: idMatch, error: idError } = await sb
+                .from('transactions')
+                .select('id, reference_id, user_id, amount, currency, description, type, status, created_at, wallet_id, to_wallet_id, metadata, category_id')
+                .eq('id', identifier)
+                .maybeSingle();
+            if (idError) throw idError;
+            row = idMatch;
+        }
+
+        if (!row) return null;
+        const canView =
+            String(row.user_id || '') === userId ||
+            ownedWalletIds.has(String(row.wallet_id || '')) ||
+            ownedWalletIds.has(String(row.to_wallet_id || ''));
+        if (!canView) return null;
+
+        const [transaction] = await this.decryptTransactionRows([row]);
+        if (!transaction) return null;
+        return {
+            ...transaction,
+            id: transaction.reference_id || transaction.id,
+            internalId: transaction.id,
+            referenceId: transaction.reference_id || transaction.id,
+            status: String(transaction.status || '').toLowerCase(),
+        };
+    }
+
     /**
      * FORENSIC / AUDIT FETCH
      * Retrieves all transactions across the platform for staff/auditors.

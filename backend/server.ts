@@ -259,6 +259,10 @@ class OrbiServer {
         return this.ledger.getLatestTransactions(userId, limit, offset);
     }
 
+    async getTransactionForUser(userId: string, transactionId: string) {
+        return this.ledger.getTransactionForUser(userId, transactionId);
+    }
+
     async requestTransactionRecall(userId: string, txId: string, reason: string) {
         return this.ledger.lockTransactionForReview(txId, userId, {
             actorRole: 'USER',
@@ -558,11 +562,14 @@ class OrbiServer {
     async releaseEscrow(referenceId: string, actorId: string) {
         return this.escrow.releaseEscrow(referenceId, actorId);
     }
+    async acceptEscrow(referenceId: string, actorId: string) {
+        return this.escrow.acceptEscrow(referenceId, actorId);
+    }
     async disputeEscrow(referenceId: string, userId: string, reason: string) {
         return this.escrow.disputeEscrow(referenceId, userId, reason);
     }
-    async refundEscrow(referenceId: string, adminId: string, reason?: string) {
-        return this.escrow.refundEscrow(referenceId, adminId, reason);
+    async refundEscrow(referenceId: string, actorId: string, reason?: string) {
+        return this.escrow.refundEscrow(referenceId, actorId, reason);
     }
 
     // --- RECONCILIATION ---

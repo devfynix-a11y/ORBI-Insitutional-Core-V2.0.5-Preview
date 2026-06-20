@@ -21,6 +21,9 @@ test('PaySafe creation posts balanced operating-to-escrow ledger legs', () => {
 
 test('PaySafe lifecycle is persisted atomically by service-role-only SQL', () => {
     assert.match(migration, /CREATE OR REPLACE FUNCTION public\.transition_paysafe_escrow_v1/);
+    assert.match(migration, /'RELEASE', 'ACCEPT', 'DISPUTE', 'REFUND'/);
+    assert.match(migration, /status = 'RELEASE_PENDING'/);
+    assert.match(migration, /cannot accept escrow in state/);
     assert.match(migration, /FOR UPDATE/);
     assert.match(migration, /INSERT INTO public\.financial_ledger/);
     assert.match(migration, /UPDATE public\.platform_vaults/);
@@ -38,8 +41,11 @@ test('PaySafe agreement creation shares the ledger database transaction', () => 
 
 test('PaySafe reads and disputes require escrow-party authorization', () => {
     assert.match(operations, /LogicCore\.getEscrow\(req\.params\.id,\s*session\.sub\)/);
+    assert.match(operations, /v1\.post\('\/escrow\/accept'/);
     assert.match(service, /ESCROW_ACCESS_DENIED/);
     assert.match(service, /UNAUTHORIZED_DISPUTE/);
+    assert.match(service, /UNAUTHORIZED_ACCEPT/);
+    assert.match(service, /UNAUTHORIZED_REFUND/);
     assert.match(service, /agreement\.sender_id,\s*agreement\.receiver_id/);
 });
 

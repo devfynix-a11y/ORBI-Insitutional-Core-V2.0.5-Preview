@@ -416,7 +416,7 @@ export class EnterprisePaymentProcessor {
                     total: (intent.amount) + (finalTx.tax_info?.vat || 0) + (finalTx.tax_info?.fee || 0) + (finalTx.tax_info?.gov_fee || 0),
                     available_balance: finalTx.metadata?.available_balance
                 },
-                status: 'completed',
+                status: finalTx.status || 'processing',
                 metadata: {
                     security_score: report.score,
                     decision: report.decision
@@ -424,7 +424,12 @@ export class EnterprisePaymentProcessor {
             };
 
             // 6. EVENT PUBLISHING (Async Ecosystem)
-            await EventBus.publish('fintech.transaction.settled', '/core/ledger', responsePayload);
+            const finalStatus = String(finalTx.status || 'processing').toLowerCase();
+            const lifecycleEvent =
+                finalStatus === 'completed' || finalStatus === 'settled'
+                    ? 'fintech.transaction.settled'
+                    : 'fintech.transaction.processing';
+            await EventBus.publish(lifecycleEvent as any, '/core/ledger', responsePayload);
 
             // 7. SAVE IDEMPOTENCY RESPONSE
             await IdempotencyLayer.saveResponse(intent.idempotencyKey, user.id, '/v2/transactions/process', 200, responsePayload);

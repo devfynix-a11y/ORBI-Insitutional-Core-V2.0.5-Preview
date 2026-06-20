@@ -103,12 +103,33 @@ export class BankingEngineService {
                 
                 // --- OPTIMIZATION: Background non-critical post-transaction tasks ---
                 
-                // If it's a transfer and not held for review, settle
+                // Attempt internal settlement before responding. The append key and
+                // lifecycle claim make this safe if a recovery worker races us.
                 if (initialStatus === 'processing' && statusOverride !== 'held_for_review') {
-                    // Fire and forget settlement to avoid blocking the response
-                    this.completeSettlement(txId, undefined, `engine:auto:${txId}`).catch(err => 
-                        bankingLogger.error('banking.background_settlement_failed', { transaction_id: txId, actor_id: user.id }, err)
-                    );
+                    try {
+                        await this.completeSettlement(txId, undefined, `engine:auto:${txId}`);
+                    } catch (err) {
+                        bankingLogger.error(
+                            'banking.inline_settlement_failed',
+                            { transaction_id: txId, actor_id: user.id },
+                            err,
+                        );
+                    }
+
+                    const { data: settlementState, error: settlementStateError } = await sb
+                        .from('transactions')
+                        .select('status')
+                        .eq('id', txId)
+                        .maybeSingle();
+                    if (settlementStateError) {
+                        bankingLogger.error(
+                            'banking.settlement_status_reload_failed',
+                            { transaction_id: txId, actor_id: user.id },
+                            settlementStateError,
+                        );
+                    } else if (settlementState?.status) {
+                        initialStatus = settlementState.status as TransactionStatus;
+                    }
                 } else if (initialStatus === 'completed') {
                     // Direct settlement - send participant notifications in background
                     this.sendTransferNotifications(txId).catch(err => 

@@ -6,7 +6,12 @@ import { WalletResolverService } from '../backend/wealth/WalletResolver.js';
 import { platformFeeService } from '../backend/payments/PlatformFeeService.js';
 import { UUID } from '../services/utils.js';
 
-export type EscrowStatus = 'HELD' | 'RELEASED' | 'DISPUTED' | 'REFUNDED';
+export type EscrowStatus =
+    | 'HELD'
+    | 'RELEASE_PENDING'
+    | 'RELEASED'
+    | 'DISPUTED'
+    | 'REFUNDED';
 
 type EscrowAgreementRecord = {
     id: string;
@@ -23,6 +28,11 @@ type EscrowAgreementRecord = {
     currency: string;
     conditions?: Record<string, unknown>;
     status: EscrowStatus;
+    expires_at?: string | null;
+    release_requested_at?: string | null;
+    release_requested_by?: string | null;
+    receiver_accepted_at?: string | null;
+    receiver_accepted_by?: string | null;
     metadata?: Record<string, unknown>;
     transaction?: Record<string, any> | null;
 };
@@ -172,11 +182,7 @@ export class EscrowService {
                 capturedAt: new Date().toISOString(),
             };
         }
-        const expiresAt = typeof conditions.expiresAt === 'string'
-            ? conditions.expiresAt
-            : typeof conditions.expires_at === 'string'
-                ? conditions.expires_at
-                : null;
+        const holdWindowHours = this.resolveHoldWindowHours(conditions);
         const metadata = {
             is_conditional_escrow: true,
             recipient_id: recipient.userId,
@@ -187,7 +193,8 @@ export class EscrowService {
             escrow_amount_plain: amount,
             currency,
             conditions,
-            expires_at: expiresAt,
+            hold_window_hours: holdWindowHours,
+            receiver_acceptance_required: true,
             merchant_id: merchantId || null,
             service_code: serviceCode || null,
             merchant_fee_snapshot: merchantFeeSnapshot,
@@ -249,16 +256,16 @@ export class EscrowService {
         return referenceId;
     }
 
-    public async releaseEscrow(referenceId: string, actorId: string): Promise<boolean> {
+    public async releaseEscrow(referenceId: string, actorId: string): Promise<Record<string, any>> {
         const agreement = await this.getAgreement(referenceId);
         if (agreement.sender_id !== actorId) throw new Error('UNAUTHORIZED_RELEASE');
         const result = agreement.merchant_id
             ? await this.settleMerchantEscrow(referenceId, actorId)
             : await this.transition(referenceId, actorId, 'RELEASE');
 
-        await this.notifySafely(agreement.receiver_id, 'info', 'PaySafe funds released', {
-            sw: `Malipo ya ${agreement.currency} ${Number(agreement.amount).toLocaleString()} yametolewa kwenye akaunti yako.`,
-            en: `${agreement.currency} ${Number(agreement.amount).toLocaleString()} has been released to your account.`,
+        await this.notifySafely(agreement.receiver_id, 'info', 'PaySafe release requested', {
+            sw: `PaySafe ${referenceId} iko tayari kukubaliwa. Thibitisha hold kabla dirisha halijaisha.`,
+            en: `PaySafe ${referenceId} is ready for acceptance. Confirm the hold before the window closes.`,
         }, {
             template: 'Escrow_Released',
             variables: {
@@ -267,13 +274,36 @@ export class EscrowService {
                 refId: referenceId,
             },
         });
-        await Audit.log('FINANCIAL', actorId, 'ESCROW_RELEASED', {
+        await Audit.log('FINANCIAL', actorId, 'ESCROW_RELEASE_REQUESTED', {
             referenceId,
             recipientId: agreement.receiver_id,
             transactionId: agreement.transaction_id,
             idempotent: Boolean(result?.idempotent),
         });
-        return true;
+        return result;
+    }
+
+    public async acceptEscrow(referenceId: string, actorId: string): Promise<Record<string, any>> {
+        const agreement = await this.getAgreement(referenceId);
+        if (agreement.receiver_id !== actorId) throw new Error('UNAUTHORIZED_ACCEPT');
+        if (agreement.merchant_id) throw new Error('PAYSAFE_ACCEPT_NOT_SUPPORTED_FOR_MERCHANT');
+        const result = await this.transition(referenceId, actorId, 'ACCEPT');
+
+        await this.notifySafely(agreement.sender_id, 'info', 'PaySafe funds accepted', {
+            sw: `PaySafe ${referenceId} imekubaliwa na fedha zimetolewa kwa mpokeaji.`,
+            en: `PaySafe ${referenceId} was accepted and the funds were released to the recipient.`,
+        });
+        await this.notifySafely(agreement.receiver_id, 'info', 'PaySafe funds released', {
+            sw: `Malipo ya ${agreement.currency} ${Number(agreement.amount).toLocaleString()} yametolewa kwenye akaunti yako.`,
+            en: `${agreement.currency} ${Number(agreement.amount).toLocaleString()} has been released to your account.`,
+        });
+        await Audit.log('FINANCIAL', actorId, 'ESCROW_ACCEPTED', {
+            referenceId,
+            senderId: agreement.sender_id,
+            transactionId: agreement.transaction_id,
+            idempotent: Boolean(result?.idempotent),
+        });
+        return result;
     }
 
     public async disputeEscrow(referenceId: string, userId: string, reason: string): Promise<void> {
@@ -302,33 +332,35 @@ export class EscrowService {
         });
     }
 
-    public async refundEscrow(referenceId: string, adminId: string, reason = 'Administrative PaySafe refund'): Promise<void> {
+    public async refundEscrow(referenceId: string, actorId: string, reason = 'PaySafe refund requested'): Promise<Record<string, any>> {
         const agreement = await this.getAgreement(referenceId);
-        const result = await this.transition(referenceId, adminId, 'REFUND', agreement.source_vault_id, reason);
+        if (agreement.sender_id !== actorId) throw new Error('UNAUTHORIZED_REFUND');
+        const result = await this.transition(referenceId, actorId, 'REFUND', agreement.source_vault_id, reason);
 
         await this.notifySafely(agreement.sender_id, 'info', 'PaySafe payment refunded', {
             sw: `Malipo yako ya PaySafe ${referenceId} yamerejeshwa kwenye akaunti yako.`,
             en: `Your PaySafe payment ${referenceId} has been refunded to your account.`,
         });
-        await Audit.log('FINANCIAL', adminId, 'ESCROW_REFUNDED', {
+        await Audit.log('FINANCIAL', actorId, 'ESCROW_REFUNDED', {
             referenceId,
             senderId: agreement.sender_id,
             transactionId: agreement.transaction_id,
             reason,
             idempotent: Boolean(result?.idempotent),
         });
+        return result;
     }
 
-    public async getEscrow(referenceId: string, actorId: string): Promise<EscrowAgreementRecord | null> {
+    public async getEscrow(referenceId: string, actorId: string): Promise<Record<string, any> | null> {
         const agreement = await this.findAgreement(referenceId);
         if (!agreement) return null;
         if (![agreement.sender_id, agreement.receiver_id].includes(actorId)) {
             throw new Error('ESCROW_ACCESS_DENIED');
         }
-        return agreement;
+        return this.decorateAgreement(agreement, actorId);
     }
 
-    public async getEscrows(userId: string): Promise<EscrowAgreementRecord[]> {
+    public async getEscrows(userId: string): Promise<Record<string, any>[]> {
         const sb = getAdminSupabase() || getSupabase();
         if (!sb) return [];
         const { data, error } = await sb
@@ -337,7 +369,9 @@ export class EscrowService {
             .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
             .order('created_at', { ascending: false });
         if (error) throw new Error('PAYSAFE_ESCROW_QUERY_FAILED');
-        return (data || []) as EscrowAgreementRecord[];
+        return ((data || []) as EscrowAgreementRecord[]).map((agreement) =>
+            this.decorateAgreement(agreement, userId),
+        );
     }
 
     private async getAgreement(referenceId: string): Promise<EscrowAgreementRecord> {
@@ -361,7 +395,7 @@ export class EscrowService {
     private async transition(
         referenceId: string,
         actorId: string,
-        action: 'RELEASE' | 'DISPUTE' | 'REFUND',
+        action: 'RELEASE' | 'ACCEPT' | 'DISPUTE' | 'REFUND',
         receiverVaultId: string | null = null,
         reason: string | null = null,
     ): Promise<Record<string, any>> {
@@ -379,6 +413,43 @@ export class EscrowService {
             throw new Error(domainError || 'PAYSAFE_TRANSITION_FAILED');
         }
         return (data || {}) as Record<string, any>;
+    }
+
+    private resolveHoldWindowHours(conditions: Record<string, unknown>): number {
+        const raw = conditions.holdWindowHours ?? conditions.hold_window_hours ?? 24;
+        const parsed = Number(raw);
+        if (!Number.isFinite(parsed)) return 24;
+        return Math.min(Math.max(Math.round(parsed), 1), 168);
+    }
+
+    private isExpired(agreement: EscrowAgreementRecord): boolean {
+        const expiresAt = agreement.expires_at ? new Date(agreement.expires_at) : null;
+        return Boolean(expiresAt && Number.isFinite(expiresAt.getTime()) && expiresAt.getTime() < Date.now());
+    }
+
+    private decorateAgreement(agreement: EscrowAgreementRecord, actorId: string): Record<string, any> {
+        const actorRole = agreement.sender_id === actorId ? 'sender' : 'receiver';
+        const status = String(agreement.status || '').toUpperCase() as EscrowStatus;
+        const expired = this.isExpired(agreement);
+        const receiverAccepted = Boolean(agreement.receiver_accepted_at || agreement.receiver_accepted_by);
+        const availableActions = {
+            release: actorRole === 'sender' && status === 'HELD' && !expired,
+            accept: actorRole === 'receiver' && status === 'RELEASE_PENDING' && !expired,
+            refund: actorRole === 'sender' && ['HELD', 'RELEASE_PENDING', 'DISPUTED'].includes(status) && !receiverAccepted,
+            dispute: ['sender', 'receiver'].includes(actorRole) && ['HELD', 'RELEASE_PENDING'].includes(status),
+        };
+        return {
+            ...agreement,
+            actorRole,
+            isSender: actorRole === 'sender',
+            isReceiver: actorRole === 'receiver',
+            awaitingReceiverAcceptance: status === 'RELEASE_PENDING',
+            receiverAccepted,
+            receiverAcceptanceRequired: true,
+            holdWindowExpired: expired,
+            holdWindowEndsAt: agreement.expires_at || null,
+            availableActions,
+        };
     }
 
     private async settleMerchantEscrow(

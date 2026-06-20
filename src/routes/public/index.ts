@@ -343,7 +343,9 @@ export const registerLegacyGatewayRoute = (app: Express, deps: LegacyGatewayDeps
         case 'escrow':
           if (operation === 'escrow_create') result = await LogicCore.createEscrow(session!.sub, payload.recipientId, payload.amount, payload.description, payload.conditions);
           else if (operation === 'escrow_release') result = await LogicCore.releaseEscrow(payload.referenceId, session!.sub);
+          else if (operation === 'escrow_accept') result = await LogicCore.acceptEscrow(payload.referenceId, session!.sub);
           else if (operation === 'escrow_dispute') result = await LogicCore.disputeEscrow(payload.referenceId, session!.sub, payload.reason);
+          else if (operation === 'escrow_refund') result = await LogicCore.refundEscrow(payload.referenceId, session!.sub, payload.reason);
           break;
         case 'treasury':
           if (operation === 'treasury_withdraw') result = await LogicCore.requestTreasuryWithdrawal(payload.orgId, payload.amount, payload.currency, payload.destination, session!.sub);
