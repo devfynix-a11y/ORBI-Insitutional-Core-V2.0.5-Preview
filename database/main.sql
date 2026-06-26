@@ -1625,7 +1625,8 @@ CREATE TABLE IF NOT EXISTS public.external_fund_movements (
     external_reference TEXT,
     source_external_ref TEXT,
     target_external_ref TEXT,
-    settlement_lifecycle_id UUID REFERENCES public.settlement_lifecycle(id) ON DELETE SET NULL,
+    -- Added as a deferred foreign key after settlement_lifecycle is created.
+    settlement_lifecycle_id UUID,
     provider_event_id TEXT,
     metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -2215,6 +2216,23 @@ CREATE TABLE IF NOT EXISTS public.settlement_lifecycle (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'external_fund_movements_settlement_lifecycle_id_fkey'
+          AND conrelid = 'public.external_fund_movements'::regclass
+    ) THEN
+        ALTER TABLE public.external_fund_movements
+            ADD CONSTRAINT external_fund_movements_settlement_lifecycle_id_fkey
+            FOREIGN KEY (settlement_lifecycle_id)
+            REFERENCES public.settlement_lifecycle(id)
+            ON DELETE SET NULL;
+    END IF;
+END
+$$;
 
 DO $$
 DECLARE
@@ -4030,6 +4048,50 @@ BEGIN
     END LOOP;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- Card settlement functions compile against these row types, so the core card
+-- tables must exist before the function definitions below.
+CREATE TABLE IF NOT EXISTS public.card_tokens (
+    id TEXT PRIMARY KEY,
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    masked_card_number TEXT NOT NULL,
+    tokenized_card_number TEXT NOT NULL,
+    expiry_month INTEGER NOT NULL,
+    expiry_year INTEGER NOT NULL,
+    cardholder_name TEXT NOT NULL,
+    card_brand TEXT NOT NULL CHECK (card_brand IN ('VISA', 'MASTERCARD', 'AMEX', 'DISCOVERY')),
+    card_type TEXT DEFAULT 'CREDIT' CHECK (card_type IN ('CREDIT', 'DEBIT')),
+    last_four_digits TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    is_default BOOLEAN DEFAULT FALSE,
+    status TEXT DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'INACTIVE', 'EXPIRED')),
+    encrypted_cvv TEXT,
+    billing_address JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE,
+    UNIQUE(user_id, fingerprint)
+);
+
+CREATE TABLE IF NOT EXISTS public.card_transactions (
+    id TEXT PRIMARY KEY,
+    card_token_id TEXT REFERENCES public.card_tokens(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    merchant_id UUID REFERENCES public.merchants(id) ON DELETE SET NULL,
+    amount NUMERIC NOT NULL,
+    currency TEXT DEFAULT 'TZS',
+    status TEXT DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'AUTHORIZED', 'SETTLED', 'FAILED', 'DECLINED', 'REVERSED')),
+    authorization_code TEXT,
+    rrn TEXT,
+    stan_number TEXT,
+    response_code TEXT,
+    response_message TEXT,
+    risk_score NUMERIC DEFAULT 0,
+    fraud_flags TEXT[] DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    settled_at TIMESTAMP WITH TIME ZONE,
+    metadata JSONB DEFAULT '{}'::jsonb
+);
 
 CREATE OR REPLACE FUNCTION public.card_settle_v1(
     p_card_transaction_id TEXT,

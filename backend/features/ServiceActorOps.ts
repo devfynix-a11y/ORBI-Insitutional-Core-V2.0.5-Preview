@@ -67,8 +67,38 @@ class ServiceActorOperations {
         return staff?.full_name || staff?.email || null;
     }
 
-    private actorDeskLabel(role: ServiceActorRole) {
-        return role === 'MERCHANT' ? 'Merchant desk' : 'Agent desk';
+    private async resolveActorNotificationBrand(userId: string, role: ServiceActorRole) {
+        const sb = this.getDb();
+        if (!sb) return { displayName: '', senderEmail: '' };
+
+        if (role === 'MERCHANT') {
+            const { data } = await sb
+                .from('merchants')
+                .select('business_name, metadata')
+                .eq('owner_user_id', userId)
+                .maybeSingle();
+            const metadata = data?.metadata && typeof data.metadata === 'object' ? data.metadata : {};
+            return {
+                displayName: String(data?.business_name || '').trim(),
+                senderEmail: String(
+                    metadata.notification_sender_email ||
+                    metadata.sender_email ||
+                    metadata.business_email ||
+                    '',
+                ).trim(),
+            };
+        }
+
+        const { data } = await sb
+            .from('agents')
+            .select('display_name, metadata')
+            .eq('user_id', userId)
+            .maybeSingle();
+        const metadata = data?.metadata && typeof data.metadata === 'object' ? data.metadata : {};
+        return {
+            displayName: String(data?.display_name || '').trim(),
+            senderEmail: String(metadata.notification_sender_email || metadata.sender_email || '').trim(),
+        };
     }
 
     private deriveNumericCode(seed: string, totalLength: number, prefix: string) {
@@ -230,19 +260,27 @@ class ServiceActorOperations {
 
     private async notifyServiceCustomerRegistration(actorId: string, actorRole: ServiceActorRole, customerUserId: string) {
         const customerName = (await this.resolveDisplayName(customerUserId)) || 'Customer';
-        const actorLabel = this.actorDeskLabel(actorRole);
+        const actorBrand = await this.resolveActorNotificationBrand(actorId, actorRole);
 
         await Promise.allSettled([
             Messaging.dispatchServiceActivity(
                 actorId,
                 'SERVICE_CUSTOMER_REGISTERED',
-                { actorLabel, customerName },
+                {
+                    actorLabel: actorBrand.displayName,
+                    senderEmail: actorBrand.senderEmail,
+                    customerName,
+                },
                 'info',
             ),
             Messaging.dispatchServiceActivity(
                 customerUserId,
                 'SERVICE_CUSTOMER_ONBOARDED',
-                { actorLabel, customerName },
+                {
+                    actorLabel: actorBrand.displayName,
+                    senderEmail: actorBrand.senderEmail,
+                    customerName,
+                },
                 'info',
             ),
         ]);
@@ -264,6 +302,13 @@ class ServiceActorOperations {
             ) || 0;
 
         if (serviceContext === 'MERCHANT') {
+            const storedBrand = await this.resolveActorNotificationBrand(actorUserId, 'MERCHANT');
+            const actorLabel =
+                String(metadata.merchant_name || metadata.business_name || '').trim() ||
+                storedBrand.displayName;
+            const senderEmail =
+                String(metadata.notification_sender_email || metadata.sender_email || metadata.business_email || '').trim() ||
+                storedBrand.senderEmail;
             const event = this.isSettledStatus(status)
                 ? 'MERCHANT_PAYMENT_COMPLETED'
                 : this.isFailedStatus(status)
@@ -271,7 +316,8 @@ class ServiceActorOperations {
                   : 'MERCHANT_PAYMENT_PENDING';
 
             await Messaging.dispatchServiceActivity(actorUserId, event, {
-                actorLabel: this.actorDeskLabel('MERCHANT'),
+                actorLabel,
+                senderEmail,
                 amount,
                 currency: transaction.currency || 'TZS',
                 status,
@@ -285,7 +331,8 @@ class ServiceActorOperations {
                       ? 'MERCHANT_CUSTOMER_PAYMENT_FAILED'
                       : 'MERCHANT_CUSTOMER_PAYMENT_PENDING';
                 await Messaging.dispatchServiceActivity(counterpartyUserId, customerEvent, {
-                    actorLabel: this.actorDeskLabel('MERCHANT'),
+                    actorLabel,
+                    senderEmail,
                     amount,
                     currency: transaction.currency || 'TZS',
                     status,
@@ -296,6 +343,13 @@ class ServiceActorOperations {
         }
 
         if (serviceContext === 'AGENT_CASH') {
+            const storedBrand = await this.resolveActorNotificationBrand(actorUserId, 'AGENT');
+            const actorLabel =
+                String(metadata.agent_name || metadata.display_name || '').trim() ||
+                storedBrand.displayName;
+            const senderEmail =
+                String(metadata.notification_sender_email || metadata.sender_email || '').trim() ||
+                storedBrand.senderEmail;
             const event = this.isSettledStatus(status)
                 ? 'AGENT_CASH_COMPLETED'
                 : this.isFailedStatus(status)
@@ -303,7 +357,8 @@ class ServiceActorOperations {
                   : 'AGENT_CASH_PENDING';
 
             await Messaging.dispatchServiceActivity(actorUserId, event, {
-                actorLabel: this.actorDeskLabel('AGENT'),
+                actorLabel,
+                senderEmail,
                 amount,
                 currency: transaction.currency || 'TZS',
                 direction: metadata.cash_direction || 'deposit',
@@ -318,7 +373,8 @@ class ServiceActorOperations {
                       ? 'AGENT_CUSTOMER_CASH_FAILED'
                       : 'AGENT_CUSTOMER_CASH_PENDING';
                 await Messaging.dispatchServiceActivity(counterpartyUserId, customerEvent, {
-                    actorLabel: this.actorDeskLabel('AGENT'),
+                    actorLabel,
+                    senderEmail,
                     amount,
                     currency: transaction.currency || 'TZS',
                     direction: metadata.cash_direction || 'deposit',
@@ -1289,7 +1345,7 @@ class ServiceActorOperations {
             commission.actor_user_id,
             'AGENT_COMMISSION_PAID',
             {
-                actorLabel: this.actorDeskLabel('AGENT'),
+                actorLabel: (await this.resolveActorNotificationBrand(commission.actor_user_id, 'AGENT')).displayName,
                 amount: Number(commission.amount || 0),
                 currency: commission.currency || actorWallet.currency || 'TZS',
             },

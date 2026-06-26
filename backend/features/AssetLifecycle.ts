@@ -2,6 +2,7 @@
 import { getAdminSupabase, getSupabase } from '../../services/supabaseClient.js';
 import { EnvUtils } from '../../services/utils.js';
 import { Audit } from '../security/audit.js';
+import { ImageObjectStorage } from '../storage/ImageObjectStorage.js';
 
 /**
  * ASSET LIFECYCLE MANAGEMENT (V2.0)
@@ -9,9 +10,19 @@ import { Audit } from '../security/audit.js';
  */
 export class AssetLifecycleManager {
     private bucketName: string;
+    private r2Storage: ImageObjectStorage | null = null;
 
     constructor() {
         this.bucketName = EnvUtils.get('VITE_AVATAR_BUCKET') || 'orbi-users-profile-picture';
+    }
+
+    private usesR2(): boolean {
+        return String(process.env.ORBI_IMAGE_STORAGE_PROVIDER || '').trim().toLowerCase() === 'r2';
+    }
+
+    private getR2Storage(): ImageObjectStorage {
+        this.r2Storage ||= new ImageObjectStorage();
+        return this.r2Storage;
     }
 
     /**
@@ -19,6 +30,24 @@ export class AssetLifecycleManager {
      * Securely removes binary assets from cloud nodes.
      */
     public async decommission(url: string | undefined, actorId: string = 'system'): Promise<boolean> {
+        if (this.usesR2()) {
+            if (!url) return true;
+            try {
+                const removed = await this.getR2Storage().deletePublicUrl(url);
+                if (removed) {
+                    await Audit.log('SECURITY', actorId, 'ASSET_DECOMMISSION', {
+                        asset_url: url,
+                        provider: 'cloudflare_r2',
+                        reason: 'Single Active Avatar Policy Enforcement',
+                    });
+                }
+                return removed;
+            } catch (error) {
+                console.error('[Lifecycle] R2 asset decommission failed:', error);
+                return false;
+            }
+        }
+
         if (!url || !url.includes(this.bucketName)) return true;
 
         const sb = getAdminSupabase() || getSupabase();
@@ -53,6 +82,11 @@ export class AssetLifecycleManager {
      * Synchronizes institutional assets with the cloud storage cluster.
      */
     public async commit(userId: string, file: any, contentType?: string): Promise<string | null> {
+        if (this.usesR2()) {
+            if (!Buffer.isBuffer(file)) throw new Error('INVALID_IMAGE_BUFFER');
+            return this.getR2Storage().uploadAvatar(userId, file, contentType);
+        }
+
         const sb = getAdminSupabase() || getSupabase();
         if (!sb) throw new Error("CLOUD_NODE_OFFLINE");
 

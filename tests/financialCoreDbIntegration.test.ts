@@ -5,6 +5,7 @@ import { dbIntegrationEnabled, dbIntegrationTest, hasDbIntegrationConfig } from 
 const integrationDiagnostic = {
   enabled: dbIntegrationEnabled,
   configured: hasDbIntegrationConfig(),
+  provider: process.env.ORBI_DB_INTEGRATION_PROVIDER || process.env.ORBI_DATA_PROVIDER || 'supabase',
   writesEnabled: process.env.ORBI_DB_INTEGRATION_ALLOW_WRITES === 'true',
 };
 
@@ -81,6 +82,6 @@ dbIntegrationTest('db integration scaffold can inspect settlement backlog phases
 });
 
 if (!dbIntegrationEnabled || !hasDbIntegrationConfig()) {
-  console.info('[financial-db-integration] Skipped. Set ORBI_RUN_DB_INTEGRATION=true and provide Supabase service-role env vars to enable.');
+  console.info('[financial-db-integration] Skipped. Enable ORBI_RUN_DB_INTEGRATION and configure the selected database provider.');
   console.info('[financial-db-integration] Current config:', integrationDiagnostic);
 }

@@ -1,0 +1,50 @@
+services:
+  prometheus:
+    image: ${ORBI_PROMETHEUS_IMAGE:-prom/prometheus:v3.5.0}
+    container_name: orbi-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${ORBI_PROMETHEUS_RETENTION:-30d}
+      - --web.enable-lifecycle
+    volumes:
+      - ./Observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../observability/prometheus-alerts.yml:/etc/prometheus/orbi-alerts.yml:ro
+      - ${ORBI_MONITOR_KEY_FILE:-./Observability/secrets/orbi_monitor_api_key.txt}:/run/secrets/orbi_monitor_api_key:ro
+      - orbi_prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    networks:
+      - orbi_ops
+
+  grafana:
+    image: ${ORBI_GRAFANA_IMAGE:-grafana/grafana:12.1.0}
+    container_name: orbi-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${ORBI_GRAFANA_ADMIN_USER:-orbi-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${ORBI_GRAFANA_ADMIN_PASSWORD:?Set ORBI_GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SERVER_DOMAIN: ${ORBI_GRAFANA_DOMAIN:-localhost}
+    volumes:
+      - ./Observability/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - orbi_grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3001:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - orbi_ops
+
+networks:
+  orbi_ops:
+    name: orbi-ops
+    driver: bridge
+
+volumes:
+  orbi_prometheus_data:
+    name: orbi-prometheus-data
+  orbi_grafana_data:
+    name: orbi-grafana-data

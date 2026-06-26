@@ -1,0 +1,70 @@
+services:
+  core:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: orbi-core
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      NODE_ENV: development
+      ORBI_AUTH_PROVIDER: keycloak
+      ORBI_DATA_PROVIDER: local
+      # Financial repositories are still migrating from Supabase. Do not run
+      # settlement/reconciliation mutation loops against an incomplete adapter.
+      ORBI_ENABLE_GATEWAY_BACKGROUND_JOBS: "false"
+      ORBI_KEYCLOAK_INTERNAL_URL: http://keycloak:8080
+      ORBI_KEYCLOAK_ISSUER: ${ORBI_KEYCLOAK_PUBLIC_URL:-http://localhost:8081}/realms/orbi
+      ORBI_KEYCLOAK_AUDIENCE: orbi-core
+      ORBI_KEYCLOAK_REALM: orbi
+      ORBI_KEYCLOAK_MOBILE_CLIENT_ID: orbi-mobile
+      ORBI_KEYCLOAK_ADMIN_USERNAME: ${ORBI_KEYCLOAK_ADMIN_USERNAME:-orbi-admin}
+      ORBI_KEYCLOAK_ADMIN_PASSWORD: ${ORBI_KEYCLOAK_ADMIN_PASSWORD}
+      DATABASE_URL: postgresql://${ORBI_POSTGRES_USER:-orbi}:${ORBI_POSTGRES_PASSWORD}@postgres:5432/${ORBI_POSTGRES_DB:-orbi}
+      VALKEY_URL: redis://:${ORBI_VALKEY_PASSWORD}@valkey:6379/0
+      S3_ENDPOINT: http://storage:9000
+      S3_ACCESS_KEY_ID: ${ORBI_STORAGE_ROOT_USER:-orbi-storage}
+      S3_SECRET_ACCESS_KEY: ${ORBI_STORAGE_ROOT_PASSWORD}
+      S3_BUCKET: ${ORBI_STORAGE_ASSET_BUCKET:-orbi-assets}
+      KYC_BUCKET: ${ORBI_STORAGE_KYC_BUCKET:-orbi-kyc}
+      PORT: 3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      storage:
+        condition: service_started
+      storage-init:
+        condition: service_completed_successfully
+    ports:
+      - "${ORBI_DEV_BIND_ADDRESS:-127.0.0.1}:3000:3000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - orbi_private
+      - orbi_edge
+      - orbi_ops
+
+networks:
+  orbi_private:
+    name: orbi-private
+    driver: bridge
+  orbi_edge:
+    name: orbi-edge
+    driver: bridge
+  orbi_ops:
+    name: orbi-ops
+    driver: bridge

@@ -264,8 +264,8 @@ type RiskGeoBucket = {
 type ComplianceNodeZone = {
   id: string;
   name: string;
-  provider: 'oracle' | 'gcp' | 'orbi_pay' | 'supabase' | 'admin' | 'external';
-  role: 'core_api_primary' | 'core_api_fallback' | 'pay_gateway_edge' | 'ledger_authority' | 'admin_ops' | 'provider_rails';
+  provider: 'self_hosted' | 'orbi_pay' | 'database' | 'admin' | 'external';
+  role: 'core_api_primary' | 'pay_gateway_edge' | 'ledger_authority' | 'admin_ops' | 'provider_rails';
   baseUrl?: string;
   healthEndpoint?: string;
   regionCode: string;
@@ -500,43 +500,25 @@ const envNumber = (key: string, fallback: number): number => {
 };
 
 const complianceNodeZones = (): ComplianceNodeZone[] => {
-  const primaryUrl = envString('ORBI_ORACLE_CORE_BASE_URL', envString('ORBI_PRIMARY_CORE_BASE_URL', 'https://api.orbifinancial.com'));
-  const googleUrl = envString('ORBI_GOOGLE_CORE_BASE_URL', envString('ORBI_FALLBACK_CORE_BASE_URL', 'https://go-api.orbifinancial.com'));
+  const primaryUrl = envString('ORBI_PRIMARY_CORE_BASE_URL', 'https://api.orbifinancial.com');
   const payGatewayUrl = envString('ORBI_PAY_GATEWAY_BASE_URL', 'https://pay.orbifinancial.com');
 
   return [
     {
       id: 'ORBI-PRIMARY-CORE',
-      name: 'ORBI Core Primary',
-      provider: 'oracle',
+      name: 'ORBI Self-Hosted Core',
+      provider: 'self_hosted',
       role: 'core_api_primary',
       baseUrl: primaryUrl,
       healthEndpoint: `${primaryUrl}/health`,
-      regionCode: envString('ORBI_ORACLE_CORE_REGION', envString('ORBI_PRIMARY_CORE_REGION', 'primary')),
-      jurisdiction: envString('ORBI_ORACLE_CORE_JURISDICTION', envString('ORBI_PRIMARY_CORE_JURISDICTION', 'GLOBAL')),
+      regionCode: envString('ORBI_PRIMARY_CORE_REGION', 'private-datacenter'),
+      jurisdiction: envString('ORBI_PRIMARY_CORE_JURISDICTION', 'TZ'),
       coordinates: {
-        lat: envNumber('ORBI_ORACLE_CORE_LAT', envNumber('ORBI_PRIMARY_CORE_LAT', 0)),
-        lng: envNumber('ORBI_ORACLE_CORE_LNG', envNumber('ORBI_PRIMARY_CORE_LNG', 0)),
+        lat: envNumber('ORBI_PRIMARY_CORE_LAT', -6.7924),
+        lng: envNumber('ORBI_PRIMARY_CORE_LNG', 39.2083),
       },
-      competencies: ['transaction_preview', 'transaction_settlement', 'wallet_governance', 'admin_api', 'risk_enforcement'],
-      baseRisk: envNumber('ORBI_ORACLE_CORE_BASE_RISK', envNumber('ORBI_PRIMARY_CORE_BASE_RISK', 25)),
-      active: true,
-    },
-    {
-      id: 'ORBI-GCP-CORE-FALLBACK',
-      name: 'Google Core Fallback',
-      provider: 'gcp',
-      role: 'core_api_fallback',
-      baseUrl: googleUrl,
-      healthEndpoint: `${googleUrl}/health`,
-      regionCode: envString('ORBI_GOOGLE_CORE_REGION', 'us-central1'),
-      jurisdiction: envString('ORBI_GOOGLE_CORE_JURISDICTION', 'US'),
-      coordinates: {
-        lat: envNumber('ORBI_GOOGLE_CORE_LAT', 41.2619),
-        lng: envNumber('ORBI_GOOGLE_CORE_LNG', -95.8608),
-      },
-      competencies: ['fallback_core_api', 'safe_read_failover', 'deployment_redundancy', 'disaster_recovery'],
-      baseRisk: envNumber('ORBI_GOOGLE_CORE_BASE_RISK', 15),
+      competencies: ['transaction_preview', 'transaction_settlement', 'wallet_governance', 'admin_api', 'risk_enforcement', 'data_residency'],
+      baseRisk: envNumber('ORBI_PRIMARY_CORE_BASE_RISK', 25),
       active: true,
     },
     {
@@ -558,11 +540,11 @@ const complianceNodeZones = (): ComplianceNodeZone[] => {
     },
     {
       id: 'ORBI-LEDGER-AUTHORITY',
-      name: 'Ledger Authority',
-      provider: 'supabase',
+      name: 'Private Ledger Authority',
+      provider: 'database',
       role: 'ledger_authority',
-      regionCode: envString('ORBI_LEDGER_REGION', 'managed-postgres'),
-      jurisdiction: envString('ORBI_LEDGER_JURISDICTION', 'DATA_AUTHORITY'),
+      regionCode: envString('ORBI_LEDGER_REGION', 'private-postgres'),
+      jurisdiction: envString('ORBI_LEDGER_JURISDICTION', 'TZ'),
       coordinates: {
         lat: envNumber('ORBI_LEDGER_LAT', 51.5072),
         lng: envNumber('ORBI_LEDGER_LNG', -0.1276),

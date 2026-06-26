@@ -2,6 +2,11 @@
 node_modules/
 dist/
 .env
+.env.production
 *.log
 npm-debug.log*
 .DS_Store
+ops/self-hosted/**/secrets/*.txt
+ops/self-hosted/Gateway/certs/*
+!ops/self-hosted/Gateway/certs/README.md
+backups/local/

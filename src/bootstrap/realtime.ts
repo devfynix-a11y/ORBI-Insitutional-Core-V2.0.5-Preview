@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import type { Server as HttpServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
-import { AuthService } from '../../iam/authService.js';
+import { Server as LogicCore } from '../../backend/server.js';
 import { SocketRegistry } from '../../backend/infrastructure/SocketRegistry.js';
 
 export const bootstrapRealtime = ({
@@ -42,8 +42,7 @@ export const bootstrapRealtime = ({
           let userId = data.userId;
           if (data.token) {
             try {
-              const authService = new AuthService();
-              const session = await authService.getSession(data.token);
+              const session = await LogicCore.getSession(data.token);
               if (session) {
                 userId = session.user.id;
               }

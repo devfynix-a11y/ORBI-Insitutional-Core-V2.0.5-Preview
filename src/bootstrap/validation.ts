@@ -47,9 +47,9 @@ const OPTIONAL_ENV = [
   'ORBI_PAY_GATEWAY_LAT',
   'ORBI_PAY_GATEWAY_LNG',
   'ORBI_PAY_GATEWAY_BASE_RISK',
-  'REDIS_CLUSTER_NODES',
-  'REDIS_URL',
-  'REDIS_HOST',
+  'VALKEY_CLUSTER_NODES',
+  'VALKEY_URL',
+  'VALKEY_HOST',
 ];
 
 const REQUIRED_RPC_DEPENDENCIES = [
@@ -101,11 +101,80 @@ const warnGovernanceConfig = (event: string, payload: Record<string, unknown>) =
 
 export const validateStartupEnvironment = () => {
   const isProd = process.env.NODE_ENV === 'production';
+  const authProvider = String(process.env.ORBI_AUTH_PROVIDER || 'supabase').trim().toLowerCase();
+  const usesLocalAuth = authProvider === 'local';
+  const usesKeycloak = authProvider === 'keycloak';
+  const usesLocalData = String(process.env.ORBI_DATA_PROVIDER || 'supabase').trim().toLowerCase() === 'local';
+  const usesR2Images =
+    String(process.env.ORBI_IMAGE_STORAGE_PROVIDER || '').trim().toLowerCase() === 'r2';
 
   for (const key of REQUIRED_ENV_PROD) {
+    if (usesLocalData && ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_ANON_KEY'].includes(key)) {
+      continue;
+    }
     if (isProd && !process.env[key]) {
       fatalIfMissing(key);
     }
+  }
+
+  if (usesLocalAuth && !process.env.DATABASE_URL) {
+    fatalIfMissing('DATABASE_URL');
+  }
+
+  if (usesKeycloak) {
+    for (const key of [
+      'DATABASE_URL',
+      'ORBI_KEYCLOAK_INTERNAL_URL',
+      'ORBI_KEYCLOAK_ISSUER',
+      'ORBI_KEYCLOAK_AUDIENCE',
+      'ORBI_KEYCLOAK_ADMIN_USERNAME',
+      'ORBI_KEYCLOAK_ADMIN_PASSWORD',
+    ]) {
+      if (!process.env[key]) fatalIfMissing(key);
+    }
+    if (isProd && !String(process.env.ORBI_KEYCLOAK_ISSUER).startsWith('https://')) {
+      logger.fatal('startup.invalid_keycloak_issuer_transport', {
+        issuer: process.env.ORBI_KEYCLOAK_ISSUER,
+      });
+      process.exit(1);
+    }
+  }
+
+  if (usesR2Images) {
+    const requiredAliases = [
+      {
+        label: 'CLOUDFLARE_ACCOUNT_ID_OR_R2_ENDPOINT',
+        values: [process.env.CLOUDFLARE_ACCOUNT_ID, process.env.CLOUDFLARE_R2_ENDPOINT],
+      },
+      {
+        label: 'CLOUDFLARE_ACCESS_KEY_ID',
+        values: [process.env.CLOUDFLARE_ACCESS_KEY_ID, process.env.CLOUDFLARE_R2_ACCESS_KEY_ID],
+      },
+      {
+        label: 'CLOUDFLARE_SECRET_ACCESS_KEY',
+        values: [process.env.CLOUDFLARE_SECRET_ACCESS_KEY, process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY],
+      },
+      {
+        label: 'CLOUDFLARE_BUCKET_NAME',
+        values: [process.env.CLOUDFLARE_BUCKET_NAME, process.env.CLOUDFLARE_R2_IMAGE_BUCKET],
+      },
+      {
+        label: 'CLOUDFLARE_PUBLIC_URL_PREFIX',
+        values: [process.env.CLOUDFLARE_PUBLIC_URL_PREFIX, process.env.ORBI_IMAGE_PUBLIC_BASE_URL],
+      },
+    ];
+    for (const requirement of requiredAliases) {
+      if (!requirement.values.some((value) => String(value || '').trim())) {
+        fatalIfMissing(requirement.label);
+      }
+    }
+  }
+
+  if (isProd && usesLocalData && process.env.ORBI_LOCAL_DATA_PRODUCTION_READY !== 'true') {
+    logger.fatal('startup.local_data_provider_not_production_ready', {
+      data_provider: 'local',
+    });
+    process.exit(1);
   }
 
   for (const key of OPTIONAL_ENV) {
@@ -115,21 +184,24 @@ export const validateStartupEnvironment = () => {
   }
 
   if (isProd) {
-    const supabaseUrl = String(process.env.SUPABASE_URL || '').trim();
-    if (!supabaseUrl.startsWith('https://')) {
-      logger.fatal('startup.invalid_supabase_transport', {
-        supabase_url: supabaseUrl,
-      });
-      process.exit(1);
+    if (!usesLocalData) {
+      const supabaseUrl = String(process.env.SUPABASE_URL || '').trim();
+      if (!supabaseUrl.startsWith('https://')) {
+        logger.fatal('startup.invalid_supabase_transport', {
+          supabase_url: supabaseUrl,
+        });
+        process.exit(1);
+      }
     }
 
     if (
-      process.env.REDIS_TLS_ENABLED === 'true' &&
-      process.env.REDIS_ALLOW_INSECURE_TLS === 'true'
+      (process.env.VALKEY_TLS_ENABLED || process.env.REDIS_TLS_ENABLED) === 'true' &&
+      (process.env.VALKEY_ALLOW_INSECURE_TLS || process.env.REDIS_ALLOW_INSECURE_TLS) === 'true'
     ) {
       logger.fatal('startup.invalid_prod_redis_tls', {
-        redis_tls_enabled: process.env.REDIS_TLS_ENABLED,
-        redis_allow_insecure_tls: process.env.REDIS_ALLOW_INSECURE_TLS,
+        valkey_tls_enabled: process.env.VALKEY_TLS_ENABLED || process.env.REDIS_TLS_ENABLED,
+        valkey_allow_insecure_tls:
+          process.env.VALKEY_ALLOW_INSECURE_TLS || process.env.REDIS_ALLOW_INSECURE_TLS,
       });
       process.exit(1);
     }

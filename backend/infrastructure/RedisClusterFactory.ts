@@ -2,10 +2,10 @@ import { Cluster, Redis } from 'ioredis';
 import fs from 'fs';
 
 /**
- * ORBI REDIS CLUSTER FACTORY (V1.3 Titanium)
+ * ORBI VALKEY CLIENT FACTORY
  * -------------------------------------------
- * Orchestrates secure, high-availability links to the Sovereign Redis Cluster.
- * Now supports Hybrid Mode (Cluster + Standalone).
+ * Uses the Redis wire protocol through ioredis for Valkey compatibility.
+ * Legacy REDIS_* variables remain temporary aliases during migration.
  */
 
 export type RedisTier = 'session' | 'fraud' | 'monitor';
@@ -14,10 +14,12 @@ class RedisClusterFactory {
     private static instances: Map<RedisTier, Cluster | Redis> = new Map();
 
     private static buildTlsOptions() {
-        if (process.env.REDIS_TLS_ENABLED !== 'true') return undefined;
+        const tlsEnabled = process.env.VALKEY_TLS_ENABLED || process.env.REDIS_TLS_ENABLED;
+        if (tlsEnabled !== 'true') return undefined;
 
-        const allowInsecureTls = process.env.REDIS_ALLOW_INSECURE_TLS === 'true';
-        const caPath = process.env.REDIS_CA_CERT_PATH;
+        const allowInsecureTls =
+            (process.env.VALKEY_ALLOW_INSECURE_TLS || process.env.REDIS_ALLOW_INSECURE_TLS) === 'true';
+        const caPath = process.env.VALKEY_CA_CERT_PATH || process.env.REDIS_CA_CERT_PATH;
         const tlsOptions: any = {
             rejectUnauthorized: !allowInsecureTls,
         };
@@ -28,14 +30,21 @@ class RedisClusterFactory {
         }
 
         if (allowInsecureTls) {
-            console.warn('[RedisFactory] REDIS_ALLOW_INSECURE_TLS=true. This should only be used in non-production environments.');
+            console.warn('[ValkeyFactory] Insecure TLS is enabled. This is forbidden in production.');
         }
 
         return tlsOptions;
     }
 
     public static isAvailable(): boolean {
-        return !!(process.env.REDIS_CLUSTER_NODES || process.env.REDIS_URL || process.env.REDIS_HOST);
+        return !!(
+            process.env.VALKEY_CLUSTER_NODES ||
+            process.env.VALKEY_URL ||
+            process.env.VALKEY_HOST ||
+            process.env.REDIS_CLUSTER_NODES ||
+            process.env.REDIS_URL ||
+            process.env.REDIS_HOST
+        );
     }
 
     public static getClient(tier: RedisTier): Cluster | Redis | null {
@@ -43,11 +52,13 @@ class RedisClusterFactory {
             return this.instances.get(tier)!;
         }
 
-        // 1. Standalone Mode (Preferred if REDIS_URL is present)
-        if (process.env.REDIS_URL) {
-            console.info(`[RedisFactory] Initializing Standalone Link for ${tier}...`);
+        const standaloneUrl = process.env.VALKEY_URL || process.env.REDIS_URL;
+
+        // 1. Standalone Valkey mode.
+        if (standaloneUrl) {
+            console.info(`[ValkeyFactory] Initializing standalone link for ${tier}...`);
             try {
-                const client = new Redis(process.env.REDIS_URL, {
+                const client = new Redis(standaloneUrl, {
                     maxRetriesPerRequest: null,
                     enableReadyCheck: false,
                     tls: this.buildTlsOptions(),
@@ -55,26 +66,30 @@ class RedisClusterFactory {
 
                 client.on('error', (err) => {
                     // Suppress connection errors to prevent log flooding
-                    console.warn(`[Redis:${tier}] Connection instability: ${err.message}`);
+                    console.warn(`[Valkey:${tier}] Connection instability: ${err.message}`);
                 });
 
                 this.instances.set(tier, client);
                 return client;
             } catch (e: any) {
-                console.error(`[RedisFactory] Standalone Init Failed: ${e.message}`);
+                console.error(`[ValkeyFactory] Standalone initialization failed: ${e.message}`);
             }
         }
 
         // 2. Cluster Mode
-        const nodesStr = process.env.REDIS_CLUSTER_NODES;
+        const nodesStr = process.env.VALKEY_CLUSTER_NODES || process.env.REDIS_CLUSTER_NODES;
         if (nodesStr) {
             const nodes = nodesStr.split(',').map(n => {
                 const [host, port] = n.split(':');
                 return { host, port: parseInt(port || '6379') };
             });
 
-            const username = process.env[`REDIS_USER_${tier.toUpperCase()}`];
-            const password = process.env[`REDIS_PASS_${tier.toUpperCase()}`];
+            const username =
+                process.env[`VALKEY_USER_${tier.toUpperCase()}`] ||
+                process.env[`REDIS_USER_${tier.toUpperCase()}`];
+            const password =
+                process.env[`VALKEY_PASS_${tier.toUpperCase()}`] ||
+                process.env[`REDIS_PASS_${tier.toUpperCase()}`];
             const tlsOptions = this.buildTlsOptions();
 
             const cluster = new Cluster(nodes, {
@@ -101,7 +116,7 @@ class RedisClusterFactory {
                 if (err.message.includes('Failed to refresh slots cache')) {
                     // console.warn(`[RedisCluster:${tier}] Slots refresh warning (transient): ${err.message}`);
                 } else {
-                    console.error(`[RedisCluster:${tier}] Functional fault detected:`, err.message);
+                    console.error(`[ValkeyCluster:${tier}] Functional fault detected:`, err.message);
                 }
             });
 
@@ -110,16 +125,18 @@ class RedisClusterFactory {
         }
 
         // 3. Standalone Host Fallback
-        if (process.env.REDIS_HOST) {
+        const standaloneHost = process.env.VALKEY_HOST || process.env.REDIS_HOST;
+        if (standaloneHost) {
              const client = new Redis({
-                 host: process.env.REDIS_HOST,
-                 port: parseInt(process.env.REDIS_PORT || '6379'),
-                 password: process.env.REDIS_PASSWORD,
+                 host: standaloneHost,
+                 port: parseInt(process.env.VALKEY_PORT || process.env.REDIS_PORT || '6379'),
+                 username: process.env.VALKEY_USERNAME,
+                 password: process.env.VALKEY_PASSWORD || process.env.REDIS_PASSWORD,
                  tls: this.buildTlsOptions(),
              });
              
              client.on('error', (err) => {
-                console.warn(`[Redis:${tier}] Connection instability: ${err.message}`);
+                 console.warn(`[Valkey:${tier}] Connection instability: ${err.message}`);
              });
 
              this.instances.set(tier, client);
@@ -131,7 +148,7 @@ class RedisClusterFactory {
 
     public static async shutdownAll() {
         for (const [tier, client] of this.instances.entries()) {
-            console.info(`[RedisFactory] Sending SIGTERM to ${tier} node...`);
+            console.info(`[ValkeyFactory] Closing ${tier} connection...`);
             await client.quit();
         }
         this.instances.clear();

@@ -1,6 +1,12 @@
 import { logger } from './logger.js';
 import parsePhoneNumber from 'libphonenumber-js';
 import { MessageType, TemplateChannel, TemplateLanguage, TemplateName, TemplatePayloads } from '../templates/template_types.js';
+import {
+    NotificationBrand,
+    NotificationBrandContext,
+    resolveNotificationBrand,
+    resolveTemplateNotificationBrand,
+} from './NotificationBrandResolver.js';
 
 export const orbiTalkGatewayLogger = logger.child({ component: 'orbi_talk_gateway_service' });
 
@@ -57,6 +63,24 @@ class OrbiTalkGatewayService {
 
     private ownerEmail(ownerEmail?: string): string | undefined {
         return ownerEmail || envFirst('ORBI_TALK_GATEWAY_USER_EMAIL');
+    }
+
+    private brandPayload(context?: NotificationBrandContext | NotificationBrand) {
+        const brand = context && 'source' in context
+            ? context as NotificationBrand
+            : resolveNotificationBrand(context);
+        return {
+            brand,
+            brandCode: brand.code,
+            senderName: brand.displayName,
+            fromName: brand.displayName,
+            sender: brand.displayName,
+            platformName: brand.displayName,
+            senderEmail: brand.senderEmail,
+            fromEmail: brand.senderEmail,
+            replyTo: brand.replyTo,
+            logoUrl: brand.logoUrl,
+        };
     }
 
     private normalizeTemplateData<T extends TemplateName>(templateName: T, data: TemplatePayloads[T]): TemplatePayloads[T] {
@@ -235,7 +259,7 @@ class OrbiTalkGatewayService {
         }
     }
 
-    async sendEmail(recipient: string, subject: string, body: string, html?: string, language: string = 'en', ownerUid?: string, ownerEmail?: string, requestId?: string): Promise<boolean> {
+    async sendEmail(recipient: string, subject: string, body: string, html?: string, language: string = 'en', ownerUid?: string, ownerEmail?: string, requestId?: string, brand?: NotificationBrandContext | NotificationBrand): Promise<boolean> {
         if (!this.apiKey || !this.baseUrl) {
             orbiTalkGatewayLogger.error('orbi_talk_gateway.email_missing_configuration', { channel: 'email', recipient });
             return false;
@@ -254,6 +278,7 @@ class OrbiTalkGatewayService {
                     body,
                     subject,
                     html,
+                    ...this.brandPayload(brand),
                     messageType: 'transactional',
                     language,
                     ownerUid: this.ownerUid(ownerUid),
@@ -391,9 +416,9 @@ class OrbiTalkGatewayService {
         templateName: T, 
         recipient: string, 
         data: TemplatePayloads[T], 
-        options: { channel?: string; language?: string; messageType?: 'transactional' | 'promotional'; fcmToken?: string; ownerUid?: string; ownerEmail?: string; requestId?: string } = {}
+        options: { channel?: string; language?: string; messageType?: 'transactional' | 'promotional'; fcmToken?: string; ownerUid?: string; ownerEmail?: string; requestId?: string; brand?: NotificationBrandContext | NotificationBrand } = {}
     ): Promise<boolean> {
-        const { channel = 'sms', language = 'en', messageType = 'transactional', fcmToken, ownerUid, ownerEmail, requestId } = options;
+        const { channel = 'sms', language = 'en', messageType = 'transactional', fcmToken, ownerUid, ownerEmail, requestId, brand } = options;
 
         if (!this.apiKey || !this.baseUrl) {
             orbiTalkGatewayLogger.error('orbi_talk_gateway.template_missing_configuration', { channel, recipient, template_name: templateName });
@@ -404,10 +429,16 @@ class OrbiTalkGatewayService {
 
         try {
             const normalizedData = this.normalizeTemplateData(templateName, data);
+            const resolvedBrand = resolveTemplateNotificationBrand(
+                templateName,
+                normalizedData as Record<string, any>,
+                brand,
+            );
             const payload = {
                 templateName,
                 recipient: normalizedRecipient,
                 data: normalizedData,
+                ...this.brandPayload(resolvedBrand),
                 channel,
                 language,
                 messageType,

@@ -1742,15 +1742,18 @@ export class TransactionService {
 
     public async reserveEscrow(userId: string, walletId: string, amount: number, description: string, referenceId: string): Promise<void> {
         const escrowNode = await RegulatoryService.resolveSystemNode('ESCROW_VAULT');
+        const transactionId = UUID.generate();
         const legs: LedgerEntry[] = [
-            { transactionId: referenceId, walletId, type: 'DEBIT', amount, currency: 'USD', description: `Escrow Hold: ${description}`, timestamp: new Date().toISOString() },
-            { transactionId: referenceId, walletId: escrowNode, type: 'CREDIT', amount, currency: 'USD', description: `Inbound Escrow: ${description}`, timestamp: new Date().toISOString() }
+            { transactionId, walletId, type: 'DEBIT', amount, currency: 'TZS', description: `Escrow Hold: ${description}`, timestamp: new Date().toISOString() },
+            { transactionId, walletId: escrowNode, type: 'CREDIT', amount, currency: 'TZS', description: `Inbound Escrow: ${description}`, timestamp: new Date().toISOString() }
         ];
 
         await this.postTransactionWithLedger({
-            id: referenceId,
+            id: transactionId,
+            referenceId,
             user_id: userId,
             amount: amount,
+            currency: 'TZS',
             description: `Compliance Escrow: ${description}`,
             type: 'escrow',
             status: 'processing',

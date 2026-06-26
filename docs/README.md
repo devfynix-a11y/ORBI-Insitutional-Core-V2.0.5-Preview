@@ -40,10 +40,11 @@ This is the **Sovereign Financial Operating System** powering the ORBI ecosystem
 - **Robust API Error Handling**: Comprehensive `try-catch` boundaries across all v1 and admin routes, ensuring graceful degradation and consistent error payloads.
 - **Transaction Service (V2.0)**: Enhanced financial integrity with proactive balance verification, system-wide reconciliation, and forensic reversal capabilities.
 
-##  Deployment
-This node is productionized for Oracle Cloud VM deployments through GitHub
-Actions. Legacy Render references remain only where older client integrations
-need migration context.
+## Deployment
+This node targets an organization-managed VM with a static IP and private data
+services. See [Self-Hosted Core and Data Migration](./SELF_HOSTED_DATA_MIGRATION.md)
+for the network boundary, staged database migration, and restore-first backup
+requirements.
 
 ## 🏢 Enterprise Readiness
 The ORBI Sovereign Backend is a professional, enterprise-grade financial infrastructure designed for high-stakes operations. It features:

@@ -1,0 +1,120 @@
+services:
+  postgres:
+    image: ${ORBI_POSTGRES_IMAGE:-postgres:16-bookworm}
+    container_name: orbi-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${ORBI_POSTGRES_DB:-orbi}
+      POSTGRES_USER: ${ORBI_POSTGRES_USER:-orbi}
+      POSTGRES_PASSWORD: ${ORBI_POSTGRES_PASSWORD:?Set ORBI_POSTGRES_PASSWORD}
+    volumes:
+      - orbi_postgres_data:/var/lib/postgresql/data
+      - ../../database/local/000_create_keycloak_database.sql:/docker-entrypoint-initdb.d/000_create_keycloak_database.sql:ro
+      - ../../database/local/001_orbi_auth_compat.sql:/docker-entrypoint-initdb.d/001_orbi_auth_compat.sql:ro
+      - ../../database/local/002_keycloak_identity_links.sql:/docker-entrypoint-initdb.d/002_keycloak_identity_links.sql:ro
+      - ../../database/main.sql:/docker-entrypoint-initdb.d/010_orbi_main.sql:ro
+      - ../../database/demo:/demo:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ORBI_POSTGRES_USER:-orbi} -d ${ORBI_POSTGRES_DB:-orbi}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    ports:
+      - "127.0.0.1:5432:5432"
+    networks:
+      - orbi_private
+
+  keycloak:
+    image: ${ORBI_KEYCLOAK_IMAGE:-keycloak/keycloak:26.5.0}
+    container_name: orbi-keycloak
+    restart: unless-stopped
+    command: start-dev --import-realm
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: ${ORBI_POSTGRES_USER:-orbi}
+      KC_DB_PASSWORD: ${ORBI_POSTGRES_PASSWORD:?Set ORBI_POSTGRES_PASSWORD}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${ORBI_KEYCLOAK_ADMIN_USERNAME:-orbi-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${ORBI_KEYCLOAK_ADMIN_PASSWORD:?Set ORBI_KEYCLOAK_ADMIN_PASSWORD}
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      KC_HOSTNAME: ${ORBI_KEYCLOAK_PUBLIC_URL:-http://localhost:8081}
+      KC_PROXY_HEADERS: xforwarded
+      KC_HTTP_ENABLED: "true"
+    volumes:
+      - ./Auth_Security/keycloak/orbi-realm.json:/opt/keycloak/data/import/orbi-realm.json:ro
+    depends_on:
+      database-init:
+        condition: service_completed_successfully
+    ports:
+      - "${ORBI_DEV_BIND_ADDRESS:-127.0.0.1}:8081:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nhost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 45s
+    networks:
+      - orbi_private
+
+  database-init:
+    image: ${ORBI_POSTGRES_IMAGE:-postgres:16-bookworm}
+    container_name: orbi-database-init
+    restart: "no"
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${ORBI_POSTGRES_DB:-orbi}
+      PGUSER: ${ORBI_POSTGRES_USER:-orbi}
+      PGPASSWORD: ${ORBI_POSTGRES_PASSWORD:?Set ORBI_POSTGRES_PASSWORD}
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        until pg_isready; do sleep 2; done
+        psql --set=ON_ERROR_STOP=1 --file=/migrations/000_create_keycloak_database.sql
+        psql --set=ON_ERROR_STOP=1 --file=/migrations/001_orbi_auth_compat.sql
+        psql --set=ON_ERROR_STOP=1 --file=/migrations/002_keycloak_identity_links.sql
+        psql --set=ON_ERROR_STOP=1 --file=/master/main.sql
+        psql --set=ON_ERROR_STOP=1 --file=/migrations/003_native_postgres_runtime.sql
+    volumes:
+      - ../../database/local:/migrations:ro
+      - ../../database/main.sql:/master/main.sql:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - orbi_private
+
+  valkey:
+    image: ${ORBI_VALKEY_IMAGE:-valkey/valkey:8.0-bookworm}
+    container_name: orbi-valkey
+    restart: unless-stopped
+    command:
+      - valkey-server
+      - /etc/valkey/valkey.conf
+      - --requirepass
+      - ${ORBI_VALKEY_PASSWORD:?Set ORBI_VALKEY_PASSWORD}
+    volumes:
+      - orbi_valkey_data:/data
+      - ./Auth_Security/valkey.conf:/etc/valkey/valkey.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a \"${ORBI_VALKEY_PASSWORD}\" ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    ports:
+      - "127.0.0.1:6379:6379"
+    networks:
+      - orbi_private
+
+networks:
+  orbi_private:
+    name: orbi-private
+    driver: bridge
+
+volumes:
+  orbi_postgres_data:
+    name: orbi-postgres-data
+  orbi_valkey_data:
+    name: orbi-valkey-data

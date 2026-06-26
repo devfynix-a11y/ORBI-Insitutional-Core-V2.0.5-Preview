@@ -14,12 +14,6 @@ Primary ORBI Core:
 VITE_ORBI_API_BASE_URL=https://api.orbifinancial.com
 ```
 
-Google fallback ORBI Core:
-
-```env
-VITE_ORBI_FALLBACK_API_BASE_URL=https://go-api.orbifinancial.com
-```
-
 ORBI Pay Gateway:
 
 ```env
@@ -31,7 +25,6 @@ App identity:
 ```env
 VITE_ORBI_APP_ID=ORBI_NODE_PORTAL_V2026
 VITE_ORBI_APP_ORIGIN=ORBI-NODE-PORTAL-V2026
-VITE_ORBI_ENABLE_SAFE_READ_FALLBACK=true
 ```
 
 ## Required Headers
@@ -69,11 +62,9 @@ import { OrbiAdminSdk } from './orbi-admin-sdk';
 
 export const orbi = new OrbiAdminSdk({
   apiBaseUrl: import.meta.env.VITE_ORBI_API_BASE_URL,
-  fallbackApiBaseUrl: import.meta.env.VITE_ORBI_FALLBACK_API_BASE_URL,
   payGatewayBaseUrl: import.meta.env.VITE_ORBI_PAY_GATEWAY_BASE_URL,
   appId: import.meta.env.VITE_ORBI_APP_ID,
   appOrigin: import.meta.env.VITE_ORBI_APP_ORIGIN,
-  enableSafeReadFallback: import.meta.env.VITE_ORBI_ENABLE_SAFE_READ_FALLBACK === 'true',
   getToken: () => sessionStore.getAccessToken(),
   getDeviceId: () => deviceStore.getDeviceId(),
   getRole: () => sessionStore.getRole(),
@@ -87,7 +78,6 @@ The SDK includes a public health diagnosis helper that does not send auth or cus
 ```ts
 const result = await orbi.health.diagnose();
 console.log(result.primary);
-console.log(result.fallback);
 console.log(result.gateway);
 ```
 
@@ -95,7 +85,6 @@ Expected live endpoints:
 
 ```txt
 https://api.orbifinancial.com/health
-https://go-api.orbifinancial.com/health
 https://pay.orbifinancial.com/health
 ```
 
@@ -287,8 +276,7 @@ GET /v1/admin/compliance/node-zones/risk-density
 
 Use this for the Risk/IT Ops dashboard timeline that shows operational compliance pressure across real ORBI infrastructure zones. These zones are logical boundaries mapped to live infrastructure, not fictional regions:
 
-- `ORBI-PRIMARY-CORE`: `https://api.orbifinancial.com`, primary core API. This can run on Oracle or another primary VM provider.
-- `ORBI-GCP-CORE-FALLBACK`: `https://go-api.orbifinancial.com`, fallback core API.
+- `ORBI-PRIMARY-CORE`: `https://api.orbifinancial.com`, organization-managed core API.
 - `ORBI-PAY-GATEWAY-EDGE`: `https://pay.orbifinancial.com`, external provider/payment rail edge.
 - `ORBI-LEDGER-AUTHORITY`: ledger/audit/balance authority.
 - `ORBI-ADMIN-OPS`: staff/admin control plane.

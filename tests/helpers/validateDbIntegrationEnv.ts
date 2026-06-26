@@ -1,8 +1,21 @@
-const READ_ENV = [
-  'ORBI_RUN_DB_INTEGRATION',
-  'SUPABASE_URL',
-  'SUPABASE_SERVICE_ROLE_KEY',
-];
+const provider = String(
+  process.env.ORBI_DB_INTEGRATION_PROVIDER
+    || process.env.ORBI_DATA_PROVIDER
+    || 'supabase',
+).trim().toLowerCase();
+
+const READ_ENV = provider === 'local'
+  ? [
+      'ORBI_RUN_DB_INTEGRATION',
+      process.env.ORBI_DB_INTEGRATION_DATABASE_URL
+        ? 'ORBI_DB_INTEGRATION_DATABASE_URL'
+        : 'DATABASE_URL',
+    ]
+  : [
+      'ORBI_RUN_DB_INTEGRATION',
+      'SUPABASE_URL',
+      'SUPABASE_SERVICE_ROLE_KEY',
+    ];
 
 const WRITE_ENV = [
   ...READ_ENV,

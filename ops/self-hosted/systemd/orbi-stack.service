@@ -1,0 +1,20 @@
+[Unit]
+Description=ORBI Self-Hosted Financial Platform
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=orbi
+Group=orbi
+WorkingDirectory=/srv/orbi/app
+Environment=ORBI_CORE_ENV_FILE=/etc/orbi/core.env
+ExecStart=/usr/bin/docker compose --profile direct-edge --env-file /etc/orbi/core.env -f ops/self-hosted/docker-compose.prod.yml up -d
+ExecStop=/usr/bin/docker compose --profile direct-edge --env-file /etc/orbi/core.env -f ops/self-hosted/docker-compose.prod.yml down
+TimeoutStartSec=600
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

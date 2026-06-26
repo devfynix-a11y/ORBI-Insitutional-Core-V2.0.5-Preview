@@ -8,7 +8,6 @@ Canonical roots:
 
 ```txt
 https://api.orbifinancial.com
-https://go-api.orbifinancial.com
 ```
 
 ORBI Core is the banking and control engine.

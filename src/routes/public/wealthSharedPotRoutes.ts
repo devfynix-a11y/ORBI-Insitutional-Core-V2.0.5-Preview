@@ -22,6 +22,32 @@ type Deps = {
   expireSharedPotInvitationIfNeeded: (sb: any, invite: any) => Promise<any>;
 };
 
+const ORBI_USER_SELECT = 'id, full_name, email, phone';
+
+const compactIds = (rows: any[], key: string): string[] => Array.from(new Set(
+  (rows || []).map((row: any) => String(row?.[key] || '')).filter(Boolean),
+));
+
+const fetchUsersById = async (sb: any, userIds: string[]): Promise<Map<string, any>> => {
+  if (!userIds.length) return new Map();
+  const { data, error } = await sb
+    .from('users')
+    .select(ORBI_USER_SELECT)
+    .in('id', userIds);
+  if (error) throw new Error(error.message);
+  return new Map((data || []).map((user: any) => [String(user.id), user]));
+};
+
+const fetchSharedPotsById = async (sb: any, potIds: string[]): Promise<Map<string, any>> => {
+  if (!potIds.length) return new Map();
+  const { data, error } = await sb
+    .from('shared_pots')
+    .select('id, name, purpose, currency, target_amount, current_amount, status')
+    .in('id', potIds);
+  if (error) throw new Error(error.message);
+  return new Map((data || []).map((pot: any) => [String(pot.id), pot]));
+};
+
 export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
   const {
     authenticate,
@@ -153,11 +179,16 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
       const { pot } = await resolveSharedPotMembership(sb, req.params.id, session.sub);
       const { data, error } = await sb
         .from('shared_pot_members')
-        .select('id,pot_id,user_id,role,contribution_target,contributed_amount,metadata,created_at, users!shared_pot_members_user_id_fkey(id, full_name, email, phone)')
+        .select('id,pot_id,user_id,role,contribution_target,contributed_amount,metadata,created_at')
         .eq('pot_id', pot.id)
         .order('created_at', { ascending: true });
       if (error) return res.status(400).json({ success: false, error: error.message });
-      res.json({ success: true, data: { members: data || [] } });
+      const usersById = await fetchUsersById(sb, compactIds(data || [], 'user_id'));
+      const members = (data || []).map((member: any) => ({
+        ...member,
+        users: usersById.get(String(member.user_id)) || null,
+      }));
+      res.json({ success: true, data: { members } });
     } catch (e: any) {
       res.status(e.message === 'SHARED_POT_ACCESS_DENIED' ? 403 : 400).json({ success: false, error: e.message });
     }
@@ -174,11 +205,16 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
       }
       const { data, error } = await sb
         .from('shared_pot_invitations')
-        .select('id,pot_id,inviter_user_id,invitee_user_id,invitee_identifier,role,status,message,responded_at,expires_at,metadata,created_at, users!shared_pot_invitations_invitee_user_id_fkey(id, full_name, email, phone)')
+        .select('id,pot_id,inviter_user_id,invitee_user_id,invitee_identifier,role,status,message,responded_at,expires_at,metadata,created_at')
         .eq('pot_id', pot.id)
         .order('created_at', { ascending: false });
       if (error) return res.status(400).json({ success: false, error: error.message });
-      res.json({ success: true, data: { invitations: data || [] } });
+      const usersById = await fetchUsersById(sb, compactIds(data || [], 'invitee_user_id'));
+      const invitations = (data || []).map((invite: any) => ({
+        ...invite,
+        users: usersById.get(String(invite.invitee_user_id)) || null,
+      }));
+      res.json({ success: true, data: { invitations } });
     } catch (e: any) {
       res.status(e.message === 'SHARED_POT_ACCESS_DENIED' ? 403 : 400).json({ success: false, error: e.message });
     }
@@ -191,14 +227,20 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
       if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
       const { data, error } = await sb
         .from('shared_pot_invitations')
-        .select('id,pot_id,inviter_user_id,invitee_user_id,invitee_identifier,role,status,message,responded_at,expires_at,metadata,created_at, shared_pots!shared_pot_invitations_pot_id_fkey(id, name, purpose, currency, target_amount, current_amount, status), users!shared_pot_invitations_inviter_user_id_fkey(id, full_name, email, phone)')
+        .select('id,pot_id,inviter_user_id,invitee_user_id,invitee_identifier,role,status,message,responded_at,expires_at,metadata,created_at')
         .eq('invitee_user_id', session.sub)
         .order('created_at', { ascending: false });
       if (error) return res.status(400).json({ success: false, error: error.message });
 
+      const potsById = await fetchSharedPotsById(sb, compactIds(data || [], 'pot_id'));
+      const usersById = await fetchUsersById(sb, compactIds(data || [], 'inviter_user_id'));
       const invitations = [];
       for (const invite of data || []) {
-        invitations.push(await expireSharedPotInvitationIfNeeded(sb, invite));
+        invitations.push(await expireSharedPotInvitationIfNeeded(sb, {
+          ...invite,
+          shared_pots: potsById.get(String(invite.pot_id)) || null,
+          users: usersById.get(String(invite.inviter_user_id)) || null,
+        }));
       }
       res.json({ success: true, data: { invitations } });
     } catch (e: any) {

@@ -547,10 +547,13 @@ export const registerAuthUserRoutes = (v1: Router, deps: Deps) => {
         return res.status(400).json({ success: false, error: result.error.message || 'Registration failed' });
       }
 
+      const accountStatus = result.data?.user?.account_status;
       res.status(202).json({
         success: true,
         data: result.data,
-        message: 'Account created pending OTP confirmation. Confirm within 24 hours to activate ORBI services.',
+        message: accountStatus === 'active'
+          ? 'Account created and activated for the local development environment.'
+          : 'Account created pending OTP confirmation. Confirm within 24 hours to activate ORBI services.',
       });
     } catch (e: any) {
       authRouteLogger.error('auth.signup_failed', buildRequestLogContext(req), e);
@@ -732,7 +735,13 @@ export const registerAuthUserRoutes = (v1: Router, deps: Deps) => {
 
       res.json({ success: true, data: { avatar_url: newUrl } });
     } catch (e: any) {
-      res.status(500).json({ success: false, error: e.message });
+      const message = String(e?.message || 'UPLOAD_FAILED');
+      const clientError =
+        message.startsWith('UNSUPPORTED_IMAGE_TYPE') ||
+        message.startsWith('INVALID_IMAGE_SIZE') ||
+        message === 'IMAGE_SIGNATURE_MISMATCH' ||
+        message === 'INVALID_IMAGE_BUFFER';
+      res.status(clientError ? 400 : 500).json({ success: false, error: message });
     }
   });
 

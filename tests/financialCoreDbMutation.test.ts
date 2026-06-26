@@ -905,8 +905,8 @@ dbIntegrationTest(
 
     const { data: tx, error: txError } = await client
       .from('transactions')
-      .select('id, status, type')
-      .eq('id', referenceId)
+      .select('id, reference_id, status, type')
+      .eq('reference_id', referenceId)
       .single();
     assert.ifError(txError);
     assert.equal(String(tx.type).toLowerCase(), 'escrow');
@@ -915,7 +915,7 @@ dbIntegrationTest(
     const { count: legCount, error: legError } = await client
       .from('financial_ledger')
       .select('*', { count: 'exact', head: true })
-      .eq('transaction_id', referenceId);
+      .eq('transaction_id', tx.id);
     assert.ifError(legError);
     assert.equal(Number(legCount || 0), 2);
   },

@@ -351,11 +351,26 @@ export class TreasuryService {
 
         // Find transactions held for review targeting these goals
         const { data: txs } = await sb.from('transactions')
-            .select('*, users!transactions_user_id_fkey(full_name, email)')
+            .select('*')
             .eq('status', 'held_for_review')
             .in('wallet_id', goalIds);
-            
-        return txs || [];
+
+        const userIds = Array.from(new Set((txs || []).map((tx: any) => String(tx.user_id || '')).filter(Boolean)));
+        const usersById = new Map<string, any>();
+        if (userIds.length > 0) {
+            const { data: users, error: userError } = await sb.from('users')
+                .select('id, full_name, email')
+                .in('id', userIds);
+            if (userError) throw new Error(userError.message);
+            for (const user of users || []) {
+                usersById.set(String(user.id), user);
+            }
+        }
+
+        return (txs || []).map((tx: any) => ({
+            ...tx,
+            users: usersById.get(String(tx.user_id)) || null,
+        }));
     }
 
     /**

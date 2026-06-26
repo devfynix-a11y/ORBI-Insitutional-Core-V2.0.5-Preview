@@ -40,20 +40,16 @@ Important technologies:
 
 Primary production endpoints:
 - Primary ORBI Core API: https://api.orbifinancial.com
-- Fallback ORBI Core API: https://go-api.orbifinancial.com
 - ORBI Pay Gateway: https://pay.orbifinancial.com
 
 Frontend API rule:
 The admin console should present ORBI as one financial platform, not as a server chooser. Use the primary API as default:
 - VITE_ORBI_API_BASE_URL=https://api.orbifinancial.com
 
-Fallback API may be used only for safe read/health behavior when explicitly configured:
-- VITE_ORBI_FALLBACK_API_BASE_URL=https://go-api.orbifinancial.com
-
 ORBI Pay Gateway is a separate service behind a custom domain:
 - VITE_ORBI_PAY_GATEWAY_BASE_URL=https://pay.orbifinancial.com
 
-Normal operators should not manually switch between primary, fallback, and gateway backends. Infrastructure target switching should not be a main product concept. If infrastructure status is shown, it belongs in an IT/Ops area as read-only visibility or carefully controlled deployment tooling.
+Normal operators should not manually switch between core and gateway backends. Infrastructure target switching should not be a main product concept. If infrastructure status is shown, it belongs in an IT/Ops area as read-only visibility or carefully controlled deployment tooling.
 
 Backend route families:
 The backend exposes several route namespaces:
@@ -634,7 +630,7 @@ Risk geo heatmap:
 Compliance Node Zone risk density:
 - Use GET /v1/admin/compliance/node-zones/risk-density for the infrastructure/control-plane risk-density heatmap.
 - Query filters: windowHours, bucketHours, includeInactive.
-- Compliance Node Zones are logical ORBI boundaries mapped to real infrastructure: ORBI-PRIMARY-CORE, ORBI-GCP-CORE-FALLBACK, ORBI-GATEWAY-EDGE, ORBI-LEDGER-AUTHORITY, ORBI-ADMIN-OPS, and ORBI-PROVIDER-RAILS.
+- Compliance Node Zones are logical ORBI boundaries mapped to real infrastructure: ORBI-PRIMARY-CORE, ORBI-GATEWAY-EDGE, ORBI-LEDGER-AUTHORITY, ORBI-ADMIN-OPS, and ORBI-PROVIDER-RAILS.
 - The endpoint returns zone metadata, currentRiskDensity, currentStatus, maxRiskDensity, topDrivers, and a timeline keyed by zone ID.
 - The default view should be a 24-hour timeline split into 12 two-hour buckets.
 - Risk density is calculated from real signals: failed/held transactions, impossible geo travel, missing geo compliance, fraud checks, AML alerts, provider anomalies, sensitive admin activity, gateway/provider activity, and ledger governance activity.

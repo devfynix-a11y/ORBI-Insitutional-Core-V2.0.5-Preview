@@ -1,5 +1,8 @@
 # ORBI Documentation Index
 
+- `KEYCLOAK_AUTHENTICATION_PLAYBOOK.md`: self-hosted identity, JWT, sessions,
+  subject mapping, password recovery, and mobile PKCE migration.
+
 This index defines the canonical ORBI Institutional Core documentation set. Older or narrow documents may remain as compatibility pointers, but new work should update the canonical document for that area first.
 
 ## Canonical Documents
@@ -37,13 +40,17 @@ These files are retained so old links continue to work, but their content has be
 | [Merchant Architecture](./MERCHANT_ARCHITECTURE.md) | [ORBI Business Operational Playbook](./ORBI_BUSINESS_OPERATIONAL_PLAYBOOK.md) |
 | [Agent, Merchant, and System Fee Flows](./AGENT_MERCHANT_FEE_FLOWS.md) | [ORBI Business Operational Playbook](./ORBI_BUSINESS_OPERATIONAL_PLAYBOOK.md) |
 | [First Backup Restore Drill Plan](./FIRST_BACKUP_RESTORE_DRILL_PLAN.md) | [Backup Restore Drill Procedure](./BACKUP_RESTORE_DRILL_PROCEDURE.md) |
-| [Legacy Render Deployment Notes](./DEPLOYMENT_GUIDE.md) | [Production Deployment](./PRODUCTION_DEPLOYMENT.md) |
+| [Self-Hosted Core and Data Migration](./SELF_HOSTED_DATA_MIGRATION.md) | [Production Deployment](./PRODUCTION_DEPLOYMENT.md) |
+| [Self-Hosted Infrastructure Playbook](./SELF_HOSTED_INFRASTRUCTURE_PLAYBOOK.md) | [Release Checklist](./RELEASE_CHECKLIST.md) |
+| [ORBI Auth Migration Playbook](./ORBI_AUTH_MIGRATION_PLAYBOOK.md) | [Self-Hosted Core and Data Migration](./SELF_HOSTED_DATA_MIGRATION.md) |
+| [Self-Hosted Platform Architecture](./SELF_HOSTED_PLATFORM_ARCHITECTURE.md) | [Self-Hosted Infrastructure Playbook](./SELF_HOSTED_INFRASTRUCTURE_PLAYBOOK.md) |
+| [Cloudflare R2 Image Storage](./CLOUDFLARE_R2_IMAGE_STORAGE.md) | [Self-Hosted Platform Architecture](./SELF_HOSTED_PLATFORM_ARCHITECTURE.md) |
 | [Frontend Integration Guide](./frontend_integration.md) | [ORBI Admin Frontend API SDK](./ORBI_ADMIN_FRONTEND_API_SDK.md) and [Mobile SDK Guide](./MOBILE_SDK_GUIDE.md) |
 
 ## Maintenance Rules
 
 - Keep business and operational policy in the Playbook, not scattered across architecture notes.
-- Keep production setup in `PRODUCTION_DEPLOYMENT.md`; use `DEPLOYMENT_GUIDE.md` only for legacy Render migration references.
+- Keep production setup in `PRODUCTION_DEPLOYMENT.md` and data migration controls in `SELF_HOSTED_DATA_MIGRATION.md`.
 - Keep API/client integration details in the SDK docs, not in business docs.
 - Keep SQL changes documented by migration name when they introduce new business capabilities.
 - Do not duplicate ORBI Talk templates under multiple filenames; use `orbi_talk_gateway_templates.json` as the active seed file.

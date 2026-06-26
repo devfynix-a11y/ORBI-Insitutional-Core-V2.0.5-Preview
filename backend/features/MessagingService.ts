@@ -14,6 +14,11 @@ import { SocketRegistry } from '../infrastructure/SocketRegistry.js';
 
 import { TemplateName, TemplatePayloads } from '../templates/template_types.js';
 import { officialOrbiTalkTemplatePolicy } from './OfficialOrbiTalkTemplatePolicy.js';
+import {
+    NotificationBrand,
+    NotificationBrandContext,
+    resolveNotificationBrand,
+} from '../infrastructure/NotificationBrandResolver.js';
 
 /**
  * NEXUS MESSAGING & NOTIFICATION NODE (V5.1)
@@ -298,6 +303,7 @@ CEO, ORBI`
             template?: string,
             eventCode?: string,
             variables?: Record<string, any>,
+            brand?: NotificationBrandContext | NotificationBrand,
             systemCustomBypass?: boolean,
         } = {}
     ): Promise<UserMessage | null> {
@@ -444,6 +450,36 @@ CEO, ORBI`
                 body: displayBody,
             },
         );
+        const brandVariables = vars as Record<string, any>;
+        let notificationBrand: NotificationBrand | null = null;
+        try {
+            notificationBrand = options.brand && 'source' in options.brand
+                ? options.brand as NotificationBrand
+                : resolveNotificationBrand({
+                    ...(options.brand || {}),
+                    brandCode: options.brand?.brandCode || brandVariables.brandCode,
+                    displayName: options.brand?.displayName,
+                    merchantName:
+                        options.brand?.merchantName ||
+                        brandVariables.merchantName ||
+                        brandVariables.businessName ||
+                        (String(options.eventCode || '').toUpperCase().includes('MERCHANT')
+                            ? brandVariables.actorLabel
+                            : undefined),
+                    serviceCode: options.brand?.serviceCode || brandVariables.serviceCode,
+                    eventCode: options.eventCode,
+                    replyTo: options.brand?.replyTo || brandVariables.replyTo,
+                    logoUrl: options.brand?.logoUrl || brandVariables.logoUrl,
+                    senderEmail: options.brand?.senderEmail || brandVariables.senderEmail,
+                });
+        } catch (error) {
+            console.error('[Messaging] External notification brand resolution failed.', {
+                userId,
+                eventCode: options.eventCode,
+                template: templatePlan.templateName,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
 
         let formattedPhone = profile.phone;
         if (profile.phone) {
@@ -499,14 +535,15 @@ CEO, ORBI`
         }
 
         // Try SMS
-        if (options.sms && profile.phone) {
+        if (notificationBrand && options.sms && profile.phone) {
             if (templatePlan.templateName) {
                 const templateSent = await orbiTalkGatewayService.sendTemplate(templatePlan.templateName as TemplateName, formattedPhone, vars as any, {
                     language, 
                     messageType: category === 'promo' ? 'promotional' : 'transactional',
                     channel: 'sms',
                     fcmToken: profile.fcm_token,
-                    requestId: id
+                    requestId: id,
+                    brand: notificationBrand,
                 });
                 if (!templateSent && category !== 'promo') {
                     await orbiTalkGatewayService.sendSms(
@@ -524,7 +561,7 @@ CEO, ORBI`
         }
 
         // Try Email (with fallback to SMS if requested)
-        if (options.email && emailAllowed && profile.email) {
+        if (notificationBrand && options.email && emailAllowed && profile.email) {
             let emailSent = false;
             if (templatePlan.templateName) {
                 emailSent = await orbiTalkGatewayService.sendTemplate(templatePlan.templateName as TemplateName, profile.email, vars as any, { 
@@ -532,7 +569,8 @@ CEO, ORBI`
                     messageType: category === 'promo' ? 'promotional' : 'transactional',
                     channel: 'email',
                     fcmToken: profile.fcm_token,
-                    requestId: id
+                    requestId: id,
+                    brand: notificationBrand,
                 });
             }
             if (!emailSent && category !== 'promo') {
@@ -545,19 +583,21 @@ CEO, ORBI`
                     undefined,
                     undefined,
                     id,
+                    notificationBrand,
                 );
             }
         }
 
         // Try WhatsApp
-        if (options.whatsapp && profile.phone) {
+        if (notificationBrand && options.whatsapp && profile.phone) {
             if (templatePlan.templateName) {
                 await orbiTalkGatewayService.sendTemplate(templatePlan.templateName as TemplateName, formattedPhone, vars as any, { 
                     language, 
                     messageType: category === 'promo' ? 'promotional' : 'transactional',
                     channel: 'whatsapp',
                     fcmToken: profile.fcm_token,
-                    requestId: id
+                    requestId: id,
+                    brand: notificationBrand,
                 });
             } else if (templatePlan.systemCustomBypass) {
                 // Fallback to SMS if no template, as WhatsApp usually requires templates for business-initiated messages
@@ -601,7 +641,8 @@ CEO, ORBI`
         const currency = context.currency || 'TZS';
         const numericAmount = context.amount != null ? Number(context.amount) : null;
         const amount = numericAmount != null ? `${numericAmount.toLocaleString(language === 'sw' ? 'sw-TZ' : 'en-US')} ${currency}` : null;
-        const actorLabel = context.actorLabel || (language === 'sw' ? 'huduma yako ya ORBI' : 'your ORBI service desk');
+        const resolvedActorLabel = String(context.actorLabel || '').trim();
+        const actorLabel = resolvedActorLabel || (language === 'sw' ? 'huduma yako ya ORBI' : 'your ORBI service desk');
         const customerLabel = context.customerName || context.customerId || (language === 'sw' ? 'mteja' : 'customer');
         const direction = String(context.direction || '').toLowerCase();
 
@@ -774,6 +815,7 @@ CEO, ORBI`
             ),
             direction: direction || 'deposit',
             customerName: customerLabel,
+            senderEmail: context.senderEmail,
         };
 
         // Intentionally delegate channel choice to dispatch().
@@ -788,6 +830,12 @@ CEO, ORBI`
             template: templateMap[event],
             eventCode: event,
             variables: templateVariables,
+            brand: {
+                merchantName: event.includes('MERCHANT') ? resolvedActorLabel : undefined,
+                displayName: event.includes('AGENT') ? resolvedActorLabel : undefined,
+                senderEmail: String(context.senderEmail || '').trim() || undefined,
+                eventCode: event,
+            },
         });
     }
 

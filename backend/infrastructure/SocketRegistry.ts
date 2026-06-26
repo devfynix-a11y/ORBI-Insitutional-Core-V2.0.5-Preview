@@ -1,14 +1,19 @@
 import { WebSocket } from 'ws';
+import type { Cluster, Redis } from 'ioredis';
 import { getAdminSupabase } from '../../services/supabaseClient.js';
 import { logger } from './logger.js';
+import { RedisClusterFactory } from './RedisClusterFactory.js';
 
 const socketLogger = logger.child({ component: 'socket_registry' });
+const broadcastTopic = 'orbi:realtime:user-notifications';
 
 class SocketRegistryService {
     private clients: Map<string, Set<WebSocket>> = new Map();
     private isListening = false;
     private broadcastChannel: ReturnType<NonNullable<ReturnType<typeof getAdminSupabase>>['channel']> | null = null;
     private broadcastChannelReady: Promise<void> | null = null;
+    private valkeyPublisher: Cluster | Redis | null = null;
+    private valkeySubscriber: Cluster | Redis | null = null;
 
     constructor() {
         this.setupRealtime();
@@ -16,6 +21,13 @@ class SocketRegistryService {
 
     private setupRealtime() {
         if (this.broadcastChannelReady) return;
+        const usesLocalData =
+            String(process.env.ORBI_DATA_PROVIDER || '').trim().toLowerCase() === 'local';
+        if (usesLocalData) {
+            this.setupValkeyRealtime();
+            return;
+        }
+
         const sb = getAdminSupabase();
         if (!sb) {
             socketLogger.warn('socket_registry.supabase_unavailable');
@@ -37,6 +49,39 @@ class SocketRegistryService {
                     resolve();
                 }
             });
+        });
+    }
+
+    private setupValkeyRealtime() {
+        const client = RedisClusterFactory.getClient('monitor');
+        if (!client) {
+            socketLogger.warn('socket_registry.valkey_unavailable');
+            return;
+        }
+
+        this.valkeyPublisher = client;
+        this.valkeySubscriber = client.duplicate();
+        this.broadcastChannelReady = new Promise((resolve) => {
+            const subscriber = this.valkeySubscriber!;
+            subscriber.on('message', (channel, rawPayload) => {
+                if (channel !== broadcastTopic) return;
+                try {
+                    const payload = JSON.parse(rawPayload);
+                    if (payload?.userId) this.sendLocal(payload.userId, payload.message);
+                } catch (error) {
+                    socketLogger.error('socket_registry.valkey_payload_invalid', undefined, error);
+                }
+            });
+            subscriber.subscribe(broadcastTopic)
+                .then(() => {
+                    this.isListening = true;
+                    socketLogger.info('socket_registry.valkey_subscribed');
+                    resolve();
+                })
+                .catch((error) => {
+                    socketLogger.error('socket_registry.valkey_subscribe_failed', undefined, error);
+                    this.broadcastChannelReady = null;
+                });
         });
     }
 
@@ -85,6 +130,19 @@ class SocketRegistryService {
                 return true;
             } catch (e) {
                 socketLogger.error('socket_registry.realtime_broadcast_failed', { actor_id: userId }, e);
+            }
+        }
+
+        if (this.valkeyPublisher && this.broadcastChannelReady) {
+            try {
+                await this.broadcastChannelReady;
+                await this.valkeyPublisher.publish(
+                    broadcastTopic,
+                    JSON.stringify({ userId, message: payload }),
+                );
+                return true;
+            } catch (e) {
+                socketLogger.error('socket_registry.valkey_broadcast_failed', { actor_id: userId }, e);
             }
         }
         return false;

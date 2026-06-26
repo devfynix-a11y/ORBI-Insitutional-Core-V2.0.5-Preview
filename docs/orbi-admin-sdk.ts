@@ -39,7 +39,6 @@ export type OrbiApiResult<T> = {
 
 export type OrbiSdkConfig = {
   apiBaseUrl?: string;
-  fallbackApiBaseUrl?: string;
   payGatewayBaseUrl?: string;
   appId: string;
   appOrigin: string;
@@ -47,7 +46,6 @@ export type OrbiSdkConfig = {
   getDeviceId?: () => string | null | Promise<string | null>;
   getRole?: () => OrbiRole | string | null | Promise<OrbiRole | string | null>;
   getMonitorKey?: () => string | null | Promise<string | null>;
-  enableSafeReadFallback?: boolean;
   includeRoleHeader?: boolean;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
@@ -63,7 +61,6 @@ export type RequestOptions = {
   monitor?: boolean;
   gateway?: boolean;
   public?: boolean;
-  fallbackSafeRead?: boolean;
   headers?: Record<string, string>;
 };
 
@@ -98,7 +95,6 @@ export type SupportTicketUpdatePayload = {
 };
 
 const DEFAULT_API_BASE_URL = 'https://api.orbifinancial.com';
-const DEFAULT_FALLBACK_API_BASE_URL = 'https://go-api.orbifinancial.com';
 const DEFAULT_PAY_GATEWAY_BASE_URL = 'https://pay.orbifinancial.com';
 
 const makeTraceId = () => {
@@ -136,14 +132,12 @@ export class OrbiApiError extends Error {
 }
 
 export class OrbiAdminSdk {
-  private config: Required<Pick<OrbiSdkConfig, 'appId' | 'appOrigin' | 'enableSafeReadFallback' | 'timeoutMs'>> & OrbiSdkConfig;
+  private config: Required<Pick<OrbiSdkConfig, 'appId' | 'appOrigin' | 'timeoutMs'>> & OrbiSdkConfig;
 
   constructor(config: OrbiSdkConfig) {
     this.config = {
       apiBaseUrl: DEFAULT_API_BASE_URL,
-      fallbackApiBaseUrl: DEFAULT_FALLBACK_API_BASE_URL,
       payGatewayBaseUrl: DEFAULT_PAY_GATEWAY_BASE_URL,
-      enableSafeReadFallback: false,
       includeRoleHeader: true,
       timeoutMs: 15000,
       ...config,
@@ -210,38 +204,10 @@ export class OrbiAdminSdk {
       return payload as T;
     } catch (error) {
       this.config.onError?.(error, { method, url });
-      const canFallback =
-        method.toUpperCase() === 'GET' &&
-        this.config.enableSafeReadFallback &&
-        options.fallbackSafeRead !== false &&
-        !options.gateway &&
-        !options.monitor &&
-        Boolean(this.config.fallbackApiBaseUrl);
-
-      if (!canFallback) throw error;
-      return this.requestAgainstBase<T>(this.config.fallbackApiBaseUrl!, method, path, options);
+      throw error;
     } finally {
       clearTimeout(timer);
     }
-  }
-
-  private async requestAgainstBase<T>(baseUrl: string, method: string, path: string, options: RequestOptions): Promise<T> {
-    const url = buildUrl(baseUrl, path, options.query);
-    const headers = await this.headers(options);
-    this.config.onRequest?.({ method, url, headers });
-
-    const response = await (this.config.fetchImpl || fetch)(url, {
-      method,
-      headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    });
-    this.config.onResponse?.({ method, url, status: response.status, ok: response.ok });
-    const text = await response.text();
-    const payload = this.parsePayload(text, response.headers.get('content-type'));
-    if (!response.ok || payload?.success === false) {
-      throw new OrbiApiError(response.status, payload?.error, payload?.message || payload?.error || `ORBI fallback failed: ${response.status}`, payload);
-    }
-    return payload as T;
   }
 
   private parsePayload(text: string, contentType: string | null) {
@@ -276,14 +242,12 @@ export class OrbiAdminSdk {
   }
 
   health = {
-    primary: () => this.get<Record<string, unknown>>('/health', undefined, { public: true, fallbackSafeRead: false }),
-    ready: () => this.get<Record<string, unknown>>('/ready', undefined, { public: true, fallbackSafeRead: false }),
-    deep: () => this.get<Record<string, unknown>>('/health/deep', undefined, { public: true, fallbackSafeRead: false }),
-    fallback: () => this.requestAgainstBase<Record<string, unknown>>(this.config.fallbackApiBaseUrl!, 'GET', '/health', { public: true, fallbackSafeRead: false }),
-    gateway: () => this.get<Record<string, unknown>>('/health', undefined, { gateway: true, public: true, fallbackSafeRead: false }),
+    primary: () => this.get<Record<string, unknown>>('/health', undefined, { public: true }),
+    ready: () => this.get<Record<string, unknown>>('/ready', undefined, { public: true }),
+    deep: () => this.get<Record<string, unknown>>('/health/deep', undefined, { public: true }),
+    gateway: () => this.get<Record<string, unknown>>('/health', undefined, { gateway: true, public: true }),
     diagnose: async () => ({
       primary: await this.health.primary().catch((error) => ({ success: false, error })),
-      fallback: await this.health.fallback().catch((error) => ({ success: false, error })),
       gateway: await this.health.gateway().catch((error) => ({ success: false, error })),
     }),
   };
@@ -419,12 +383,12 @@ export class OrbiAdminSdk {
   };
 
   monitor = {
-    operationalHealth: () => this.get<OrbiApiResult<unknown>>('/api/admin/monitor/operational-health', undefined, { monitor: true, fallbackSafeRead: false }),
-    operationalMetrics: () => this.get<OrbiApiResult<unknown>>('/api/admin/monitor/operational-metrics', undefined, { monitor: true, fallbackSafeRead: false }),
-    prometheusMetrics: () => this.get<string>('/api/admin/monitor/operational-metrics/prometheus', undefined, { monitor: true, fallbackSafeRead: false }),
+    operationalHealth: () => this.get<OrbiApiResult<unknown>>('/api/admin/monitor/operational-health', undefined, { monitor: true }),
+    operationalMetrics: () => this.get<OrbiApiResult<unknown>>('/api/admin/monitor/operational-metrics', undefined, { monitor: true }),
+    prometheusMetrics: () => this.get<string>('/api/admin/monitor/operational-metrics/prometheus', undefined, { monitor: true }),
     snapshotMetrics: () => this.post<OrbiApiResult<unknown>>('/api/admin/monitor/operational-metrics/snapshot', {}, { monitor: true }),
-    ledgerHealth: () => this.get<OrbiApiResult<unknown>>('/api/admin/monitor/ledger-health', undefined, { monitor: true, fallbackSafeRead: false }),
-    walletForensics: (walletId: string) => this.get<OrbiApiResult<unknown>>(`/api/admin/monitor/wallet-forensics/${walletId}`, undefined, { monitor: true, fallbackSafeRead: false }),
+    ledgerHealth: () => this.get<OrbiApiResult<unknown>>('/api/admin/monitor/ledger-health', undefined, { monitor: true }),
+    walletForensics: (walletId: string) => this.get<OrbiApiResult<unknown>>(`/api/admin/monitor/wallet-forensics/${walletId}`, undefined, { monitor: true }),
   };
 
   finance = {

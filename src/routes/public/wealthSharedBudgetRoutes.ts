@@ -23,6 +23,32 @@ type Deps = {
   executeSharedBudgetSpend: (sb: any, input: any) => Promise<any>;
 };
 
+const ORBI_USER_SELECT = 'id, full_name, email, phone';
+
+const compactIds = (rows: any[], key: string): string[] => Array.from(new Set(
+  (rows || []).map((row: any) => String(row?.[key] || '')).filter(Boolean),
+));
+
+const fetchUsersById = async (sb: any, userIds: string[]): Promise<Map<string, any>> => {
+  if (!userIds.length) return new Map();
+  const { data, error } = await sb
+    .from('users')
+    .select(ORBI_USER_SELECT)
+    .in('id', userIds);
+  if (error) throw new Error(error.message);
+  return new Map((data || []).map((user: any) => [String(user.id), user]));
+};
+
+const fetchSharedBudgetsById = async (sb: any, budgetIds: string[]): Promise<Map<string, any>> => {
+  if (!budgetIds.length) return new Map();
+  const { data, error } = await sb
+    .from('shared_budgets')
+    .select('id, name, purpose, currency, budget_limit, spent_amount, period_type, approval_mode, status')
+    .in('id', budgetIds);
+  if (error) throw new Error(error.message);
+  return new Map((data || []).map((budget: any) => [String(budget.id), budget]));
+};
+
 export const registerSharedBudgetRoutes = (v1: Router, deps: Deps) => {
   const {
     authenticate,
@@ -163,11 +189,16 @@ export const registerSharedBudgetRoutes = (v1: Router, deps: Deps) => {
       const { budget } = await resolveSharedBudgetMembership(sb, req.params.id, session.sub);
       const { data, error } = await sb
         .from('shared_budget_members')
-        .select('id,budget_id,user_id,role,status,member_limit,spent_amount,metadata,created_at, users!shared_budget_members_user_id_fkey(id, full_name, email, phone)')
+        .select('id,budget_id,user_id,role,status,member_limit,spent_amount,metadata,created_at')
         .eq('budget_id', budget.id)
         .order('created_at', { ascending: true });
       if (error) return res.status(400).json({ success: false, error: error.message });
-      res.json({ success: true, data: { members: data || [] } });
+      const usersById = await fetchUsersById(sb, compactIds(data || [], 'user_id'));
+      const members = (data || []).map((member: any) => ({
+        ...member,
+        users: usersById.get(String(member.user_id)) || null,
+      }));
+      res.json({ success: true, data: { members } });
     } catch (e: any) {
       res.status(e.message === 'SHARED_BUDGET_ACCESS_DENIED' ? 403 : 400).json({ success: false, error: e.message });
     }
@@ -181,11 +212,16 @@ export const registerSharedBudgetRoutes = (v1: Router, deps: Deps) => {
       const { budget } = await resolveSharedBudgetMembership(sb, req.params.id, session.sub);
       const { data, error } = await sb
         .from('shared_budget_transactions')
-        .select('*, users!shared_budget_transactions_member_user_id_fkey(id, full_name, email, phone)')
+        .select('*')
         .eq('shared_budget_id', budget.id)
         .order('created_at', { ascending: false });
       if (error) return res.status(400).json({ success: false, error: error.message });
-      res.json({ success: true, data: { transactions: data || [] } });
+      const usersById = await fetchUsersById(sb, compactIds(data || [], 'member_user_id'));
+      const transactions = (data || []).map((transaction: any) => ({
+        ...transaction,
+        users: usersById.get(String(transaction.member_user_id)) || null,
+      }));
+      res.json({ success: true, data: { transactions } });
     } catch (e: any) {
       res.status(e.message === 'SHARED_BUDGET_ACCESS_DENIED' ? 403 : 400).json({ success: false, error: e.message });
     }
@@ -202,11 +238,16 @@ export const registerSharedBudgetRoutes = (v1: Router, deps: Deps) => {
       }
       const { data, error } = await sb
         .from('shared_budget_invitations')
-        .select('id,budget_id,inviter_user_id,invitee_user_id,invitee_identifier,role,member_limit,status,message,responded_at,expires_at,metadata,created_at, users!shared_budget_invitations_invitee_user_id_fkey(id, full_name, email, phone)')
+        .select('id,budget_id,inviter_user_id,invitee_user_id,invitee_identifier,role,member_limit,status,message,responded_at,expires_at,metadata,created_at')
         .eq('budget_id', budget.id)
         .order('created_at', { ascending: false });
       if (error) return res.status(400).json({ success: false, error: error.message });
-      res.json({ success: true, data: { invitations: data || [] } });
+      const usersById = await fetchUsersById(sb, compactIds(data || [], 'invitee_user_id'));
+      const invitations = (data || []).map((invite: any) => ({
+        ...invite,
+        users: usersById.get(String(invite.invitee_user_id)) || null,
+      }));
+      res.json({ success: true, data: { invitations } });
     } catch (e: any) {
       res.status(e.message === 'SHARED_BUDGET_ACCESS_DENIED' ? 403 : 400).json({ success: false, error: e.message });
     }
@@ -219,13 +260,19 @@ export const registerSharedBudgetRoutes = (v1: Router, deps: Deps) => {
       if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
       const { data, error } = await sb
         .from('shared_budget_invitations')
-        .select('id,budget_id,inviter_user_id,invitee_user_id,invitee_identifier,role,member_limit,status,message,responded_at,expires_at,metadata,created_at, shared_budgets!shared_budget_invitations_budget_id_fkey(id, name, purpose, currency, budget_limit, spent_amount, period_type, approval_mode, status), users!shared_budget_invitations_inviter_user_id_fkey(id, full_name, email, phone)')
+        .select('id,budget_id,inviter_user_id,invitee_user_id,invitee_identifier,role,member_limit,status,message,responded_at,expires_at,metadata,created_at')
         .eq('invitee_user_id', session.sub)
         .order('created_at', { ascending: false });
       if (error) return res.status(400).json({ success: false, error: error.message });
+      const budgetsById = await fetchSharedBudgetsById(sb, compactIds(data || [], 'budget_id'));
+      const usersById = await fetchUsersById(sb, compactIds(data || [], 'inviter_user_id'));
       const invitations = [];
       for (const invite of data || []) {
-        invitations.push(await expireSharedBudgetInvitationIfNeeded(sb, invite));
+        invitations.push(await expireSharedBudgetInvitationIfNeeded(sb, {
+          ...invite,
+          shared_budgets: budgetsById.get(String(invite.budget_id)) || null,
+          users: usersById.get(String(invite.inviter_user_id)) || null,
+        }));
       }
       res.json({ success: true, data: { invitations } });
     } catch (e: any) {
@@ -419,11 +466,20 @@ export const registerSharedBudgetRoutes = (v1: Router, deps: Deps) => {
       }
       const { data, error } = await sb
         .from('shared_budget_approvals')
-        .select('*, users!shared_budget_approvals_requester_user_id_fkey(id, full_name, email, phone), reviewer:users!shared_budget_approvals_reviewer_user_id_fkey(id, full_name, email, phone)')
+        .select('*')
         .eq('shared_budget_id', budget.id)
         .order('created_at', { ascending: false });
       if (error) return res.status(400).json({ success: false, error: error.message });
-      res.json({ success: true, data: { approvals: data || [] } });
+      const usersById = await fetchUsersById(sb, Array.from(new Set([
+        ...compactIds(data || [], 'requester_user_id'),
+        ...compactIds(data || [], 'reviewer_user_id'),
+      ])));
+      const approvals = (data || []).map((approval: any) => ({
+        ...approval,
+        users: usersById.get(String(approval.requester_user_id)) || null,
+        reviewer: usersById.get(String(approval.reviewer_user_id)) || null,
+      }));
+      res.json({ success: true, data: { approvals } });
     } catch (e: any) {
       const status = e.message === 'SHARED_BUDGET_ACCESS_DENIED' ? 403 : 400;
       res.status(status).json({ success: false, error: e.message });

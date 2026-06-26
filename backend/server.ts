@@ -1,6 +1,8 @@
 
 import { getSupabase, getAdminSupabase } from './supabaseClient.js';
 import { AuthService } from '../iam/authService.js';
+import { OrbiAuthService } from '../iam/orbiAuthService.js';
+import { KeycloakAuthService } from '../iam/keycloakAuthService.js';
 import { TransactionService } from '../ledger/transactionService.js';
 import { WalletService } from '../wealth/walletService.js';
 import { GoalService } from '../strategy/goalService.js';
@@ -58,6 +60,7 @@ import { transactionQuoteService } from './payments/TransactionQuoteService.js';
 import { offlineGatewayService } from './offline/OfflineGatewayService.js';
 import { buildPostgrestOrFilter } from './security/postgrest.js';
 import bcrypt from 'bcryptjs';
+import { getOrbiDatabase } from '../services/orbiDatabase.js';
 
 const internalBackgroundJobsEnabled =
     process.env.ORBI_ENABLE_INTERNAL_BACKGROUND_JOBS === 'true';
@@ -132,14 +135,15 @@ class OrbiServer {
 
     async warmup() {
         console.info("[OrbiServer] Warming up critical services...");
-        await Promise.all([
-            ReconEngine.reapStuckTransactions(),
-            EntProcessor.settleProcessingTransactions(),
-            SystemPilot.start()
-        ]);
+        // Startup must never mutate financial state. Settlement and reconciliation
+        // are owned by the explicitly enabled worker schedulers after readiness.
+        SystemPilot.start();
         console.info("[OrbiServer] Critical services warmed up.");
     }
     private auth = new AuthService();
+    private orbiAuth = new OrbiAuthService();
+    private keycloakAuth = new KeycloakAuthService();
+    private authProvider = String(process.env.ORBI_AUTH_PROVIDER || 'supabase').trim().toLowerCase();
     private ledger = new TransactionService();
     private wallet = new WalletService();
     private goal = new GoalService();
@@ -149,25 +153,56 @@ class OrbiServer {
     private escrow = new EscrowService();
 
     // --- IAM & IDENTITY ---
-    async login(e: string | undefined, p: string, metadata?: any) { return this.auth.login(e || '', p, metadata); }
-    async signUp(email: string | undefined, password: string, metadata?: any, appId?: string) { 
-        return this.auth.signUp(email || '', password, { ...metadata, app_origin: metadata?.app_origin || appId }); 
+    async login(e: string | undefined, p: string, metadata?: any) {
+        if (this.authProvider === 'keycloak') return this.keycloakAuth.login(e || '', p, metadata);
+        if (this.authProvider === 'local') return this.orbiAuth.login(e || '', p, metadata);
+        return this.auth.login(e || '', p, metadata);
     }
-    async getSession(token?: string) { return this.auth.getSession(token); }
-    async refreshSession(refreshToken: string, metadata?: any) { return this.auth.refreshSession(refreshToken, metadata); }
-    async logout(token?: string, refreshToken?: string) { return this.auth.logout(token, refreshToken); }
+    async signUp(email: string | undefined, password: string, metadata?: any, appId?: string) { 
+        const signupMetadata = { ...metadata, app_origin: metadata?.app_origin || appId };
+        if (this.authProvider === 'keycloak') return this.keycloakAuth.signUp(email || '', password, signupMetadata);
+        if (this.authProvider === 'local') return this.orbiAuth.signUp(email || '', password, signupMetadata);
+        return this.auth.signUp(email || '', password, signupMetadata);
+    }
+    async getSession(token?: string) {
+        if (this.authProvider === 'keycloak') return this.keycloakAuth.getSession(token);
+        if (this.authProvider === 'local') return this.orbiAuth.getSession(token);
+        return this.auth.getSession(token);
+    }
+    async refreshSession(refreshToken: string, metadata?: any) {
+        if (this.authProvider === 'keycloak') return this.keycloakAuth.refreshSession(refreshToken, metadata);
+        if (this.authProvider === 'local') return this.orbiAuth.refreshSession(refreshToken, metadata);
+        return this.auth.refreshSession(refreshToken, metadata);
+    }
+    async logout(token?: string, refreshToken?: string) {
+        if (this.authProvider === 'keycloak') return this.keycloakAuth.logout(token, refreshToken);
+        if (this.authProvider === 'local') return this.orbiAuth.logout(token, refreshToken);
+        return this.auth.logout(token, refreshToken);
+    }
     async lookupUser(query: string) { return Identity.lookupUser(query); }
     
     async updatePassword(password: string) { return this.auth.updatePassword(password); }
     async completePasswordReset(password: string) { return this.auth.completePasswordReset(password); }
     async completePasswordResetWithOtp(identifier: string, requestId: string, code: string, password: string) {
+        if (this.authProvider === 'keycloak') {
+            return this.keycloakAuth.completePasswordReset(password, identifier, requestId, code);
+        }
         return this.auth.completePasswordReset(password, identifier, requestId, code);
     }
-    async initiatePasswordReset(identifier: string) { return this.auth.initiatePasswordReset(identifier); }
+    async initiatePasswordReset(identifier: string) {
+        if (this.authProvider === 'keycloak') return this.keycloakAuth.initiatePasswordReset(identifier);
+        return this.auth.initiatePasswordReset(identifier);
+    }
     async initiateAccountConfirmation(identifier: string, replacementContact?: string, preferredRegistryType?: string) {
+        if (this.authProvider === 'keycloak') {
+            return this.keycloakAuth.initiateAccountConfirmation(identifier, replacementContact);
+        }
         return this.auth.initiateAccountConfirmation(identifier, replacementContact, preferredRegistryType);
     }
     async confirmAccount(identifier: string, requestId: string, code: string, preferredRegistryType?: string) {
+        if (this.authProvider === 'keycloak') {
+            return this.keycloakAuth.confirmAccount(identifier, requestId, code);
+        }
         return this.auth.confirmAccount(identifier, requestId, code, preferredRegistryType);
     }
     async cleanupExpiredUnconfirmedAccounts() { return this.auth.cleanupExpiredUnconfirmedAccounts(); }
@@ -175,7 +210,11 @@ class OrbiServer {
     async initiatePhoneLogin(phone: string) { return this.auth.initiatePhoneLogin(phone); }
     async verifyPhoneLogin(phone: string, token: string) { return this.auth.verifyPhoneLogin(phone, token); }
     async completeProfile(phone: string, updates: any) { return this.auth.completeProfile(phone, updates); }
-    async getUserProfile(userId: string) { return this.auth.getUserProfile(userId); }
+    async getUserProfile(userId: string) {
+        if (this.authProvider === 'keycloak') return this.keycloakAuth.getUserProfile(userId);
+        if (this.authProvider === 'local') return this.orbiAuth.getUserProfile(userId);
+        return this.auth.getUserProfile(userId);
+    }
     async registerBiometric(userId: string, credential: any) { return this.auth.registerBiometric(userId, credential); }
     async generateSecureConnection(token?: string) { return { status: 'SECURE', node: 'DPS-PRIMARY-RELAY', ts: Date.now() }; }
 
@@ -225,7 +264,7 @@ class OrbiServer {
 
     // --- BOOTSTRAP ---
     async getBootstrapData(token?: string): Promise<AppData> {
-        const session = await this.auth.getSession(token);
+        const session = await this.getSession(token);
         if (!session) throw new Error("IDENTITY_REQUIRED");
         
         const [transactions, wallets, goals, categories, tasks, messages] = await Promise.all([
@@ -760,7 +799,7 @@ class OrbiServer {
         };
         const targetRegistryType = publicRoleRegistryMap[String(payload.role || '').toUpperCase()];
         if (targetRegistryType) {
-            const result = await this.auth.signUp(payload.email || '', payload.password, {
+            const result = await this.signUp(payload.email || '', payload.password, {
                 full_name: payload.full_name,
                 phone: payload.phone,
                 nationality: payload.nationality,
@@ -1300,45 +1339,89 @@ class OrbiServer {
     }
 
     async uploadAvatar(userId: string, file: any, contentType?: string, oldUrl?: string) {
-        if (oldUrl) await AssetLifecycle.decommission(oldUrl, userId);
         const avatarUrl = await AssetLifecycle.commit(userId, file, contentType);
         if (!avatarUrl) return avatarUrl;
 
-        const adminSb = getAdminSupabase();
-        if (!adminSb) {
-            throw new Error('DB_OFFLINE');
-        }
+        try {
+            const usesSelfHostedAuth =
+                ['local', 'keycloak'].includes(
+                    String(process.env.ORBI_AUTH_PROVIDER || 'supabase').trim().toLowerCase(),
+                );
 
-        const { data: authUserResult, error: authUserError } = await adminSb.auth.admin.getUserById(userId);
-        if (authUserError) {
-            throw new Error(authUserError.message);
-        }
+            if (usesSelfHostedAuth) {
+                const client = await getOrbiDatabase().connect();
+                try {
+                    await client.query('BEGIN');
+                    const result = await client.query<{ registry_type: string | null }>(
+                        `UPDATE auth.users
+                         SET raw_user_meta_data =
+                               COALESCE(raw_user_meta_data, '{}'::jsonb) ||
+                               jsonb_build_object('avatar_url', $2::text),
+                             updated_at = NOW()
+                         WHERE id = $1
+                         RETURNING raw_user_meta_data->>'registry_type' AS registry_type`,
+                        [userId, avatarUrl],
+                    );
+                    if (result.rowCount !== 1) throw new Error('IDENTITY_NOT_FOUND');
 
-        const currentMetadata = authUserResult?.user?.user_metadata || {};
-        const metadataUpdates = {
-            ...currentMetadata,
-            avatar_url: avatarUrl,
-        };
+                    await client.query(
+                        `UPDATE public.users SET avatar_url = $2 WHERE id = $1`,
+                        [userId, avatarUrl],
+                    );
+                    if (String(result.rows[0]?.registry_type || '').toUpperCase() === 'STAFF') {
+                        await client.query(
+                            `UPDATE public.staff SET avatar_url = $2 WHERE id = $1`,
+                            [userId, avatarUrl],
+                        );
+                    }
+                    await client.query('COMMIT');
+                } catch (error) {
+                    await client.query('ROLLBACK');
+                    throw error;
+                } finally {
+                    client.release();
+                }
+            } else {
+                const adminSb = getAdminSupabase();
+                if (!adminSb) throw new Error('DB_OFFLINE');
 
-        const { error: authUpdateError } = await adminSb.auth.admin.updateUserById(userId, {
-            user_metadata: metadataUpdates,
-        });
-        if (authUpdateError) {
-            throw new Error(authUpdateError.message);
-        }
+                const { data: authUserResult, error: authUserError } =
+                    await adminSb.auth.admin.getUserById(userId);
+                if (authUserError) throw new Error(authUserError.message);
 
-        const profileUpdate = { avatar_url: avatarUrl };
-        const { error: userUpdateError } = await adminSb.from('users').update(profileUpdate).eq('id', userId);
-        if (userUpdateError) {
-            console.warn(`[Avatar] users update warning: ${userUpdateError.message}`);
-        }
+                const currentMetadata = authUserResult?.user?.user_metadata || {};
+                const { error: authUpdateError } = await adminSb.auth.admin.updateUserById(userId, {
+                    user_metadata: {
+                        ...currentMetadata,
+                        avatar_url: avatarUrl,
+                    },
+                });
+                if (authUpdateError) throw new Error(authUpdateError.message);
 
-        const registryType = String(currentMetadata?.registry_type || '').toUpperCase();
-        if (registryType === 'STAFF') {
-            const { error: staffUpdateError } = await adminSb.from('staff').update(profileUpdate).eq('id', userId);
-            if (staffUpdateError) {
-                console.warn(`[Avatar] staff update warning: ${staffUpdateError.message}`);
+                const profileUpdate = { avatar_url: avatarUrl };
+                const { error: userUpdateError } =
+                    await adminSb.from('users').update(profileUpdate).eq('id', userId);
+                if (userUpdateError) {
+                    console.warn(`[Avatar] users update warning: ${userUpdateError.message}`);
+                }
+
+                if (String(currentMetadata?.registry_type || '').toUpperCase() === 'STAFF') {
+                    const { error: staffUpdateError } =
+                        await adminSb.from('staff').update(profileUpdate).eq('id', userId);
+                    if (staffUpdateError) {
+                        console.warn(`[Avatar] staff update warning: ${staffUpdateError.message}`);
+                    }
+                }
             }
+        } catch (error) {
+            await AssetLifecycle.decommission(avatarUrl, userId).catch(() => {});
+            throw error;
+        }
+
+        if (oldUrl && oldUrl !== avatarUrl) {
+            await AssetLifecycle.decommission(oldUrl, userId).catch((error) => {
+                console.warn('[Avatar] Previous asset cleanup deferred:', error);
+            });
         }
 
         return avatarUrl;
@@ -1474,7 +1557,7 @@ class OrbiServer {
     }
     async getLedgerEntries(transactionId: string) { return this.ledger.getLedgerEntries(transactionId); }
     async getUserActivity(token?: string) {
-        const session = await this.auth.getSession(token);
+        const session = await this.getSession(token);
         if (!session) return [];
         return this.security.getUserActivity(session.sub);
     }

@@ -1,0 +1,51 @@
+services:
+  storage:
+    image: ${ORBI_STORAGE_IMAGE:-minio/minio:latest}
+    container_name: orbi-storage
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${ORBI_STORAGE_ROOT_USER:-orbi-storage}
+      MINIO_ROOT_PASSWORD: ${ORBI_STORAGE_ROOT_PASSWORD:?Set ORBI_STORAGE_ROOT_PASSWORD}
+    volumes:
+      - orbi_storage_data:/data
+    networks:
+      - orbi_private
+
+  storage-init:
+    image: ${ORBI_STORAGE_CLIENT_IMAGE:-minio/mc:latest}
+    container_name: orbi-storage-init
+    restart: "no"
+    depends_on:
+      storage:
+        condition: service_started
+    environment:
+      ORBI_STORAGE_ROOT_USER: ${ORBI_STORAGE_ROOT_USER:-orbi-storage}
+      ORBI_STORAGE_ROOT_PASSWORD: ${ORBI_STORAGE_ROOT_PASSWORD:?Set ORBI_STORAGE_ROOT_PASSWORD}
+      ORBI_STORAGE_ASSET_BUCKET: ${ORBI_STORAGE_ASSET_BUCKET:-orbi-assets}
+      ORBI_STORAGE_KYC_BUCKET: ${ORBI_STORAGE_KYC_BUCKET:-orbi-kyc}
+      ORBI_STORAGE_BACKUP_BUCKET: ${ORBI_STORAGE_BACKUP_BUCKET:-orbi-backups}
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        until mc alias set orbi http://storage:9000 "$${ORBI_STORAGE_ROOT_USER}" "$${ORBI_STORAGE_ROOT_PASSWORD}"; do
+          sleep 2
+        done
+        mc mb --ignore-existing "orbi/$${ORBI_STORAGE_ASSET_BUCKET}"
+        mc mb --ignore-existing "orbi/$${ORBI_STORAGE_KYC_BUCKET}"
+        mc mb --ignore-existing "orbi/$${ORBI_STORAGE_BACKUP_BUCKET}"
+        mc anonymous set none "orbi/$${ORBI_STORAGE_ASSET_BUCKET}"
+        mc anonymous set none "orbi/$${ORBI_STORAGE_KYC_BUCKET}"
+        mc anonymous set none "orbi/$${ORBI_STORAGE_BACKUP_BUCKET}"
+    networks:
+      - orbi_private
+
+networks:
+  orbi_private:
+    name: orbi-private
+    driver: bridge
+
+volumes:
+  orbi_storage_data:
+    name: orbi-storage-data
