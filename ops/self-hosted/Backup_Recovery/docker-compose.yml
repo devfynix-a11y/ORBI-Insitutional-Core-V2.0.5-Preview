@@ -11,20 +11,46 @@ services:
       PGPASSWORD: ${ORBI_POSTGRES_PASSWORD:?Set ORBI_POSTGRES_PASSWORD}
       ORBI_BACKUP_INTERVAL_SECONDS: ${ORBI_BACKUP_INTERVAL_SECONDS:-86400}
       ORBI_BACKUP_RETENTION_DAYS: ${ORBI_BACKUP_RETENTION_DAYS:-14}
+      ORBI_BACKUP_ENCRYPTION_KEY: ${ORBI_BACKUP_ENCRYPTION_KEY:?Set ORBI_BACKUP_ENCRYPTION_KEY}
     entrypoint:
       - /bin/sh
       - /opt/orbi/backup-postgres.sh
     volumes:
-      - ./Backup_Recovery/backup-postgres.sh:/opt/orbi/backup-postgres.sh:ro
+      - ./backup-postgres.sh:/opt/orbi/backup-postgres.sh:ro
       - orbi_database_backups:/backups
+    networks:
+      - orbi_private
+
+  backup-r2-replicator:
+    image: ${ORBI_STORAGE_CLIENT_IMAGE:-quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z}
+    container_name: orbi-backup-r2-replicator
+    restart: unless-stopped
+    environment:
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:?Set CLOUDFLARE_ACCOUNT_ID}
+      CLOUDFLARE_ACCESS_KEY_ID: ${CLOUDFLARE_ACCESS_KEY_ID:?Set CLOUDFLARE_ACCESS_KEY_ID}
+      CLOUDFLARE_SECRET_ACCESS_KEY: ${CLOUDFLARE_SECRET_ACCESS_KEY:?Set CLOUDFLARE_SECRET_ACCESS_KEY}
+      CLOUDFLARE_R2_ENDPOINT: ${CLOUDFLARE_R2_ENDPOINT:-}
+      CLOUDFLARE_BUCKET_NAME: ${CLOUDFLARE_BUCKET_NAME:?Set CLOUDFLARE_BUCKET_NAME}
+      ORBI_BACKUP_R2_BUCKET: ${ORBI_BACKUP_R2_BUCKET:-orbishop-storage}
+      ORBI_BACKUP_R2_PREFIX: ${ORBI_BACKUP_R2_PREFIX:-database-backups}
+      ORBI_BACKUP_R2_SYNC_INTERVAL_SECONDS: ${ORBI_BACKUP_R2_SYNC_INTERVAL_SECONDS:-300}
+    entrypoint:
+      - /bin/sh
+      - /opt/orbi/backup-r2-mirror.sh
+    volumes:
+      - ./backup-r2-mirror.sh:/opt/orbi/backup-r2-mirror.sh:ro
+      - orbi_database_backups:/backups:ro
+    depends_on:
+      - database-backup
     networks:
       - orbi_private
 
 networks:
   orbi_private:
     name: orbi-private
-    driver: bridge
+    external: true
 
 volumes:
   orbi_database_backups:
     name: orbi-database-backups
+    external: true

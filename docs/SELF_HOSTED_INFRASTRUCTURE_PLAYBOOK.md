@@ -11,12 +11,16 @@ restore, and rollback testing.
 Public:
 
 - `api.orbifinancial.com` points to the VM static IP.
+- `ops.orbifinancial.com` points to the same VM but is protected by
+  Cloudflare Access, VPN, or a fixed administration allowlist.
 - TCP 443 terminates TLS at Nginx.
 - TCP 80 is used only for redirect and certificate renewal.
 
 Private:
 
 - ORBI Core listens on `127.0.0.1:3000`.
+- ORBI Ops Console is served by Core at `/ops` only through the private
+  `ops.orbifinancial.com` hostname.
 - Valkey listens on the private container network only.
 - S3-compatible object storage remains on the private container network.
 - SSH is reachable only through a VPN or fixed administration allowlist.
@@ -45,6 +49,24 @@ Temporary external compatibility:
 - Firebase remains enabled for mobile push notifications.
 - Payment and messaging gateways remain separate services with signed,
   authenticated callbacks.
+
+Private operations console:
+
+- URL: `https://ops.orbifinancial.com/ops`
+- JSON API: `/api/admin/ops/*`
+- Auth: Cloudflare Access/VPN at the edge plus `ORBI_MONITOR_API_KEY` for JSON
+  endpoints. Every action request must also include `x-orbi-operator-id`.
+- Mode: monitoring, action request, approval, and VM-agent queue. Execution is
+  fail-closed unless `ORBI_OPS_AGENT_EXECUTION_ENABLED=true`.
+- Purpose: view deployment state, safety switches, secret presence, backup
+  artifacts, approved deployment commands, backup procedure, restore-drill
+  procedure, and audited one-click deploy/backup/restore-drill requests.
+- Two-person control: deploy, backup, and restore-drill action requests require
+  at least `ORBI_OPS_REQUIRED_APPROVALS=2` distinct operators. The requester
+  cannot approve their own action.
+- Restore control: console restore is limited to staging, isolated, or drill
+  targets. Production restore is an incident runbook action, not a dashboard
+  button.
 
 ## 2. Minimum VM baseline
 
@@ -150,6 +172,9 @@ Production secret inventory:
 - Data plane: `ORBI_POSTGRES_PASSWORD`, `DATABASE_URL`,
   `ORBI_VALKEY_PASSWORD`, `VALKEY_URL`, storage root credentials, and backup
   retention settings.
+- Ops control plane: `ORBI_OPS_REQUIRED_APPROVALS=2` and
+  `ORBI_OPS_AGENT_EXECUTION_ENABLED=false` until the VM agent has been tested
+  with non-production drills.
 - Cloudflare R2 images: `CLOUDFLARE_ACCOUNT_ID`,
   `CLOUDFLARE_ACCESS_KEY_ID`, `CLOUDFLARE_SECRET_ACCESS_KEY`,
   `CLOUDFLARE_BUCKET_NAME`, and `CLOUDFLARE_PUBLIC_URL_PREFIX`.
@@ -297,8 +322,9 @@ privacy requirements.
 During the compatibility phase, retain Supabase backups and export evidence
 before every schema migration. When private PostgreSQL is introduced:
 
-- enable encrypted full backups and continuous WAL archiving;
-- keep an encrypted copy outside the primary VM under ORBI-controlled keys;
+- enable encrypted full backups and then add continuous WAL archiving;
+- keep encrypted copies on the live host disk and outside the primary VM under
+  ORBI-controlled keys;
 - run scheduled restore drills on an isolated host;
 - reconcile wallet balances, ledger totals, transaction counts, audit chains,
   and critical RPC behavior after every test restore;
@@ -307,6 +333,12 @@ before every schema migration. When private PostgreSQL is introduced:
 Never expose PostgreSQL or raw backup files through a public endpoint. Remote
 operations should use authenticated administration job triggers and return only
 status and audit evidence.
+
+The production stack creates encrypted PostgreSQL dump artifacts under
+`/srv/orbi/backups/database` and mirrors those encrypted artifacts to Cloudflare
+R2 using `backup-r2-replicator`. Do not copy raw PostgreSQL volume files while
+PostgreSQL is running; use logical dumps for baseline recovery, then add WAL
+archive and point-in-time recovery once the restore drill is proven.
 
 ## 13. Native PostgreSQL migration status
 

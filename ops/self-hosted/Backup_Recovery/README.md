@@ -1,17 +1,42 @@
 # Backup and Recovery
 
-The initial backup container creates checksummed PostgreSQL custom-format dumps
-on a dedicated Docker volume. It does not publish network ports.
+The backup service creates PostgreSQL custom-format dumps, encrypts them with
+OpenSSL AES-256-CBC/PBKDF2, writes checksums and manifests, and stores the
+encrypted artifacts on the live host disk. A separate R2 replicator mirrors only
+the encrypted artifacts to Cloudflare R2.
 
-This is a development and early staging control, not the final production
-recovery design. Production still requires:
+Live host copy:
 
-- encrypted backup copies outside the primary VM;
-- WAL archiving and point-in-time recovery;
-- separate backup credentials;
-- immutable retention;
-- scheduled restore drills and ledger reconciliation;
+```txt
+/srv/orbi/backups/database
+```
+
+Off-machine copy:
+
+```txt
+r2://<ORBI_BACKUP_R2_BUCKET>/<ORBI_BACKUP_R2_PREFIX>/
+```
+
+Required secrets:
+
+- `ORBI_BACKUP_ENCRYPTION_KEY`
+- `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_ACCESS_KEY_ID`
+- `CLOUDFLARE_SECRET_ACCESS_KEY`
+- `ORBI_BACKUP_R2_BUCKET`
+
+The backup process intentionally does not copy raw PostgreSQL data-directory
+files while the database is running. Use database-consistent dumps for this
+baseline, then add WAL archiving and point-in-time recovery before full
+production traffic.
+
+Production still requires:
+
+- a restore drill on an isolated machine;
+- ledger, wallet, settlement, and audit reconciliation after restore;
+- immutable or versioned off-machine retention;
+- separate backup credentials with the smallest possible R2 permissions;
 - documented recovery-point and recovery-time evidence.
 
-Use `docs/BACKUP_RESTORE_DRILL_PROCEDURE.md` for validation. Never treat a
-successful backup command as proof of recoverability without restoring it.
+Never treat a successful backup command as proof of recoverability without
+restoring it.

@@ -182,13 +182,35 @@ export class SettlementScheduler {
     const initiatedBefore = new Date(Date.now() - 10 * 60 * 1000).toISOString();
     const processingBefore = new Date(Date.now() - 30 * 60 * 1000).toISOString();
 
-    const { data: movements } = await this.client
-      .from('external_fund_movements')
-      .select('id,user_id,direction,status,updated_at,created_at,metadata,external_reference,source_external_ref,target_external_ref')
-      .is('transaction_id', null)
-      .or(
-        `and(status.eq.initiated,updated_at.lt.${initiatedBefore}),and(status.eq.processing,updated_at.lt.${processingBefore})`,
+    const selectFields =
+      'id,user_id,direction,status,updated_at,created_at,metadata,external_reference,source_external_ref,target_external_ref';
+    const [initiatedResult, processingResult] = await Promise.all([
+      this.client
+        .from('external_fund_movements')
+        .select(selectFields)
+        .is('transaction_id', null)
+        .eq('status', 'initiated')
+        .lt('updated_at', initiatedBefore),
+      this.client
+        .from('external_fund_movements')
+        .select(selectFields)
+        .is('transaction_id', null)
+        .eq('status', 'processing')
+        .lt('updated_at', processingBefore),
+    ]);
+
+    if (initiatedResult.error || processingResult.error) {
+      throw new Error(
+        initiatedResult.error?.message ||
+          processingResult.error?.message ||
+          'EXTERNAL_MOVEMENT_STUCK_QUERY_FAILED',
       );
+    }
+
+    const movements = [
+      ...(initiatedResult.data || []),
+      ...(processingResult.data || []),
+    ];
 
     for (const movement of movements || []) {
       const now = new Date().toISOString();

@@ -8,12 +8,12 @@ services:
     env_file:
       - ../../.env
     environment:
-      NODE_ENV: development
+      NODE_ENV: ${NODE_ENV:-development}
       ORBI_AUTH_PROVIDER: keycloak
       ORBI_DATA_PROVIDER: local
       # Financial repositories are still migrating from Supabase. Do not run
       # settlement/reconciliation mutation loops against an incomplete adapter.
-      ORBI_ENABLE_GATEWAY_BACKGROUND_JOBS: "false"
+      ORBI_ENABLE_GATEWAY_BACKGROUND_JOBS: ${ORBI_ENABLE_GATEWAY_BACKGROUND_JOBS:-false}
       ORBI_KEYCLOAK_INTERNAL_URL: http://keycloak:8080
       ORBI_KEYCLOAK_ISSUER: ${ORBI_KEYCLOAK_PUBLIC_URL:-http://localhost:8081}/realms/orbi
       ORBI_KEYCLOAK_AUDIENCE: orbi-core
@@ -42,13 +42,15 @@ services:
         condition: service_completed_successfully
     ports:
       - "${ORBI_DEV_BIND_ADDRESS:-127.0.0.1}:3000:3000"
+    volumes:
+      - orbi_database_backups:/srv/orbi/backups/database:ro
     healthcheck:
       test:
         [
           "CMD",
           "node",
           "-e",
-          "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+          "fetch('http://127.0.0.1:3000/health',{redirect:'manual'}).then(r=>{if(!r.ok&&r.status!==308)process.exit(1)}).catch(()=>process.exit(1))"
         ]
       interval: 10s
       timeout: 5s
@@ -68,3 +70,7 @@ networks:
   orbi_ops:
     name: orbi-ops
     driver: bridge
+
+volumes:
+  orbi_database_backups:
+    name: orbi-database-backups

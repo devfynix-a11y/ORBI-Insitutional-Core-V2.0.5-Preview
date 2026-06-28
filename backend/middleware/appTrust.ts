@@ -114,6 +114,17 @@ export const appTrustMiddleware = (req: Request, res: Response, next: NextFuncti
         return next();
     }
 
+    // Monitor and Ops Console APIs are operator endpoints, not mobile app APIs.
+    // They are protected separately by monitor-key auth plus edge controls.
+    if (
+        req.path === '/ops' ||
+        req.path.startsWith('/ops/') ||
+        req.path.startsWith('/api/admin/monitor/') ||
+        req.path.startsWith('/api/admin/ops/')
+    ) {
+        return next();
+    }
+
     const rpID = req.hostname;
     const origin = req.get('origin') || req.get('referer') || '';
     const apkHashHeader = req.get('x-orbi-apk-hash'); // Custom header for native app identification

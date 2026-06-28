@@ -7,6 +7,7 @@ import { ResilienceEngine } from '../../backend/infrastructure/ResilienceEngine.
 import { operationalHealthService } from '../../backend/infrastructure/OperationalHealthService.js';
 import { Server as LogicCore } from '../../backend/server.js';
 import { ReconciliationEngine as ReconEngine } from '../../backend/ledger/reconciliationEngine.js';
+import { registerOpsConsoleRoutes } from '../routes/public/opsConsole.js';
 
 export const createAppContext = (app: Express) => {
   const redisAvailable = RedisClusterFactory.isAvailable();
@@ -35,6 +36,8 @@ export const createAppContext = (app: Express) => {
     ReconEngine,
     OperationalHealthService: operationalHealthService,
   });
+
+  registerOpsConsoleRoutes(app, authenticateMonitorApiKey);
 
   const globalIpLimiter = createGlobalIpLimiter(redisAvailable, redisClient);
 
