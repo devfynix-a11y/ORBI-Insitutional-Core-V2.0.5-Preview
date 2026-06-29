@@ -1324,6 +1324,30 @@ CREATE TABLE IF NOT EXISTS public.escrow_agreements (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS public.guest_escrow_participants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    service_code TEXT NOT NULL,
+    reference TEXT NOT NULL,
+    payment_intent_id TEXT,
+    shop_order_id TEXT,
+    merchant_id UUID REFERENCES public.merchants(id) ON DELETE SET NULL,
+    merchant_wallet_id UUID REFERENCES public.merchant_wallets(id) ON DELETE SET NULL,
+    display_name TEXT,
+    email_hash TEXT,
+    phone_hash TEXT,
+    email_hint TEXT,
+    phone_hint TEXT,
+    verification_status TEXT NOT NULL DEFAULT 'unverified'
+        CHECK (verification_status IN ('unverified', 'verified', 'linked', 'blocked')),
+    linked_user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    refund_policy TEXT NOT NULL DEFAULT 'original_payment_method_only'
+        CHECK (refund_policy IN ('original_payment_method_only')),
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    UNIQUE (service_code, reference)
+);
+
 -- TREASURY: Multi-Sig Policies & Approvers
 CREATE TABLE IF NOT EXISTS public.treasury_policies (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -47,6 +47,7 @@ const ServicePaymentRequestSchema = z.object({
   currency: z.string().min(3).max(8),
   description: z.string().max(500).optional(),
   customer: z.object({
+    type: z.enum(['user', 'guest', 'external_customer']).optional(),
     name: z.string().optional(),
     email: z.string().email().optional(),
     phone: z.string().optional(),
@@ -152,7 +153,11 @@ const buildSignedCoreToPayGatewayHeaders = (method: string, path: string, body: 
 };
 
 const postServicePaymentEventToPayGateway = async (event: ServicePaymentCoreEvent): Promise<Record<string, unknown>> => {
-  const baseUrl = String(process.env.ORBI_PAY_GATEWAY_BASE_URL || '').trim();
+  const baseUrl = String(
+    process.env.ORBI_PAY_GATEWAY_INTERNAL_BASE_URL ||
+      process.env.ORBI_PAY_GATEWAY_BASE_URL ||
+      '',
+  ).trim();
   if (!baseUrl) return { attempted: false, delivered: false, error: 'ORBI_PAY_GATEWAY_BASE_URL_NOT_CONFIGURED' };
   const path = process.env.ORBI_PAY_GATEWAY_SERVICE_PAYMENT_EVENT_PATH || '/v1/internal/core/service-payment-events';
   const endpoint = new URL(path, baseUrl);
@@ -180,6 +185,90 @@ const postServicePaymentEventToPayGateway = async (event: ServicePaymentCoreEven
 };
 
 const normalizePhoneCandidate = (value?: string) => String(value || '').replace(/[^\d+]/g, '').trim();
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const hashGuestIdentifier = (value?: string) => {
+  const clean = String(value || '').trim().toLowerCase();
+  return clean ? crypto.createHash('sha256').update(clean).digest('hex') : null;
+};
+
+const maskEmail = (value?: string) => {
+  const email = String(value || '').trim().toLowerCase();
+  const [local, domain] = email.split('@');
+  if (!local || !domain) return null;
+  return `${local.slice(0, 2)}***@${domain}`;
+};
+
+const maskPhone = (value?: string) => {
+  const phone = normalizePhoneCandidate(value);
+  if (!phone) return null;
+  return `${phone.slice(0, 4)}***${phone.slice(-3)}`;
+};
+
+const metadataFlag = (metadata: Record<string, unknown>, ...keys: string[]) =>
+  keys.some((key) => metadata[key] === true || String(metadata[key] || '').toLowerCase() === 'true');
+
+const isGuestPaySafeCheckout = (request: z.infer<typeof ServicePaymentRequestSchema>) => {
+  const metadata = request.metadata || {};
+  const buyer = metadata.buyer && typeof metadata.buyer === 'object'
+    ? metadata.buyer as Record<string, unknown>
+    : {};
+  const customerType = String(request.customer?.type || buyer.type || metadata.customerType || '').toLowerCase();
+  return request.operation === 'paysafe' && (
+    customerType === 'guest' ||
+    customerType === 'external_customer' ||
+    metadataFlag(metadata, 'guestCheckout', 'guest_checkout')
+  );
+};
+
+const createGuestEscrowParticipant = async (
+  sb: NonNullable<ReturnType<typeof getAdminSupabase> | ReturnType<typeof getSupabase>>,
+  request: z.infer<typeof ServicePaymentRequestSchema>,
+  merchantContext: Awaited<ReturnType<typeof resolveServiceMerchantContext>>,
+) => {
+  const metadata = request.metadata || {};
+  const buyer = metadata.buyer && typeof metadata.buyer === 'object'
+    ? metadata.buyer as Record<string, unknown>
+    : {};
+  const email = String(request.customer?.email || buyer.email || '').trim().toLowerCase();
+  const phone = normalizePhoneCandidate(String(request.customer?.phone || buyer.phone || ''));
+  const shopOrderId = stringFromMetadata(metadata, 'shopOrderId', 'orderId', 'order_id') || request.reference;
+  const { data, error } = await sb
+    .from('guest_escrow_participants')
+    .upsert({
+      service_code: request.serviceCode,
+      reference: request.reference,
+      payment_intent_id: request.intentId,
+      shop_order_id: shopOrderId,
+      merchant_id: merchantContext?.merchant?.id || null,
+      merchant_wallet_id: merchantContext?.escrowWallet?.id || null,
+      display_name: String(request.customer?.name || buyer.name || 'Guest buyer').trim(),
+      email_hash: hashGuestIdentifier(email),
+      phone_hash: hashGuestIdentifier(phone),
+      email_hint: maskEmail(email),
+      phone_hint: maskPhone(phone),
+      verification_status: 'unverified',
+      refund_policy: 'original_payment_method_only',
+      metadata: {
+        source: 'paysafe_guest_checkout',
+        serviceCode: request.serviceCode,
+        reference: request.reference,
+        shopOrderId,
+        checkoutUrl: request.checkoutUrl || null,
+        paymentProduct: metadata.paymentProduct || 'paysafe',
+        paySafeAction: metadata.paySafeAction || 'create_escrow',
+        guestCheckout: true,
+        refundPolicy: 'original_payment_method_only',
+      },
+      updated_at: new Date().toISOString(),
+    }, {
+      onConflict: 'service_code,reference',
+    })
+    .select('id,service_code,reference,shop_order_id,merchant_id,merchant_wallet_id,verification_status,refund_policy')
+    .single();
+  if (error) throw error;
+  return data;
+};
 
 const findServicePaymentCustomer = async (customer: z.infer<typeof ServicePaymentRequestSchema>['customer']) => {
   const sb = getAdminSupabase() || getSupabase();
@@ -188,10 +277,10 @@ const findServicePaymentCustomer = async (customer: z.infer<typeof ServicePaymen
   const email = String(customer?.email || '').trim().toLowerCase();
   const phone = normalizePhoneCandidate(customer?.phone);
 
-  if (userId) {
+  if (userId && uuidPattern.test(userId)) {
     const { data, error } = await sb
       .from('users')
-      .select('id, full_name, name, email, phone, account_status')
+      .select('id, full_name, email, phone, account_status')
       .eq('id', userId)
       .maybeSingle();
     if (error) throw error;
@@ -201,7 +290,7 @@ const findServicePaymentCustomer = async (customer: z.infer<typeof ServicePaymen
   if (email) {
     const { data, error } = await sb
       .from('users')
-      .select('id, full_name, name, email, phone, account_status')
+      .select('id, full_name, email, phone, account_status')
       .ilike('email', email)
       .maybeSingle();
     if (error) throw error;
@@ -211,7 +300,7 @@ const findServicePaymentCustomer = async (customer: z.infer<typeof ServicePaymen
   if (phone) {
     const { data, error } = await sb
       .from('users')
-      .select('id, full_name, name, email, phone, account_status')
+      .select('id, full_name, email, phone, account_status')
       .or(`phone.eq.${phone},phone.eq.${phone.replace(/^\+/, '')}`)
       .limit(1)
       .maybeSingle();
@@ -323,7 +412,7 @@ const buildPaySafeBalanceProjection = (user: Record<string, any>, escrows: Recor
   return {
     user: {
       id: userId,
-      displayName: user.full_name || user.name || undefined,
+      displayName: user.full_name || undefined,
       email: user.email || undefined,
       phone: user.phone || undefined,
       accountStatus: user.account_status || undefined,
@@ -743,9 +832,39 @@ export const registerInternalRoutes = (internal: Router) => {
         };
       }
 
-      const customer = event ? null : await findServicePaymentCustomer(request.customer);
+      const guestPaySafeCheckout = !event && isGuestPaySafeCheckout(request);
+      const customer = event || guestPaySafeCheckout ? null : await findServicePaymentCustomer(request.customer);
       resolvedCustomer = customer;
-      if (!event && !customer) {
+      if (!event && guestPaySafeCheckout) {
+        const guestParticipant = await createGuestEscrowParticipant(sb, request, merchantContext);
+        event = {
+          intentId: request.intentId,
+          serviceCode: request.serviceCode,
+          status: 'processing',
+          message: 'Guest PaySafe participant recorded. Funds remain protected in merchant escrow and guest refunds are limited to the original payment method.',
+          raw: {
+            reason: 'GUEST_PAYSAFE_PARTICIPANT_RECORDED',
+            customerType: 'guest',
+            guestParticipantId: guestParticipant.id,
+            shopOrderId: guestParticipant.shop_order_id || request.reference,
+            merchantId: guestParticipant.merchant_id || null,
+            merchantWalletId: guestParticipant.merchant_wallet_id || null,
+            refundPolicy: guestParticipant.refund_policy || 'original_payment_method_only',
+            verificationStatus: guestParticipant.verification_status || 'unverified',
+            operation: request.operation,
+            reference: request.reference,
+            amount: request.amount,
+            currency: request.currency,
+            merchant: merchantContext ? {
+              id: merchantContext.merchant.id,
+              businessName: merchantContext.merchant.business_name,
+              hasPaySafeEscrowWallet: Boolean(merchantContext.escrowWallet),
+              hasSettlementWallet: Boolean(merchantContext.settlementWallet),
+            } : null,
+            feeQuote: merchantContext?.feeQuote || null,
+          },
+        };
+      } else if (!event && !customer) {
         event = {
           intentId: request.intentId,
           serviceCode: request.serviceCode,
