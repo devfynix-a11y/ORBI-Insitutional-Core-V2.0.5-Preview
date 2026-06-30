@@ -42,6 +42,9 @@ const ServicePaymentRequestSchema = z.object({
   intentId: z.string().min(1),
   serviceCode: z.string().min(1),
   operation: z.enum(['collection', 'payout', 'refund', 'paysafe']),
+  paymentCategory: z.enum(['orbi', 'mobile_money', 'bank', 'card']).optional(),
+  paymentRail: z.enum(['orbi_wallet', 'mno_tz', 'bank_transfer_tz', 'card_gateway']).optional(),
+  providerCode: z.string().optional(),
   reference: z.string().min(1),
   amount: z.number().nonnegative(),
   currency: z.string().min(3).max(8),
@@ -207,6 +210,49 @@ const maskPhone = (value?: string) => {
 
 const metadataFlag = (metadata: Record<string, unknown>, ...keys: string[]) =>
   keys.some((key) => metadata[key] === true || String(metadata[key] || '').toLowerCase() === 'true');
+
+const categoryForRail = (rail: string) => {
+  if (rail === 'orbi_wallet') return 'orbi';
+  if (rail === 'mno_tz') return 'mobile_money';
+  if (rail === 'bank_transfer_tz') return 'bank';
+  if (rail === 'card_gateway') return 'card';
+  return '';
+};
+
+const resolvePaySafeFundingRoute = (request: z.infer<typeof ServicePaymentRequestSchema>) => {
+  const metadata = request.metadata || {};
+  const paymentRail = String(request.paymentRail || metadata.paymentRail || metadata.payment_rail || '').trim();
+  const paymentCategory = String(
+    request.paymentCategory ||
+      metadata.paymentCategory ||
+      metadata.payment_category ||
+      categoryForRail(paymentRail) ||
+      '',
+  ).trim();
+
+  if (request.operation !== 'paysafe') {
+    return null;
+  }
+
+  if (!paymentCategory || !paymentRail) {
+    throw new Error('PAYSAFE_PAYMENT_ROUTE_REQUIRED');
+  }
+
+  if (categoryForRail(paymentRail) !== paymentCategory) {
+    throw new Error('PAYSAFE_PAYMENT_ROUTE_MISMATCH');
+  }
+
+  if (paymentCategory !== 'orbi' && !String(request.providerCode || metadata.providerCode || metadata.provider_code || '').trim()) {
+    throw new Error('PAYSAFE_EXTERNAL_PROVIDER_CODE_REQUIRED');
+  }
+
+  return {
+    paymentCategory,
+    paymentRail,
+    providerCode: String(request.providerCode || metadata.providerCode || metadata.provider_code || '').trim() || null,
+    settlementPolicy: 'paysafe_hold_required',
+  };
+};
 
 const isGuestPaySafeCheckout = (request: z.infer<typeof ServicePaymentRequestSchema>) => {
   const metadata = request.metadata || {};
@@ -812,6 +858,7 @@ export const registerInternalRoutes = (internal: Router) => {
     let resolvedCustomer: Record<string, any> | null = null;
 
     try {
+      const paySafeFundingRoute = resolvePaySafeFundingRoute(request);
       const sb = getAdminSupabase() || getSupabase();
       if (!sb) throw new Error('DB_OFFLINE');
 
@@ -828,6 +875,7 @@ export const registerInternalRoutes = (internal: Router) => {
             reason: merchantError.message || 'MERCHANT_CONTEXT_INVALID',
             reference: request.reference,
             operation: request.operation,
+            paySafeFundingRoute,
           },
         };
       }
@@ -855,6 +903,7 @@ export const registerInternalRoutes = (internal: Router) => {
             reference: request.reference,
             amount: request.amount,
             currency: request.currency,
+            paySafeFundingRoute,
             merchant: merchantContext ? {
               id: merchantContext.merchant.id,
               businessName: merchantContext.merchant.business_name,
@@ -915,6 +964,7 @@ export const registerInternalRoutes = (internal: Router) => {
               customerId: customer.id,
               reference: request.reference,
               operation: request.operation,
+              paySafeFundingRoute,
               merchantId: merchantContext?.merchant?.id || null,
               merchantName: merchantContext?.merchant?.business_name || null,
               merchantWalletsResolved: Boolean(merchantContext?.escrowWallet),
@@ -929,6 +979,7 @@ export const registerInternalRoutes = (internal: Router) => {
             reference: request.reference,
             amount: request.amount,
             currency: request.currency,
+            paySafeFundingRoute,
             merchant: merchantContext ? {
               id: merchantContext.merchant.id,
               businessName: merchantContext.merchant.business_name,
@@ -995,6 +1046,9 @@ export const registerInternalRoutes = (internal: Router) => {
         intentId: request.intentId,
         reference: request.reference,
         operation: request.operation,
+        paymentCategory: request.paymentCategory || request.metadata?.paymentCategory || null,
+        paymentRail: request.paymentRail || request.metadata?.paymentRail || null,
+        providerCode: request.providerCode || request.metadata?.providerCode || null,
         amount: request.amount,
         currency: request.currency,
         coreStatus: event.status,

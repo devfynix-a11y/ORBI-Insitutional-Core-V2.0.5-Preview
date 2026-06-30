@@ -57,6 +57,14 @@ Temporary external compatibility:
 - ORBI Shop calls `https://pay.orbifinancial.com/v1/paysafe/*` with its
   private `ORBI_SHOP_PAY_API_KEY`; Pay Gateway signs service-payment requests
   into Core. Do not expose the service key to browser, mobile, logs, or Git.
+- For PaySafe checkout, merchants must send a normalized payment route:
+  `paymentCategory` plus `paymentRail`. Supported first routes are
+  `orbi/orbi_wallet`, `mobile_money/mno_tz`, `bank/bank_transfer_tz`, and
+  `card/card_gateway`. A successful `operation=paysafe` request must always
+  become a protected PaySafe hold before merchant release, refund, dispute,
+  reversal, or settlement. External rails may collect through providers first,
+  but the Core settlement path remains `provider_collected -> escrow_funded ->
+  held`; never direct merchant availability.
 
 Cloudflare Tunnel public hostnames for the local VM:
 
