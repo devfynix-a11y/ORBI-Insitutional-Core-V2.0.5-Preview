@@ -11,6 +11,8 @@ restore, and rollback testing.
 Public:
 
 - `api.orbifinancial.com` points to the VM static IP.
+- `pay.orbifinancial.com` points to the same VM or Cloudflare Tunnel and routes
+  only to ORBI Pay Gateway.
 - `ops.orbifinancial.com` points to the same VM but is protected by
   Cloudflare Access, VPN, or a fixed administration allowlist.
 - TCP 443 terminates TLS at Nginx.
@@ -19,6 +21,8 @@ Public:
 Private:
 
 - ORBI Core listens on `127.0.0.1:3000`.
+- ORBI Pay Gateway listens on `127.0.0.1:3100` and is also reachable inside
+  Docker as `http://pay-gateway:3100`.
 - ORBI Ops Console is served by Core at `/ops` only through the private
   `ops.orbifinancial.com` hostname.
 - Valkey listens on the private container network only.
@@ -31,6 +35,7 @@ The development container modules are maintained under:
 ```txt
 ops/self-hosted/Auth_Security
 ops/self-hosted/Storage
+ops/self-hosted/Pay_Gateway
 ```
 
 See `ops/self-hosted/README.md` for combined and component-specific commands.
@@ -49,6 +54,22 @@ Temporary external compatibility:
 - Firebase remains enabled for mobile push notifications.
 - Payment and messaging gateways remain separate services with signed,
   authenticated callbacks.
+- ORBI Shop calls `https://pay.orbifinancial.com/v1/paysafe/*` with its
+  private `ORBI_SHOP_PAY_API_KEY`; Pay Gateway signs service-payment requests
+  into Core. Do not expose the service key to browser, mobile, logs, or Git.
+
+Cloudflare Tunnel public hostnames for the local VM:
+
+- `api.orbifinancial.com` -> `http://orbi-core:3000` or `http://core:3000`
+  depending on the active compose project aliases.
+- `pay.orbifinancial.com` -> `http://pay-gateway:3100`.
+- `auth.orbifinancial.com` -> `http://keycloak:8080`.
+- `ops.orbifinancial.com` -> `http://orbi-core:3000` or `http://core:3000`
+  and protect it with Cloudflare Access/VPN.
+
+Pay Gateway readiness can show provider adapters as `DOWN` until real bank or
+mobile-money token references are configured. That is expected while PaySafe
+service intake and signed Core callbacks are being tested.
 
 Private operations console:
 

@@ -57,7 +57,8 @@ $compose = @(
     '--env-file', '.env',
     '-f', 'ops/self-hosted/docker-compose.dev.yml',
     '-f', 'ops/self-hosted/Auth_Security/docker-compose.yml',
-    '-f', 'ops/self-hosted/Storage/docker-compose.yml'
+    '-f', 'ops/self-hosted/Storage/docker-compose.yml',
+    '-f', 'ops/self-hosted/Pay_Gateway/docker-compose.yml'
 )
 
 $env:COMPOSE_PARALLEL_LIMIT = '1'
@@ -67,5 +68,6 @@ if ($LASTEXITCODE -ne 0) { throw 'ORBI development stack failed to start.' }
 docker compose @compose ps
 Write-Host ''
 Write-Host 'Core API:  http://localhost:3000'
+Write-Host 'Pay API:   http://localhost:3100'
 Write-Host 'Keycloak:  http://localhost:8081'
 Write-Host 'Realm:     http://localhost:8081/realms/orbi'

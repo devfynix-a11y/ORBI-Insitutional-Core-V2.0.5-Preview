@@ -125,6 +125,16 @@ export const appTrustMiddleware = (req: Request, res: Response, next: NextFuncti
         return next();
     }
 
+    // Signed service-to-service worker routes do not have a browser/mobile app
+    // origin. They are protected later by HMAC worker identity, nonce, timestamp,
+    // and scope checks, so app-origin trust must not block them first.
+    if (
+        req.path.startsWith('/api/internal/gateway/') ||
+        req.path.startsWith('/api/internal/pay-gateway/')
+    ) {
+        return next();
+    }
+
     const rpID = req.hostname;
     const origin = req.get('origin') || req.get('referer') || '';
     const apkHashHeader = req.get('x-orbi-apk-hash'); // Custom header for native app identification

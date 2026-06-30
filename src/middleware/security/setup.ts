@@ -15,6 +15,9 @@ const isProd = process.env.NODE_ENV === 'production';
 const enforceHttps = String(process.env.ORBI_ENFORCE_HTTPS || (isProd ? 'true' : 'false'))
   .trim()
   .toLowerCase() === 'true';
+const allowPrivateHttpInternalRequests = String(process.env.ORBI_ALLOW_PRIVATE_HTTP_INTERNAL_REQUESTS || '')
+  .trim()
+  .toLowerCase() === 'true';
 
 const configuredOrigins = [
   process.env.ORIGIN,
@@ -50,8 +53,13 @@ export const configureCoreSecurityMiddleware = (app: Express, options: SecurityS
     app.use((req, res, next) => {
       const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
       const isHttps = req.secure || forwardedProto === 'https';
+      const isSignedInternalRequest = req.path.startsWith('/api/internal/') &&
+        Boolean(req.get('x-worker-id')) &&
+        Boolean(req.get('x-worker-signature')) &&
+        Boolean(req.get('x-worker-timestamp')) &&
+        Boolean(req.get('x-worker-nonce'));
 
-      if (isHttps) {
+      if (isHttps || (allowPrivateHttpInternalRequests && isSignedInternalRequest)) {
         return next();
       }
 

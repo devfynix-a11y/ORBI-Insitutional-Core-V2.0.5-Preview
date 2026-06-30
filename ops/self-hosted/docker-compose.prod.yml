@@ -206,11 +206,17 @@ services:
       NODE_ENV: production
       PORT: 3000
       ORBI_AUTH_PROVIDER: keycloak
+      ORBI_INTERNAL_MTLS_MODE: ${ORBI_INTERNAL_MTLS_MODE:-required}
+      ORBI_ALLOW_HMAC_ONLY_INTERNAL_REQUESTS: ${ORBI_ALLOW_HMAC_ONLY_INTERNAL_REQUESTS:-false}
+      ORBI_ALLOW_PRIVATE_HTTP_INTERNAL_REQUESTS: ${ORBI_ALLOW_PRIVATE_HTTP_INTERNAL_REQUESTS:-false}
+      ORBI_REQUIRE_SIGNED_INTERNAL_REQUESTS: ${ORBI_REQUIRE_SIGNED_INTERNAL_REQUESTS:-true}
+      ORBI_ALLOW_LEGACY_INTERNAL_WORKER_AUTH: ${ORBI_ALLOW_LEGACY_INTERNAL_WORKER_AUTH:-false}
       ORBI_KEYCLOAK_INTERNAL_URL: http://keycloak:8080
       ORBI_KEYCLOAK_ISSUER: ${ORBI_KEYCLOAK_PUBLIC_URL}/realms/${ORBI_KEYCLOAK_REALM:-orbi}
       ORBI_KEYCLOAK_AUDIENCE: ${ORBI_KEYCLOAK_AUDIENCE:-orbi-core}
       ORBI_KEYCLOAK_REALM: ${ORBI_KEYCLOAK_REALM:-orbi}
       ORBI_KEYCLOAK_MOBILE_CLIENT_ID: ${ORBI_KEYCLOAK_MOBILE_CLIENT_ID:-orbi-mobile}
+      ORBI_PAY_GATEWAY_INTERNAL_BASE_URL: ${ORBI_PAY_GATEWAY_INTERNAL_BASE_URL:-http://pay-gateway:3100}
       ORBI_KEYCLOAK_ADMIN_USERNAME: ${ORBI_KEYCLOAK_ADMIN_USERNAME}
       ORBI_KEYCLOAK_ADMIN_PASSWORD: ${ORBI_KEYCLOAK_ADMIN_PASSWORD}
       DATABASE_URL: postgresql://${ORBI_POSTGRES_USER}:${ORBI_POSTGRES_PASSWORD}@postgres:5432/${ORBI_POSTGRES_DB}
@@ -258,11 +264,74 @@ services:
       - edge
       - ops
 
+  pay-gateway:
+    <<: *service-defaults
+    build:
+      context: ../../../ORBI PAY GATEWAY
+      dockerfile: Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: "1"
+    image: orbi-pay-gateway:${ORBI_PAY_GATEWAY_RELEASE_ID:-local}
+    environment:
+      NODE_ENV: production
+      PAYMENT_GATEWAY_PORT: 3100
+      PAYMENT_GATEWAY_PUBLIC_BASE_URL: ${PAYMENT_GATEWAY_PUBLIC_BASE_URL:-https://pay.orbifinancial.com}
+      PAYMENT_GATEWAY_PROVIDER_MODE: ${PAYMENT_GATEWAY_PROVIDER_MODE:-live}
+      PAYMENT_GATEWAY_CREDENTIAL_MODE: ${PAYMENT_GATEWAY_CREDENTIAL_MODE:-tokenized}
+      PAYMENT_GATEWAY_REQUIRE_STRONG_CUSTOMER_AUTH: ${PAYMENT_GATEWAY_REQUIRE_STRONG_CUSTOMER_AUTH:-true}
+      PAYMENT_GATEWAY_PROVIDER_MANIFEST_PATH: /app/config/providers.json
+      PAYMENT_GATEWAY_SERVICE_REGISTRY_PATH: /app/config/services.json
+      PAYMENT_GATEWAY_OPERATOR_DISCOVERY_API_KEY: ${PAYMENT_GATEWAY_OPERATOR_DISCOVERY_API_KEY}
+      PAYMENT_GATEWAY_OBP_SANDBOX_TOOLS_ENABLED: ${PAYMENT_GATEWAY_OBP_SANDBOX_TOOLS_ENABLED:-false}
+      ORBI_CORE_INTERNAL_BASE_URL: ${ORBI_CORE_INTERNAL_BASE_URL:-http://core:3000}
+      PAYMENT_GATEWAY_ALLOW_PRIVATE_HTTP_CORE: ${PAYMENT_GATEWAY_ALLOW_PRIVATE_HTTP_CORE:-true}
+      ORBI_CORE_TRUSTED_GATEWAY_EVENT_PATH: ${ORBI_CORE_TRUSTED_GATEWAY_EVENT_PATH:-/api/internal/gateway/provider-events}
+      ORBI_CORE_TRUSTED_SERVICE_PAYMENT_REQUEST_PATH: ${ORBI_CORE_TRUSTED_SERVICE_PAYMENT_REQUEST_PATH:-/api/internal/pay-gateway/service-payment-requests}
+      ORBI_CORE_TRUSTED_PAYSAFE_BALANCE_PATH: ${ORBI_CORE_TRUSTED_PAYSAFE_BALANCE_PATH:-/api/internal/pay-gateway/paysafe-balances}
+      ORBI_CORE_TRUSTED_MERCHANT_ORDER_PAYMENT_STATUS_PATH: ${ORBI_CORE_TRUSTED_MERCHANT_ORDER_PAYMENT_STATUS_PATH:-/api/internal/pay-gateway/merchant-order-payment-status}
+      ORBI_CORE_TRUSTED_MERCHANT_SETTLEMENTS_PATH: ${ORBI_CORE_TRUSTED_MERCHANT_SETTLEMENTS_PATH:-/api/internal/pay-gateway/merchant-settlements}
+      ORBI_CORE_CALLBACK_TIMEOUT_MS: ${ORBI_CORE_CALLBACK_TIMEOUT_MS:-30000}
+      PAYMENT_GATEWAY_WORKER_ID: ${PAYMENT_GATEWAY_WORKER_ID:-orbi-payment-gateway}
+      PAYMENT_GATEWAY_WORKER_SCOPES: ${PAYMENT_GATEWAY_WORKER_SCOPES:-gateway:events:write,gateway:service-payments:write,gateway:service-payments:result,gateway:paysafe-balances:read,gateway:merchant-payments:read,gateway:merchant-settlements:read}
+      WORKER_SIGNING_SECRET: ${WORKER_SIGNING_SECRET}
+      WORKER_KEY_ID: ${WORKER_KEY_ID:-payment-gateway-v1}
+      PAYMENT_GATEWAY_INTERNAL_MTLS_ENABLED: ${PAYMENT_GATEWAY_INTERNAL_MTLS_ENABLED:-false}
+      ORBI_SHOP_PAY_API_KEY_TOKEN_REF: ${ORBI_SHOP_PAY_API_KEY_TOKEN_REF:-env://ORBI_SHOP_PAY_API_KEY}
+      ORBI_SHOP_PAY_API_KEY: ${ORBI_SHOP_PAY_API_KEY}
+      ORBI_SHOP_PAY_WEBHOOK_SECRET_TOKEN_REF: ${ORBI_SHOP_PAY_WEBHOOK_SECRET_TOKEN_REF:-env://ORBI_SHOP_PAY_WEBHOOK_SECRET}
+      ORBI_SHOP_PAY_WEBHOOK_SECRET: ${ORBI_SHOP_PAY_WEBHOOK_SECRET}
+      ORBI_SHOP_PAY_WEBHOOK_URL: ${ORBI_SHOP_PAY_WEBHOOK_URL:-https://shop.orbifinancial.com/api/orbi-pay/webhooks}
+      ORBI_SHOP_MERCHANT_ID: ${ORBI_SHOP_MERCHANT_ID}
+    volumes:
+      - ../../../ORBI PAY GATEWAY/config/providers.example.json:/app/config/providers.json:ro
+      - ../../../ORBI PAY GATEWAY/config/services.example.json:/app/config/services.json:ro
+    expose:
+      - "3100"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3100/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    mem_limit: 2g
+    cpus: 1.0
+    networks:
+      - private
+      - edge
+
   gateway:
     <<: *service-defaults
     image: nginx:1.27-alpine
     depends_on:
       core:
+        condition: service_healthy
+      pay-gateway:
         condition: service_healthy
     ports:
       - "80:80"

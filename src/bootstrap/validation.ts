@@ -228,11 +228,24 @@ export const validateStartupEnvironment = () => {
       process.exit(1);
     }
 
-    if (String(process.env.ORBI_INTERNAL_MTLS_MODE || '').trim().toLowerCase() !== 'required') {
+    const internalMtlsMode = String(process.env.ORBI_INTERNAL_MTLS_MODE || '').trim().toLowerCase();
+    const allowHmacOnlyInternalRequests = String(
+      process.env.ORBI_ALLOW_HMAC_ONLY_INTERNAL_REQUESTS || '',
+    ).trim().toLowerCase() === 'true';
+
+    if (internalMtlsMode !== 'required' && !allowHmacOnlyInternalRequests) {
       logger.fatal('startup.invalid_internal_mtls_mode', {
         internal_mtls_mode: process.env.ORBI_INTERNAL_MTLS_MODE,
+        allow_hmac_only_internal_requests: process.env.ORBI_ALLOW_HMAC_ONLY_INTERNAL_REQUESTS,
       });
       process.exit(1);
+    }
+
+    if (allowHmacOnlyInternalRequests && internalMtlsMode !== 'required') {
+      logger.warn('startup.hmac_only_internal_requests_enabled', {
+        internal_mtls_mode: internalMtlsMode,
+        requirement: 'temporary_self_hosted_migration_only',
+      });
     }
 
     const internalMtlsSource = String(process.env.ORBI_INTERNAL_MTLS_SOURCE || 'proxy').trim().toLowerCase();
