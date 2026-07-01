@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 
+# Keep this script LF-only. Linux containers fail on CRLF shell flags.
 : "${CLOUDFLARE_ACCOUNT_ID:?Set CLOUDFLARE_ACCOUNT_ID}"
 : "${CLOUDFLARE_ACCESS_KEY_ID:?Set CLOUDFLARE_ACCESS_KEY_ID}"
 : "${CLOUDFLARE_SECRET_ACCESS_KEY:?Set CLOUDFLARE_SECRET_ACCESS_KEY}"

@@ -8,6 +8,8 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",
+    "ops:agent": "node dist/backend/ops/VmAgentRunner.js",
+    "ops:agent:dev": "tsx backend/ops/VmAgentRunner.ts",
     "dev": "tsx server.ts",
     "lint": "tsc --noEmit",
     "test": "tsx --test --test-force-exit tests/**/*.test.ts",

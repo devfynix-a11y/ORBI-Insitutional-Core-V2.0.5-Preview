@@ -1,0 +1,28 @@
+[Unit]
+Description=ORBI VM Agent
+After=network-online.target docker.service orbi-stack.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=orbi
+Group=docker
+WorkingDirectory=/opt/orbi/core
+EnvironmentFile=/etc/orbi/core.env
+Environment=ORBI_CORE_ENV_FILE=/etc/orbi/core.env
+Environment=ORBI_OPS_AGENT_ROOT=/opt/orbi/core
+Environment=ORBI_OPS_AGENT_ID=orbi-vm-agent-primary
+Environment=ORBI_OPS_AGENT_POLL_MS=15000
+Environment=ORBI_OPS_AGENT_COMMAND_TIMEOUT_MS=1200000
+# Set this in /etc/orbi/core.env when DATABASE_URL points to Docker DNS.
+# Example: ORBI_OPS_AGENT_DATABASE_URL=postgresql://orbi:<password>@127.0.0.1:5432/orbi
+ExecStart=/usr/bin/npm run ops:agent
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/orbi/core /srv/orbi/backups /var/run/docker.sock
+
+[Install]
+WantedBy=multi-user.target

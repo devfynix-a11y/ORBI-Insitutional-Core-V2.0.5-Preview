@@ -75,7 +75,7 @@ export class OpsConsoleService {
       actions: {
         vmAgentExecutionEnabled: boolValue(process.env.ORBI_OPS_AGENT_EXECUTION_ENABLED),
         requiredApprovals: Math.max(2, Number(process.env.ORBI_OPS_REQUIRED_APPROVALS || 2)),
-        destructiveActionsEnabled: boolValue(process.env.ORBI_OPS_AGENT_EXECUTION_ENABLED),
+        destructiveActionsEnabled: boolValue(process.env.ORBI_OPS_DESTRUCTIVE_ACTIONS_ENABLED),
         reason: boolValue(process.env.ORBI_OPS_AGENT_EXECUTION_ENABLED)
           ? 'Approved actions can be queued for the VM agent after two distinct operators approve them.'
           : 'Action requests and approvals are enabled, but VM agent execution is fail-closed until ORBI_OPS_AGENT_EXECUTION_ENABLED=true.',

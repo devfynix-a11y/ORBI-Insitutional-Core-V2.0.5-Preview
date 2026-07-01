@@ -87,7 +87,7 @@ const html = `<!doctype html>
       <button id="refresh">Refresh Secure State</button>
     </header>
     <section class="grid" id="root">
-      <article class="card full"><p>Enter the monitor key and operator ID when prompted. No secret values are displayed.</p></article>
+      <article class="card full"><p>Loading secure operations console...</p></article>
     </section>
   </main>
   <script>
@@ -97,14 +97,39 @@ const html = `<!doctype html>
     const asJson = (value) => JSON.stringify(value, null, 2);
     const esc = (value) => String(value == null ? '' : value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
     const pill = (label, ok) => '<span class="pill ' + (ok ? '' : 'bad') + '">' + esc(label) + ': ' + (ok ? 'OK' : 'CHECK') + '</span>';
+    function renderUnlock(message = '') {
+      root.innerHTML = [
+        '<article class="card wide">',
+        '<div class="label">Secure Access</div>',
+        '<h2>Unlock Operations Console</h2>',
+        '<p>Enter the monitor key and your operator ID. Values stay in this browser session and are never displayed back.</p>',
+        message ? '<pre>' + esc(message) + '</pre>' : '',
+        '<label>Monitor key</label><input id="monitorKeyInput" type="password" autocomplete="off" placeholder="Paste monitor key" />',
+        '<label>Operator ID</label><input id="operatorIdInput" autocomplete="username" placeholder="admin-name or operator id" value="' + esc(operatorId) + '" />',
+        '<button id="unlockOps">Unlock Console</button>',
+        '</article>',
+        '<article class="card"><div class="label">Protection</div><div class="value">2 approvals</div><p>Deploy, backup, and restore-drill requests stay behind audited approval flow.</p></article>',
+        '<article class="card"><div class="label">VM Agent</div><div class="value">Controlled</div><p>The UI queues approved actions only. It does not expose arbitrary shell.</p></article>',
+      ].join('');
+      document.getElementById('unlockOps')?.addEventListener('click', async () => {
+        monitorKey = document.getElementById('monitorKeyInput')?.value || '';
+        operatorId = document.getElementById('operatorIdInput')?.value || '';
+        if (!monitorKey || !operatorId) {
+          renderUnlock('Monitor key and operator ID are required.');
+          return;
+        }
+        sessionStorage.setItem('orbi_monitor_key', monitorKey);
+        sessionStorage.setItem('orbi_operator_id', operatorId);
+        await refresh();
+      });
+    }
     function ensureIdentity() {
-      if (!monitorKey) monitorKey = prompt('Monitor key') || '';
-      if (!operatorId) operatorId = prompt('Operator ID') || '';
-      sessionStorage.setItem('orbi_monitor_key', monitorKey);
-      sessionStorage.setItem('orbi_operator_id', operatorId);
+      monitorKey = monitorKey || sessionStorage.getItem('orbi_monitor_key') || '';
+      operatorId = operatorId || sessionStorage.getItem('orbi_operator_id') || '';
+      return Boolean(monitorKey && operatorId);
     }
     async function requestJson(path, options = {}) {
-      ensureIdentity();
+      if (!ensureIdentity()) throw new Error('IDENTITY_REQUIRED');
       const response = await fetch(path, {
         ...options,
         headers: {
@@ -125,6 +150,10 @@ const html = `<!doctype html>
       return requestJson(path, { method: 'POST', body: JSON.stringify(body || {}) });
     }
     async function refresh() {
+      if (!ensureIdentity()) {
+        renderUnlock();
+        return;
+      }
       root.innerHTML = '<article class="card full"><p>Loading operations state...</p></article>';
       try {
         const [overview, deploy, backup, restore, actions] = await Promise.all([
@@ -141,7 +170,7 @@ const html = `<!doctype html>
           '<article class="card"><div class="label">Agent Gate</div><div class="value">' + (data.actions.vmAgentExecutionEnabled ? 'Enabled' : 'Locked') + '</div><p>' + esc(data.actions.reason) + '</p></article>',
           '<article class="card"><div class="label">Backup Artifacts</div><div class="value">' + artifacts.length + '</div><p>' + esc(data.backups.directory) + '</p></article>',
           '<article class="card wide"><div class="label">Safety Switches</div><p>' +
-            pill('Gateway jobs', !data.safety.gatewayBackgroundJobsEnabled) +
+            pill('Gateway jobs', data.safety.gatewayBackgroundJobsEnabled) +
             pill('Internal jobs', !data.safety.internalBackgroundJobsEnabled) +
             pill('Sandbox routes', !data.safety.sandboxRoutesEnabled) +
             pill('Webhook signatures', data.safety.requireWebhookSignatures) +
@@ -158,7 +187,14 @@ const html = `<!doctype html>
         ].join('');
         wireForms();
       } catch (error) {
-        root.innerHTML = '<article class="card full"><div class="label">Console Error</div><pre>' + esc(String(error.message || error)) + '</pre></article>';
+        const message = String(error.message || error);
+        if (message.includes('monitor credentials') || message.includes('IDENTITY_REQUIRED')) {
+          sessionStorage.removeItem('orbi_monitor_key');
+          monitorKey = '';
+          renderUnlock(message);
+          return;
+        }
+        root.innerHTML = '<article class="card full"><div class="label">Console Error</div><pre>' + esc(message) + '</pre></article>';
       }
     }
     function renderRequestForms(artifacts) {
@@ -251,6 +287,10 @@ const handleOpsError = (res: Response, error: unknown) => {
 
 export const registerOpsConsoleRoutes = (app: Express, authenticateMonitorApiKey: any) => {
   app.get(['/ops', '/ops/'], (_req: Request, res: Response) => {
+    res.setHeader(
+      'Content-Security-Policy',
+      "default-src 'self';base-uri 'self';font-src 'self' https: data:;form-action 'self';frame-ancestors 'self';img-src 'self' data:;object-src 'none';script-src 'self' 'unsafe-inline';script-src-attr 'none';style-src 'self' https: 'unsafe-inline';upgrade-insecure-requests",
+    );
     res.type('html').send(html);
   });
 

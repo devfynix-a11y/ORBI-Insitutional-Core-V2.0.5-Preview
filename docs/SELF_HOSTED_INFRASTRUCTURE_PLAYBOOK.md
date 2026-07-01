@@ -97,6 +97,39 @@ Private operations console:
   targets. Production restore is an incident runbook action, not a dashboard
   button.
 
+VM agent:
+
+- Runner: `npm run ops:agent`
+- Source: `backend/ops/VmAgentRunner.ts`
+- Systemd unit: `ops/self-hosted/systemd/orbi-vm-agent.service`
+- Install helper: `bash ops/self-hosted/scripts/install-vm-agent-systemd.sh`
+- DB override: set `ORBI_OPS_AGENT_DATABASE_URL` when the normal
+  `DATABASE_URL` uses Docker DNS such as `postgres:5432` that the host process
+  cannot resolve.
+- The agent polls `public.ops_action_requests` for `QUEUED_FOR_AGENT` actions,
+  claims one action at a time, executes only whitelisted action types, and
+  writes `COMPLETED` or `FAILED` evidence back to the same audit row.
+- The agent ignores the display-only command strings stored in the database and
+  rebuilds safe command sequences from `action_type` and validated metadata.
+- Deploy actions require a clean git working tree and a safe release ref before
+  running validation and deployment scripts.
+- Manual backup actions run the encrypted backup script and leave backup/R2
+  evidence visible in the operations console.
+- Restore-drill actions use the isolated restore drill script and remain blocked
+  unless `ORBI_OPS_DESTRUCTIVE_ACTIONS_ENABLED=true`; production restore is not
+  executed by this agent.
+
+Ubuntu enablement after the repo is installed at `/opt/orbi/core`:
+
+```bash
+cd /opt/orbi/core
+npm ci --ignore-scripts --no-audit --no-fund
+npm run build
+sudo bash ops/self-hosted/scripts/install-vm-agent-systemd.sh
+sudo systemctl start orbi-vm-agent
+sudo systemctl status orbi-vm-agent --no-pager
+```
+
 ## 2. Minimum VM baseline
 
 Recommended starting point:

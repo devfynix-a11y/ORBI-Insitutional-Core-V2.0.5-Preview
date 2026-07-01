@@ -36,7 +36,8 @@ services:
       ORBI_BACKUP_R2_SYNC_INTERVAL_SECONDS: ${ORBI_BACKUP_R2_SYNC_INTERVAL_SECONDS:-300}
     entrypoint:
       - /bin/sh
-      - /opt/orbi/backup-r2-mirror.sh
+      - -ec
+      - tr -d '\r' < /opt/orbi/backup-r2-mirror.sh > /tmp/backup-r2-mirror.sh && /bin/sh /tmp/backup-r2-mirror.sh
     volumes:
       - ./backup-r2-mirror.sh:/opt/orbi/backup-r2-mirror.sh:ro
       - orbi_database_backups:/backups:ro
