@@ -418,10 +418,22 @@ export const registerAuthUserRoutes = (v1: Router, deps: Deps) => {
       }
 
       const result = await LogicCore.completePasswordResetWithOtp(identifier, requestId, code, password);
-      if (result.error) return res.status(400).json({ success: false, error: result.error.message });
+      if (result.error) {
+        return res.status(400).json({
+          success: false,
+          error: result.error.message,
+        });
+      }
 
       res.json({ success: true, message: 'Password updated successfully.' });
     } catch (e: any) {
+      const message = String(e?.message || '');
+      if (message.toLowerCase().includes('invalid password')) {
+        return res.status(400).json({
+          success: false,
+          error: `INVALID_PASSWORD_POLICY: ${message}`,
+        });
+      }
       authRouteLogger.error('auth.password_reset_complete_failed', buildRequestLogContext(req), e);
       res.status(500).json({ success: false, error: 'INTERNAL_SERVER_ERROR', message: e.message });
     }

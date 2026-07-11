@@ -128,7 +128,7 @@ CREATE INDEX IF NOT EXISTS idx_orbi_refresh_sessions_family
 ON orbi_auth.refresh_sessions(family_id);
 
 CREATE TABLE IF NOT EXISTS orbi_auth.revoked_access_tokens (
-    jti UUID PRIMARY KEY,
+    jti TEXT PRIMARY KEY,
     user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     expires_at TIMESTAMPTZ NOT NULL,
     reason TEXT,

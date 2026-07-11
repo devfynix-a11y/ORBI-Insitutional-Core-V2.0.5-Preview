@@ -33,8 +33,11 @@ for key in "${required[@]}"; do
   [[ -n "${!key:-}" ]] || fail "Required value ${key} is empty."
 done
 
-[[ -f "${ORBI_TLS_CERT_DIRECTORY}/fullchain.pem" ]] || fail "TLS fullchain.pem is missing."
-[[ -f "${ORBI_TLS_CERT_DIRECTORY}/privkey.pem" ]] || fail "TLS privkey.pem is missing."
+edge_tls_mode="${ORBI_EDGE_TLS_MODE:-cloudflare_tunnel}"
+if [[ "${edge_tls_mode}" != "cloudflare_tunnel" ]]; then
+  [[ -f "${ORBI_TLS_CERT_DIRECTORY}/fullchain.pem" ]] || fail "TLS fullchain.pem is missing."
+  [[ -f "${ORBI_TLS_CERT_DIRECTORY}/privkey.pem" ]] || fail "TLS privkey.pem is missing."
+fi
 [[ -f "${ORBI_MONITOR_KEY_FILE}" ]] || fail "Prometheus monitor-key file is missing."
 
 for dir in /srv/orbi/backups/database /srv/orbi/secrets; do

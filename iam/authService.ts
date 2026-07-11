@@ -262,6 +262,7 @@ export class AuthService {
         phone?: string | null;
         fullName?: string | null;
         language?: string | null;
+        nationality?: string | null;
         status?: string | null;
         registryType?: string | null;
         customerId?: string | null;
@@ -292,8 +293,8 @@ export class AuthService {
 
         for (const table of tables) {
             const selectColumns = table === 'staff'
-                ? 'id, full_name, email, phone, language, account_status, role'
-                : 'id, full_name, email, phone, language, account_status, registry_type, customer_id';
+                ? 'id, full_name, email, phone, nationality, language, account_status, role'
+                : 'id, full_name, email, phone, nationality, language, account_status, registry_type, customer_id';
             const filters = table === 'staff' ? staffFilters : userFilters;
             const { data, error } = await (sb.from(table) as any)
                 .select(selectColumns)
@@ -317,6 +318,7 @@ export class AuthService {
                     phone: row.phone,
                     fullName: row.full_name,
                     language: row.language,
+                    nationality: row.nationality,
                     status: row.account_status,
                     registryType: table === 'staff' ? 'STAFF' : (row.registry_type || 'CONSUMER'),
                     customerId: table === 'staff' ? null : row.customer_id,
@@ -327,14 +329,60 @@ export class AuthService {
         return null;
     }
 
-    private preferredChallengeContact(identity: { email?: string | null; phone?: string | null }, fallback?: string): { contact: string; type: 'sms' | 'email' } | null {
+    private preferredChallengeContact(
+        identity: { email?: string | null; phone?: string | null; nationality?: string | null },
+        fallback?: string,
+        preferFallbackInput = false,
+    ): { contact: string; type: 'sms' | 'email' } | null {
         const phone = String(identity.phone || '').trim();
         const email = String(identity.email || '').trim();
         const fallbackValue = String(fallback || '').trim();
+        if (fallbackValue.includes('@')) {
+            const normalizedFallbackEmail = fallbackValue.toLowerCase();
+            if (email && email.toLowerCase() === normalizedFallbackEmail) {
+                return { contact: email, type: 'email' };
+            }
+        } else if (fallbackValue) {
+            const normalizedFallbackPhone = this.normalizePhoneIdentifier(fallbackValue);
+            if (phone && this.normalizePhoneIdentifier(phone) === normalizedFallbackPhone) {
+                return { contact: phone, type: 'sms' };
+            }
+        }
+        const nationality = String(identity.nationality || '').trim().toLowerCase();
+        const normalizedPhone = phone ? this.normalizePhoneIdentifier(phone) : '';
+        const isTanzania =
+            nationality === 'tz' ||
+            nationality === 'tza' ||
+            nationality === 'tanzania' ||
+            nationality === 'united republic of tanzania' ||
+            normalizedPhone.startsWith('+255');
+        if (isTanzania && phone) return { contact: phone, type: 'sms' };
+        if (!isTanzania && email) return { contact: email, type: 'email' };
+        if (preferFallbackInput && fallbackValue) {
+            return { contact: fallbackValue, type: fallbackValue.includes('@') ? 'email' : 'sms' };
+        }
         if (phone) return { contact: phone, type: 'sms' };
         if (email) return { contact: email, type: 'email' };
         if (fallbackValue) return { contact: fallbackValue, type: fallbackValue.includes('@') ? 'email' : 'sms' };
         return null;
+    }
+
+    private isTanzaniaIdentity(identity: { phone?: string | null; nationality?: string | null }): boolean {
+        const nationality = String(identity.nationality || '').trim().toLowerCase();
+        const phone = String(identity.phone || '').trim();
+        const normalizedPhone = phone ? this.normalizePhoneIdentifier(phone) : '';
+        return (
+            nationality === 'tz' ||
+            nationality === 'tza' ||
+            nationality === 'tanzania' ||
+            nationality === 'united republic of tanzania' ||
+            normalizedPhone.startsWith('+255')
+        );
+    }
+
+    private isPhoneIdentifier(identifier: string): boolean {
+        const value = String(identifier || '').trim();
+        return Boolean(value && !value.includes('@'));
     }
 
     private normalizeActivationContact(contact: string): { contact: string; type: 'sms' | 'email'; column: 'phone' | 'email' } {
@@ -1585,7 +1633,7 @@ export class AuthService {
         if (!this.isActiveStatus(identity.status)) {
             return { data: null, error: new Error('ACCOUNT_NOT_ACTIVE: Confirm your account before resetting the password.') };
         }
-        const challengeContact = this.preferredChallengeContact(identity, identifier);
+        const challengeContact = this.preferredChallengeContact(identity, identifier, true);
         if (!challengeContact) return { data: null, error: new Error('NO_CONTACT_AVAILABLE') };
 
         const result = await OTPService.generateAndSend(
@@ -1594,7 +1642,14 @@ export class AuthService {
             'PASSWORD_RESET',
             challengeContact.type,
             'ORBI Password Reset',
+            true,
         );
+        if (result.requestId === 'THROTTLED') {
+            return { data: null, error: new Error('OTP_THROTTLED: Please wait before requesting another OTP.') };
+        }
+        if (result.requestId.startsWith('ERROR_')) {
+            return { data: null, error: new Error(result.requestId) };
+        }
         return {
             data: {
                 requestId: result.requestId,

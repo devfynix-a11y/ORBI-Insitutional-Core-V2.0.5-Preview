@@ -4,6 +4,7 @@ import type { Permission, Session, UserRole } from '../types.js';
 import { IdentityGenerator } from '../services/utils.js';
 import { getOrbiDatabase } from '../services/orbiDatabase.js';
 import { OTPService } from '../backend/security/otpService.js';
+import { logger } from '../backend/infrastructure/logger.js';
 import {
   DEFAULT_INSTITUTIONAL_APP_ORIGIN,
   TRUSTED_INSTITUTIONAL_APP_ORIGINS,
@@ -49,6 +50,7 @@ const realm = () => String(process.env.ORBI_KEYCLOAK_REALM || 'orbi');
 const mobileClientId = () => String(process.env.ORBI_KEYCLOAK_MOBILE_CLIENT_ID || 'orbi-mobile');
 const realmUrl = () => `${internalUrl()}/realms/${encodeURIComponent(realm())}`;
 const adminUrl = () => `${internalUrl()}/admin/realms/${encodeURIComponent(realm())}`;
+const keycloakAuthLogger = logger.child({ component: 'keycloak_auth_service' });
 
 const permissionsForRole = (role: UserRole): Permission[] => {
   const common: Permission[] = ['auth.login', 'auth.logout', 'auth.refresh', 'user.read', 'user.update'];
@@ -164,6 +166,15 @@ export class KeycloakAuthService {
     });
   }
 
+  private validatePasswordPolicy(password: string): Error | null {
+    if (password.length < 8) return new Error('INVALID_PASSWORD_POLICY: Password must be at least 8 characters.');
+    if (!/[a-z]/.test(password)) return new Error('INVALID_PASSWORD_POLICY: Password must contain at least 1 lowercase letter.');
+    if (!/[A-Z]/.test(password)) return new Error('INVALID_PASSWORD_POLICY: Password must contain at least 1 uppercase letter.');
+    if (!/[0-9]/.test(password)) return new Error('INVALID_PASSWORD_POLICY: Password must contain at least 1 number.');
+    if (!/[^A-Za-z0-9]/.test(password)) return new Error('INVALID_PASSWORD_POLICY: Password must contain at least 1 special character.');
+    return null;
+  }
+
   private async setKeycloakEmailVerified(userId: string): Promise<void> {
     const subject = await this.keycloakSubjectForUser(userId);
     if (!subject) throw new Error('IDENTITY_LINK_REQUIRED');
@@ -183,6 +194,7 @@ export class KeycloakAuthService {
     id: string;
     email: string | null;
     phone: string | null;
+    nationality: string | null;
     status: string;
   } | null> {
     const normalized = identifier.trim().toLowerCase();
@@ -190,9 +202,11 @@ export class KeycloakAuthService {
       id: string;
       email: string | null;
       phone: string | null;
+      nationality: string | null;
       status: string;
     }>(
       `SELECT au.id, au.email, au.phone,
+              COALESCE(u.nationality, au.raw_user_meta_data->>'nationality', 'Tanzania') AS nationality,
               COALESCE(u.account_status, au.raw_user_meta_data->>'account_status', 'active') AS status
        FROM auth.users au
        LEFT JOIN public.users u ON u.id = au.id
@@ -209,6 +223,83 @@ export class KeycloakAuthService {
       return `${local.slice(0, 2)}***@${domain}`;
     }
     return contact.length > 4 ? `${contact.slice(0, 3)}***${contact.slice(-2)}` : '***';
+  }
+
+  private normalizePhoneIdentifier(identifier: string): string {
+    const value = String(identifier || '').trim();
+    if (!value || value.includes('@')) return value;
+    return value.startsWith('+') ? value : `+${value.replace(/\s/g, '')}`;
+  }
+
+  private preferredChallengeContact(
+    identity: {
+      email?: string | null;
+      phone?: string | null;
+      nationality?: string | null;
+    },
+    fallback?: string,
+    preferFallbackInput = false,
+  ): { contact: string; type: 'sms' | 'email' } | null {
+    const phone = String(identity.phone || '').trim();
+    const email = String(identity.email || '').trim();
+    const fallbackValue = String(fallback || '').trim();
+    if (fallbackValue.includes('@')) {
+      const normalizedFallbackEmail = fallbackValue.toLowerCase();
+      if (email && email.toLowerCase() === normalizedFallbackEmail) {
+        return { contact: email, type: 'email' };
+      }
+    } else if (fallbackValue) {
+      const normalizedFallbackPhone = this.normalizePhoneIdentifier(fallbackValue);
+      if (phone && this.normalizePhoneIdentifier(phone) === normalizedFallbackPhone) {
+        return { contact: phone, type: 'sms' };
+      }
+    }
+    const nationality = String(identity.nationality || '').trim().toLowerCase();
+    const normalizedPhone = phone ? this.normalizePhoneIdentifier(phone) : '';
+    const isTanzania =
+      nationality === 'tz' ||
+      nationality === 'tza' ||
+      nationality === 'tanzania' ||
+      nationality === 'united republic of tanzania' ||
+      normalizedPhone.startsWith('+255');
+    if (isTanzania && phone) return { contact: phone, type: 'sms' };
+    if (!isTanzania && email) return { contact: email, type: 'email' };
+    if (preferFallbackInput && fallbackValue) {
+      return {
+        contact: fallbackValue,
+        type: fallbackValue.includes('@') ? 'email' : 'sms',
+      };
+    }
+    if (email) return { contact: email, type: 'email' };
+    if (phone) return { contact: phone, type: 'sms' };
+    if (fallbackValue) {
+      return {
+        contact: fallbackValue,
+        type: fallbackValue.includes('@') ? 'email' : 'sms',
+      };
+    }
+    return null;
+  }
+
+  private isTanzaniaIdentity(identity: {
+    phone?: string | null;
+    nationality?: string | null;
+  }): boolean {
+    const nationality = String(identity.nationality || '').trim().toLowerCase();
+    const phone = String(identity.phone || '').trim();
+    const normalizedPhone = phone ? this.normalizePhoneIdentifier(phone) : '';
+    return (
+      nationality === 'tz' ||
+      nationality === 'tza' ||
+      nationality === 'tanzania' ||
+      nationality === 'united republic of tanzania' ||
+      normalizedPhone.startsWith('+255')
+    );
+  }
+
+  private isPhoneIdentifier(identifier: string): boolean {
+    const value = String(identifier || '').trim();
+    return Boolean(value && !value.includes('@'));
   }
 
   private async getIdentity(userId: string): Promise<IdentityRecord | null> {
@@ -236,8 +327,8 @@ export class KeycloakAuthService {
       return linked.rows[0].user_id;
     }
 
-    const email = String(claims.email || '').trim().toLowerCase();
-    if (!email || claims.email_verified !== true) return null;
+    const email = String(claims.email || claims.preferred_username || '').trim().toLowerCase();
+    if (!email || !email.includes('@')) return null;
     const matches = await getOrbiDatabase().query<{ id: string }>(
       `SELECT id FROM auth.users WHERE lower(email) = $1 LIMIT 2`,
       [email],
@@ -248,7 +339,11 @@ export class KeycloakAuthService {
          provider, provider_subject, user_id, provider_username,
          provider_email, last_authenticated_at
        ) VALUES ($1, $2, $3, $4, $5, NOW())
-       ON CONFLICT (provider, provider_subject) DO NOTHING`,
+       ON CONFLICT (provider, provider_subject) DO UPDATE SET
+         user_id = EXCLUDED.user_id,
+         provider_username = EXCLUDED.provider_username,
+         provider_email = EXCLUDED.provider_email,
+         last_authenticated_at = NOW()`,
       [provider, subject, matches.rows[0].id, String(claims.preferred_username || ''), email],
     );
     return matches.rows[0].id;
@@ -419,6 +514,17 @@ export class KeycloakAuthService {
         [provider, keycloakUserId, userId, normalizedEmail, normalizedEmail],
       );
       await client.query('COMMIT');
+      let activationChallenge: Awaited<ReturnType<typeof OTPService.generateAndSend>> | null = null;
+      if (accountStatus !== 'active') {
+        activationChallenge = await OTPService.generateAndSend(
+          userId,
+          normalizedEmail,
+          'ACCOUNT_ACTIVATION',
+          'email',
+          'ORBI Account Activation',
+          true,
+        );
+      }
       return {
         data: {
           user: {
@@ -428,6 +534,15 @@ export class KeycloakAuthService {
             account_status: accountStatus,
           },
           session: null,
+          activation: accountStatus === 'active' ? null : {
+            required: true,
+            requestId: activationChallenge?.requestId,
+            deliveryType: activationChallenge?.deliveryType,
+            deliveryContact: this.maskContact(
+              activationChallenge?.deliveryContact || normalizedEmail,
+            ),
+            expiresInSeconds: 300,
+          },
         },
         error: null,
       };
@@ -446,21 +561,67 @@ export class KeycloakAuthService {
       const { payload } = await jwtVerify(token, this.jwks, {
         algorithms: ['RS256'],
         issuer: issuer(),
-        audience: String(process.env.ORBI_KEYCLOAK_AUDIENCE || 'orbi-core'),
       });
-      if (!payload.sub || !payload.jti) return null;
+      const azp = String(payload.azp || '');
+      const aud = Array.isArray(payload.aud)
+        ? payload.aud.map(String)
+        : payload.aud
+          ? [String(payload.aud)]
+          : [];
+      const expectedAudience = String(process.env.ORBI_KEYCLOAK_AUDIENCE || '').trim();
+      const allowedClientIds = new Set([
+        mobileClientId(),
+        'orbi-core',
+        ...(expectedAudience ? [expectedAudience] : []),
+      ]);
+      const clientAllowed =
+        (azp && allowedClientIds.has(azp)) ||
+        aud.some((value) => allowedClientIds.has(value));
+      if (!clientAllowed) {
+        keycloakAuthLogger.warn('keycloak.session_client_rejected', {
+          azp,
+          aud,
+        });
+        return null;
+      }
+      if (!payload.sub) {
+        keycloakAuthLogger.warn('keycloak.session_missing_subject');
+        return null;
+      }
+      if (!payload.jti) {
+        keycloakAuthLogger.warn('keycloak.session_missing_jti', {
+          sub: String(payload.sub),
+        });
+        return null;
+      }
       const revoked = await getOrbiDatabase().query(
         `SELECT 1 FROM orbi_auth.revoked_access_tokens
-         WHERE jti = $1::uuid AND expires_at > NOW()`,
-        [payload.jti],
+         WHERE jti::text = $1 AND expires_at > NOW()`,
+        [String(payload.jti)],
       );
       if (revoked.rows.length > 0) return null;
       const userId = await this.resolveOrbiUserId(payload);
-      if (!userId) return null;
+      if (!userId) {
+        keycloakAuthLogger.warn('keycloak.session_identity_link_missing', {
+          sub: String(payload.sub),
+          email: String(payload.email || payload.preferred_username || ''),
+          azp,
+        });
+        return null;
+      }
       const identity = await this.getIdentity(userId);
-      if (!identity || ['blocked', 'frozen'].includes(identity.account_status.toLowerCase())) return null;
+      if (!identity || ['blocked', 'frozen'].includes(identity.account_status.toLowerCase())) {
+        keycloakAuthLogger.warn('keycloak.session_identity_unavailable', {
+          user_id: userId,
+          status: identity?.account_status,
+        });
+        return null;
+      }
       return this.toSession(identity, token, payload, refreshToken);
-    } catch {
+    } catch (error: any) {
+      keycloakAuthLogger.warn('keycloak.session_verify_failed', {
+        error: String(error?.message || error),
+      });
       return null;
     }
   }
@@ -488,9 +649,9 @@ export class KeycloakAuthService {
           if (userId) {
             await getOrbiDatabase().query(
               `INSERT INTO orbi_auth.revoked_access_tokens (jti, user_id, expires_at, reason)
-               VALUES ($1::uuid, $2, to_timestamp($3), 'logout')
+               VALUES ($1, $2, to_timestamp($3), 'logout')
                ON CONFLICT (jti) DO NOTHING`,
-              [claims.jti, userId, claims.exp],
+              [String(claims.jti), userId, claims.exp],
             );
           }
         }
@@ -514,21 +675,27 @@ export class KeycloakAuthService {
     if (identity.status.toLowerCase() !== 'active') {
       return { data: null, error: new Error('ACCOUNT_NOT_ACTIVE: Confirm your account before resetting the password.') };
     }
-    const contact = identity.email || identity.phone;
-    if (!contact) return { data: null, error: new Error('NO_CONTACT_AVAILABLE') };
-    const type = contact.includes('@') ? 'email' : 'sms';
+    const challengeContact = this.preferredChallengeContact(identity, identifier, true);
+    if (!challengeContact) return { data: null, error: new Error('NO_CONTACT_AVAILABLE') };
     const result = await OTPService.generateAndSend(
       identity.id,
-      contact,
+      challengeContact.contact,
       'PASSWORD_RESET',
-      type,
+      challengeContact.type,
       'ORBI Password Reset',
+      true,
     );
+    if (result.requestId === 'THROTTLED') {
+      return { data: null, error: new Error('OTP_THROTTLED: Please wait before requesting another OTP.') };
+    }
+    if (result.requestId.startsWith('ERROR_')) {
+      return { data: null, error: new Error(result.requestId) };
+    }
     return {
       data: {
         requestId: result.requestId,
         deliveryType: result.deliveryType,
-        deliveryContact: this.maskContact(result.deliveryContact || contact),
+        deliveryContact: this.maskContact(result.deliveryContact || challengeContact.contact),
         expiresInSeconds: 300,
       },
       error: null,
@@ -544,11 +711,21 @@ export class KeycloakAuthService {
     if (!identifier || !requestId || !code) {
       return { data: null, error: new Error('PASSWORD_RESET_CHALLENGE_REQUIRED') };
     }
+    const passwordPolicyError = this.validatePasswordPolicy(password);
+    if (passwordPolicyError) return { data: null, error: passwordPolicyError };
     const identity = await this.findChallengeIdentity(identifier);
     if (!identity) return { data: null, error: new Error('IDENTITY_NOT_FOUND') };
     const valid = await OTPService.verify(requestId, code, identity.id);
     if (!valid) return { data: null, error: new Error('INVALID_OTP') };
-    await this.setKeycloakPassword(identity.id, password);
+    try {
+      await this.setKeycloakPassword(identity.id, password);
+    } catch (error: any) {
+      const message = String(error?.message || error || '');
+      if (message.toLowerCase().includes('invalid password')) {
+        return { data: null, error: new Error(`INVALID_PASSWORD_POLICY: ${message}`) };
+      }
+      throw error;
+    }
     return { data: { userId: identity.id }, error: null };
   }
 

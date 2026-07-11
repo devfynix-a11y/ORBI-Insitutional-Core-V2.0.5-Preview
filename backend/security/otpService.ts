@@ -152,7 +152,14 @@ export class OTPService {
         targets.push({ type, contact: normalizedContact });
     }
 
-    static async generateAndSend(userId: string, contact: string, action: string, type: OTPDeliveryType = 'sms', deviceName?: string): Promise<{ requestId: string, code?: string, deliveryType?: string, deliveryContact?: string, deliverySent?: boolean }> {
+    static async generateAndSend(
+        userId: string,
+        contact: string,
+        action: string,
+        type: OTPDeliveryType = 'sms',
+        deviceName?: string,
+        preferRequestedContact = false,
+    ): Promise<{ requestId: string, code?: string, deliveryType?: string, deliveryContact?: string, deliverySent?: boolean }> {
         // 1. Throttling check (60 seconds)
         const throttleKey = this.THROTTLE_PREFIX + userId + ':' + action;
         const isThrottled = await RedisManager.get(throttleKey);
@@ -188,6 +195,8 @@ export class OTPService {
             await this.saveToDB(userId, requestId, record);
         }
 
+        const requestedType = type;
+        const requestedContact = contact;
         let actualType = type;
         let actualContact = contact;
         let bestPhone = contact && !contact.includes('@') ? contact : '';
@@ -264,16 +273,17 @@ export class OTPService {
                 email = resolvedIdentity.email || email;
                 deviceName = resolvedIdentity.deviceName;
 
-                isTanzania = country.toLowerCase().includes('tanzania') || 
-                                   country.toLowerCase().includes('tz') || 
-                                   (phone && phone.startsWith('+255')) ||
-                                   (profile?.id_type === 'NIDA');
-
                 bestPhone = phone || bestPhone;
                 bestEmail = email || bestEmail;
+                isTanzania = country.toLowerCase().includes('tanzania') ||
+                                   country.toLowerCase().includes('tz') ||
+                                   (phone && phone.startsWith('+255')) ||
+                                   (bestPhone && bestPhone.startsWith('+255')) ||
+                                   (contact && !contact.includes('@') && contact.trim().startsWith('+255')) ||
+                                   (profile?.id_type === 'NIDA');
 
-                // User Request: Refined channel selection based on user origin and identity
-                // Tanzania -> SMS/Push. Others -> Email/WhatsApp/Push.
+                // Country-aware dispatch policy:
+                // Tanzania accounts prefer SMS. Non-Tanzania accounts use email.
                 if (isTanzania) {
                     if (bestPhone) {
                         actualType = 'sms';
@@ -286,19 +296,12 @@ export class OTPService {
                         actualContact = bestEmail;
                     }
                 } else {
-                    // Non-Tanzania: Email > WhatsApp > Push > SMS
                     if (bestEmail) {
                         actualType = 'email';
                         actualContact = bestEmail;
-                    } else if (bestPhone) {
-                        actualType = 'whatsapp';
-                        actualContact = bestPhone;
                     } else if (fcmToken) {
                         actualType = 'push';
                         actualContact = fcmToken;
-                    } else if (bestPhone) {
-                        actualType = 'sms';
-                        actualContact = bestPhone;
                     }
                 }
             }
@@ -333,9 +336,29 @@ export class OTPService {
             };
             const deliveryTargets: Array<{ type: OTPDeliveryType; contact: string }> = [];
 
-            this.addDeliveryTarget(deliveryTargets, actualType, actualContact);
-            if (bestPhone && !bestPhone.includes('@')) this.addDeliveryTarget(deliveryTargets, 'sms', bestPhone);
-            if (bestEmail && bestEmail.includes('@')) this.addDeliveryTarget(deliveryTargets, 'email', bestEmail);
+            if (preferRequestedContact) {
+                this.addDeliveryTarget(deliveryTargets, requestedType, requestedContact);
+            }
+
+            if (isTanzania) {
+                if (bestPhone && !bestPhone.includes('@')) {
+                    this.addDeliveryTarget(deliveryTargets, 'sms', bestPhone);
+                } else if (actualType === 'push' && actualContact) {
+                    this.addDeliveryTarget(deliveryTargets, 'push', actualContact);
+                } else if (bestEmail && bestEmail.includes('@')) {
+                    this.addDeliveryTarget(deliveryTargets, 'email', bestEmail);
+                } else {
+                    this.addDeliveryTarget(deliveryTargets, actualType, actualContact);
+                }
+            } else {
+                if (bestEmail && bestEmail.includes('@')) {
+                    this.addDeliveryTarget(deliveryTargets, 'email', bestEmail);
+                } else if (actualType === 'push' && actualContact) {
+                    this.addDeliveryTarget(deliveryTargets, 'push', actualContact);
+                } else if (actualType === 'email' && actualContact.includes('@')) {
+                    this.addDeliveryTarget(deliveryTargets, 'email', actualContact);
+                }
+            }
 
             const normalizedTargets = deliveryTargets.map((target) => {
                 if ((target.type !== 'sms' && target.type !== 'whatsapp') || !target.contact) {
@@ -453,7 +476,8 @@ export class OTPService {
             return false;
         }
 
-        if (record.code === code) {
+        const normalizedCode = String(code || '').replace(/[\s-]/g, '').trim();
+        if (record.code === normalizedCode) {
             otpLogger.info('otp.verify_succeeded', { actor_id: userId, request_id: requestId });
             await RedisManager.delete(key);
             await this.removeFromDB(userId, requestId);

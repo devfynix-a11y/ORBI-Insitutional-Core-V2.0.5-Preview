@@ -88,7 +88,7 @@ services:
   keycloak:
     <<: *service-defaults
     image: ${ORBI_KEYCLOAK_IMAGE:?Set ORBI_KEYCLOAK_IMAGE}
-    command: start --optimized --import-realm
+    command: start --import-realm
     environment:
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
@@ -115,6 +115,8 @@ services:
       start_period: 60s
     mem_limit: 3g
     cpus: 1.5
+    ports:
+      - "127.0.0.1:8081:8080"
     networks:
       - private
       - edge
@@ -205,12 +207,17 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
+      ORBI_TLS_ENABLED: ${ORBI_CORE_TLS_ENABLED:-false}
       ORBI_AUTH_PROVIDER: keycloak
+      ORBI_INTERNAL_MTLS_SOURCE: ${ORBI_CORE_INTERNAL_MTLS_SOURCE:-proxy}
       ORBI_INTERNAL_MTLS_MODE: ${ORBI_INTERNAL_MTLS_MODE:-required}
       ORBI_ALLOW_HMAC_ONLY_INTERNAL_REQUESTS: ${ORBI_ALLOW_HMAC_ONLY_INTERNAL_REQUESTS:-false}
       ORBI_ALLOW_PRIVATE_HTTP_INTERNAL_REQUESTS: ${ORBI_ALLOW_PRIVATE_HTTP_INTERNAL_REQUESTS:-false}
       ORBI_REQUIRE_SIGNED_INTERNAL_REQUESTS: ${ORBI_REQUIRE_SIGNED_INTERNAL_REQUESTS:-true}
       ORBI_ALLOW_LEGACY_INTERNAL_WORKER_AUTH: ${ORBI_ALLOW_LEGACY_INTERNAL_WORKER_AUTH:-false}
+      ORBI_TLS_CERT_PATH: ${ORBI_TLS_CERT_PATH:-/etc/orbi/tls/fullchain.pem}
+      ORBI_TLS_KEY_PATH: ${ORBI_TLS_KEY_PATH:-/etc/orbi/tls/privkey.pem}
+      ORBI_TLS_CA_PATH: ${ORBI_TLS_CA_PATH:-/etc/orbi/tls/fullchain.pem}
       ORBI_KEYCLOAK_INTERNAL_URL: http://keycloak:8080
       ORBI_KEYCLOAK_ISSUER: ${ORBI_KEYCLOAK_PUBLIC_URL}/realms/${ORBI_KEYCLOAK_REALM:-orbi}
       ORBI_KEYCLOAK_AUDIENCE: ${ORBI_KEYCLOAK_AUDIENCE:-orbi-core}
@@ -247,6 +254,8 @@ services:
     cpus: 3.0
     expose:
       - "3000"
+    ports:
+      - "127.0.0.1:3000:3000"
     healthcheck:
       test:
         [
@@ -307,6 +316,8 @@ services:
       - ../../../ORBI PAY GATEWAY/config/services.example.json:/app/config/services.json:ro
     expose:
       - "3100"
+    ports:
+      - "127.0.0.1:3100:3100"
     healthcheck:
       test:
         [
@@ -335,10 +346,8 @@ services:
         condition: service_healthy
     ports:
       - "80:80"
-      - "443:443"
     volumes:
       - ./Gateway/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ${ORBI_TLS_CERT_DIRECTORY:?Set ORBI_TLS_CERT_DIRECTORY}:/etc/orbi/tls:ro
     mem_limit: 512m
     cpus: 0.5
     profiles:
