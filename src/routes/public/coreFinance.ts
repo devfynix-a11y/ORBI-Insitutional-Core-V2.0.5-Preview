@@ -201,6 +201,10 @@ const buildTransactionReport = (transactions: any[], range: ReturnType<typeof re
   const scoped = (transactions || []).filter((transaction: any) => {
     const timestamp = transactionTimestamp(transaction);
     return timestamp ? timestamp >= range.start && timestamp <= range.end : false;
+  }).sort((a: any, b: any) => {
+    const at = transactionTimestamp(a)?.getTime() || 0;
+    const bt = transactionTimestamp(b)?.getTime() || 0;
+    return at - bt;
   });
 
   const summary = scoped.reduce((acc: any, transaction: any) => {
