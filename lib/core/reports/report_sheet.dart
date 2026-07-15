@@ -743,9 +743,13 @@ class _ReportPreviewCard extends StatelessWidget {
             return _row([
               ReportUtils.formatDateTime(tx['created_at'] ?? tx['date']),
               _cleanName(
-                tx['source_wallet_name'] ??
+                tx['source_display_name'] ??
+                    tx['sourceDisplayName'] ??
+                    tx['from_display_name'] ??
+                    tx['fromDisplayName'] ??
                     tx['from_name'] ??
                     tx['sender_name'] ??
+                    tx['source_wallet_name'] ??
                     'Orbi',
               ),
               _destinationName(tx),
