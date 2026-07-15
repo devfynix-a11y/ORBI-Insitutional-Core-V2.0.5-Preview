@@ -47,6 +47,59 @@ class OrbiCardStyles {
     }
   }
 
+  static LinearGradient _darkVariantGradient(OrbiGradientCardVariant variant) {
+    switch (variant) {
+      case OrbiGradientCardVariant.sunset:
+        return const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color(0xFF2B1B24),
+            Color(0xFF533020),
+            Color(0xFF182633),
+            Color(0xFF071018),
+          ],
+          stops: [0.0, 0.34, 0.72, 1.0],
+        );
+      case OrbiGradientCardVariant.neon:
+        return const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color(0xFF28205B),
+            Color(0xFF1B4B73),
+            Color(0xFF112A3A),
+            Color(0xFF071018),
+          ],
+          stops: [0.0, 0.38, 0.72, 1.0],
+        );
+      case OrbiGradientCardVariant.passion:
+        return const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color(0xFF401B35),
+            Color(0xFF6A294C),
+            Color(0xFF182633),
+            Color(0xFF071018),
+          ],
+          stops: [0.0, 0.35, 0.72, 1.0],
+        );
+      case OrbiGradientCardVariant.oceanic:
+        return const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color(0xFF0E4B64),
+            Color(0xFF116E86),
+            Color(0xFF123044),
+            Color(0xFF071018),
+          ],
+          stops: [0.0, 0.36, 0.70, 1.0],
+        );
+    }
+  }
+
   static Color lightVariantAccent(OrbiGradientCardVariant variant) {
     switch (variant) {
       case OrbiGradientCardVariant.sunset:
@@ -66,17 +119,7 @@ class OrbiCardStyles {
   }) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return isDark
-        ? const LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              Color(0xFF2596BE),
-              Color(0xFF196884),
-              Color(0xFF15232E),
-              Color(0xFF0B131A),
-            ],
-            stops: [0.0, 0.34, 0.70, 1.0],
-          )
+        ? _darkVariantGradient(variant)
         : _lightVariantGradient(variant);
   }
 
@@ -90,7 +133,7 @@ class OrbiCardStyles {
     final ui = OrbiTheme.uiOf(context);
     final effectiveBorder =
         borderColor ??
-        (isDark ? ui.borderStrong.withValues(alpha: 0.42) : Colors.transparent);
+        (isDark ? ui.accent.withValues(alpha: 0.30) : Colors.transparent);
 
     return BoxDecoration(
       gradient: primaryHeroGradient(context, variant: variant),
@@ -99,12 +142,28 @@ class OrbiCardStyles {
       boxShadow: isDark
           ? [
               BoxShadow(
-                color: const Color(0xFF0F6C7A).withValues(alpha: 0.12),
-                blurRadius: 12,
+                color: Colors.black.withValues(alpha: 0.38),
+                blurRadius: 30,
+                offset: const Offset(0, 18),
+              ),
+              BoxShadow(
+                color: lightVariantAccent(variant).withValues(alpha: 0.14),
+                blurRadius: 34,
                 offset: const Offset(0, 4),
               ),
             ]
-          : null,
+          : [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.12),
+                blurRadius: 26,
+                offset: const Offset(0, 14),
+              ),
+              BoxShadow(
+                color: lightVariantAccent(variant).withValues(alpha: 0.16),
+                blurRadius: 34,
+                offset: const Offset(0, 8),
+              ),
+            ],
     );
   }
 
@@ -153,7 +212,7 @@ class OrbiCardStyles {
       border: Border.all(
         color: isDark
             ? resolvedAccent.withValues(alpha: 0.14)
-            : Colors.transparent,
+            : resolvedAccent.withValues(alpha: branded ? 0.08 : 0.05),
       ),
       boxShadow: isDark
           ? [
@@ -167,6 +226,20 @@ class OrbiCardStyles {
                   color: resolvedAccent.withValues(alpha: 0.08),
                   blurRadius: 24,
                   offset: const Offset(0, 5),
+                ),
+            ]
+          : elevated
+          ? [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.075),
+                blurRadius: branded ? 22 : 16,
+                offset: Offset(0, branded ? 12 : 8),
+              ),
+              if (branded)
+                BoxShadow(
+                  color: resolvedAccent.withValues(alpha: 0.08),
+                  blurRadius: 28,
+                  offset: const Offset(0, 7),
                 ),
             ]
           : null,
@@ -209,7 +282,7 @@ class OrbiCardStyles {
       border: Border.all(
         color: isDark
             ? accent.withValues(alpha: hero ? 0.22 : 0.14)
-            : Colors.transparent,
+            : accent.withValues(alpha: hero ? 0.10 : 0.06),
       ),
       boxShadow: isDark
           ? [
@@ -225,7 +298,19 @@ class OrbiCardStyles {
                   offset: const Offset(0, 4),
                 ),
             ]
-          : null,
+          : [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: hero ? 0.12 : 0.065),
+                blurRadius: hero ? 28 : 18,
+                offset: Offset(0, hero ? 16 : 9),
+              ),
+              if (hero)
+                BoxShadow(
+                  color: accent.withValues(alpha: 0.12),
+                  blurRadius: 34,
+                  offset: const Offset(0, 6),
+                ),
+            ],
     );
   }
 

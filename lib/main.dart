@@ -627,7 +627,7 @@ class _AppWithAutoLogoutState extends State<_AppWithAutoLogout>
     final auth = context.watch<AuthController>();
     final settings = context.watch<AppSettingsController>();
     final l10n = AppLocalizations.of(context)!;
-    if (auth.isLoading) {
+    if (auth.isInitializing) {
       return Scaffold(
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         body: OrbiLoadingLanding(

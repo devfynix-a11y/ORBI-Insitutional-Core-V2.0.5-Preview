@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
-import '../../../core/utils/money_format.dart';
+import '../../../core/utils/session_currency.dart';
 import '../data/wallet_models.dart';
 import '../data/wallet_service.dart';
 import 'wallet_error_localizer.dart';
@@ -112,13 +112,7 @@ class WalletViewModel extends ChangeNotifier {
     _session['customerId'],
   ]);
 
-  String get sessionCurrency => resolveCurrencyCode([
-    _sessionUser['currency'],
-    _sessionUser['currency_code'],
-    _sessionUser['preferred_currency'],
-    _session['currency'],
-    _session['currency_code'],
-  ]);
+  String get sessionCurrency => resolveSessionCurrency(_session);
 
   WalletRecord? get primaryInternalVault {
     for (final wallet in _wallets) {
@@ -132,7 +126,10 @@ class WalletViewModel extends ChangeNotifier {
 
   Future<void> initialize() => refresh();
 
-  Future<void> refresh({bool fromAutoRefresh = false}) async {
+  Future<void> refresh({
+    bool fromAutoRefresh = false,
+    bool forceRefresh = false,
+  }) async {
     final hadWalletsBefore = _wallets.isNotEmpty;
     final shouldShowLoading = !fromAutoRefresh || !hadWalletsBefore;
 
@@ -146,7 +143,9 @@ class WalletViewModel extends ChangeNotifier {
     }
 
     try {
-      final wallets = await _walletService.getWallets();
+      final wallets = await _walletService.getWallets(
+        forceRefresh: forceRefresh || fromAutoRefresh,
+      );
       final nextWallets = wallets.map(WalletRecord.fromJson).toList();
       final walletsChanged = !_walletListsEqual(_wallets, nextWallets);
       final previousError = _error;
@@ -198,7 +197,7 @@ class WalletViewModel extends ChangeNotifier {
         return;
       }
     }
-    unawaited(refresh(fromAutoRefresh: true));
+    unawaited(refresh(fromAutoRefresh: true, forceRefresh: true));
   }
 
   WalletTransactionState transactionsFor(String walletId) {

@@ -12,7 +12,7 @@ class UserModel {
   });
 
   factory UserModel.fromJson(Map<dynamic, dynamic> json) {
-    final raw = Map<String, dynamic>.from(json);
+    final raw = _normalizeUserCurrency(Map<String, dynamic>.from(json));
 
     String resolvedId = '';
     for (final key in ['id', 'user_id', 'userId', 'uid']) {
@@ -61,6 +61,71 @@ class UserModel {
   Map<String, dynamic> toJson() => rawData;
 }
 
+Map<String, dynamic> _normalizeUserCurrency(Map<String, dynamic> raw) {
+  final currency = _resolveCurrencyFrom(raw);
+  if (currency.isNotEmpty) {
+    raw['currency'] = currency;
+    raw['currency_code'] = currency;
+    raw['preferred_currency'] = currency;
+  }
+  return raw;
+}
+
+String _resolveCurrencyFrom(Map<dynamic, dynamic> source) {
+  final values = <dynamic>[
+    source['currency'],
+    source['currency_code'],
+    source['currencyCode'],
+    source['preferred_currency'],
+    source['preferredCurrency'],
+    source['account_currency'],
+    source['accountCurrency'],
+    source['default_currency'],
+    source['defaultCurrency'],
+  ];
+
+  void addFrom(dynamic value) {
+    if (value is Map) {
+      values.add(_resolveCurrencyFrom(value));
+    } else if (value is List) {
+      for (final item in value) {
+        addFrom(item);
+      }
+    }
+  }
+
+  for (final key in const [
+    'account',
+    'primary_account',
+    'primaryAccount',
+    'wallet',
+    'primary_wallet',
+    'primaryWallet',
+    'metadata',
+  ]) {
+    addFrom(source[key]);
+  }
+
+  for (final key in const [
+    'accounts',
+    'wallets',
+    'walletAccounts',
+    'wallet_accounts',
+    'balances',
+    'vaults',
+    'platformVaults',
+    'platform_vaults',
+  ]) {
+    addFrom(source[key]);
+  }
+
+  for (final value in values) {
+    final currency = value?.toString().trim().toUpperCase() ?? '';
+    if (currency.isNotEmpty) return currency;
+  }
+  return '';
+}
+
 class SessionModel {
   final String accessToken;
   final UserModel user;
@@ -76,6 +141,13 @@ class SessionModel {
 
   Map<String, dynamic> toJson() => {
     'access_token': accessToken,
+    if ((user.rawData['currency']?.toString().trim().isNotEmpty ?? false))
+      'currency': user.rawData['currency'],
+    if ((user.rawData['currency_code']?.toString().trim().isNotEmpty ?? false))
+      'currency_code': user.rawData['currency_code'],
+    if ((user.rawData['preferred_currency']?.toString().trim().isNotEmpty ??
+        false))
+      'preferred_currency': user.rawData['preferred_currency'],
     'user': user.toJson(),
   };
 }

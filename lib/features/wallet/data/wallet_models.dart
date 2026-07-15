@@ -53,10 +53,7 @@ class WalletRecord {
     return WalletRecord(
       raw: Map<String, dynamic>.from(json),
       metadata: metadata,
-      id: _firstNonEmptyString([
-        json['wallet_id'],
-        json['id'],
-      ], fallback: '--'),
+      id: _firstNonEmptyString([json['wallet_id'], json['id']], fallback: '--'),
       name: _firstNonEmptyString([
         json['name'],
         json['wallet_name'],
@@ -65,11 +62,15 @@ class WalletRecord {
       currency: _firstNonEmptyString([
         json['currency'],
         json['currency_code'],
+        json['currencyCode'],
+        json['asset_currency'],
+        json['assetCurrency'],
+        metadata['currency'],
+        metadata['currency_code'],
+        metadata['currencyCode'],
+        metadata['asset_currency'],
       ]),
-      type: _firstNonEmptyString([
-        json['wallet_type'],
-        json['type'],
-      ]),
+      type: _firstNonEmptyString([json['wallet_type'], json['type']]),
       tier: _firstNonEmptyString([
         json['management_tier'],
         json['managementTier'],
@@ -169,56 +170,47 @@ class WalletRecord {
         looksDilPesa;
   }
 
-  String get displayLabel =>
-      isInternal
-          ? 'Operating Wallet'
-          : _firstNonEmptyString(
-              [metadata['product_name'], metadata['productName']],
-              fallback: name,
-            );
+  String get displayLabel => isInternal
+      ? 'Operating Wallet'
+      : _firstNonEmptyString([
+          metadata['product_name'],
+          metadata['productName'],
+        ], fallback: name);
 
-  String get cardType => _firstNonEmptyString(
-        [metadata['card_type'], metadata['cardType']],
-        fallback: 'Virtual Master',
-      );
+  String get cardType => _firstNonEmptyString([
+    metadata['card_type'],
+    metadata['cardType'],
+  ], fallback: 'Virtual Master');
 
-  String get displayName => _firstNonEmptyString(
-        [metadata['display_name'], metadata['displayName']],
-        fallback: name,
-      );
+  String get displayName => _firstNonEmptyString([
+    metadata['display_name'],
+    metadata['displayName'],
+  ], fallback: name);
 
-  String get linkedCustomerId => _firstNonEmptyString(
-        [
-          metadata['linked_customer_id'],
-          metadata['linkedCustomerId'],
-          metadata['account_number'],
-          accountNumber,
-        ],
-      );
+  String get linkedCustomerId => _firstNonEmptyString([
+    metadata['linked_customer_id'],
+    metadata['linkedCustomerId'],
+    metadata['account_number'],
+    accountNumber,
+  ]);
 
   String? get providerIcon {
-    final value = _firstNonEmptyString(
-      [
-        metadata['provider_icon'],
-        metadata['providerIcon'],
-        metadata['display_icon'],
-        metadata['displayIcon'],
-        metadata['icon'],
-      ],
-      fallback: '',
-    );
+    final value = _firstNonEmptyString([
+      metadata['provider_icon'],
+      metadata['providerIcon'],
+      metadata['display_icon'],
+      metadata['displayIcon'],
+      metadata['icon'],
+    ], fallback: '');
     return value.isEmpty ? null : value;
   }
 
   String? get providerColor {
-    final value = _firstNonEmptyString(
-      [
-        metadata['provider_color'],
-        metadata['providerColor'],
-        metadata['color'],
-      ],
-      fallback: '',
-    );
+    final value = _firstNonEmptyString([
+      metadata['provider_color'],
+      metadata['providerColor'],
+      metadata['color'],
+    ], fallback: '');
     return value.isEmpty ? null : value;
   }
 
@@ -283,8 +275,7 @@ class WalletRecord {
     final metaLocked =
         metadata['is_locked'] ?? metadata['isLocked'] ?? metadata['locked'];
     if (metaLocked == true) return true;
-    final metaFrozen =
-        metadata['is_frozen'] ?? metadata['isFrozen'] ?? false;
+    final metaFrozen = metadata['is_frozen'] ?? metadata['isFrozen'] ?? false;
     if (metaFrozen == true) return true;
     return false;
   }
@@ -385,10 +376,7 @@ class WalletTransactionRecord {
         json['currency_code'],
         json['asset_currency'],
       ], fallback: fallbackCurrency),
-      createdAt: _firstNonEmptyString([
-        json['created_at'],
-        json['timestamp'],
-      ]),
+      createdAt: _firstNonEmptyString([json['created_at'], json['timestamp']]),
       lifecycle: _resolveLifecycle(json),
       direction: _resolveDirection(kind),
     );
@@ -455,10 +443,7 @@ bool _isDebitKind(String raw) {
       raw.contains('payment');
 }
 
-String _firstNonEmptyString(
-  Iterable<dynamic> values, {
-  String fallback = '',
-}) {
+String _firstNonEmptyString(Iterable<dynamic> values, {String fallback = ''}) {
   for (final value in values) {
     if (value == null) continue;
     final text = value.toString().trim();

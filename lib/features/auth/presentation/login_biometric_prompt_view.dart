@@ -30,7 +30,7 @@ class _LoginBiometricPromptView extends StatelessWidget {
 
     return Scaffold(
       body: OrbiLoadingOverlay(
-        loading: biometricLoginLoading || auth.biometricInFlight,
+        loading: auth.biometricInFlight,
         message: l10n.loginAuthenticatingSecurely,
         statusMessage: statusMessage,
         statusTone: statusTone,
@@ -40,11 +40,7 @@ class _LoginBiometricPromptView extends StatelessWidget {
             child: OrbiResponsiveContent(
               maxWidth: 360,
               alignment: Alignment.center,
-              padding: OrbiResponsive.pagePadding(
-                context,
-                top: 20,
-                bottom: 20,
-              ),
+              padding: OrbiResponsive.pagePadding(context, top: 20, bottom: 20),
               child: Card(
                 color: ui.card,
                 elevation: 8,

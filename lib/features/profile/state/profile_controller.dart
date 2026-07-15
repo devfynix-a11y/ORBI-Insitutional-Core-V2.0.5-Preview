@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../core/state/app_runtime_cache.dart';
 import '../../../core/utils/user_facing_error.dart';
 import '../data/profile_service.dart';
 
@@ -22,7 +23,10 @@ class ProfileController extends ChangeNotifier {
   bool get isSubmittingKyc => _isSubmittingKyc;
   bool get isScanningKyc => _isScanningKyc;
   bool get isSaving =>
-      _isUpdatingProfile || _isUploadingAvatar || _isSubmittingKyc || _isScanningKyc;
+      _isUpdatingProfile ||
+      _isUploadingAvatar ||
+      _isSubmittingKyc ||
+      _isScanningKyc;
   int get avatarRefreshTick => _avatarRefreshTick;
   Map<String, dynamic>? get lastKycScan => _lastKycScan;
   String? get error => _error;
@@ -34,6 +38,7 @@ class ProfileController extends ChangeNotifier {
     try {
       final data = await _service.fetchProfile();
       _profile = data;
+      AppRuntimeCache.rememberProfile(data);
     } catch (e) {
       _error = UserFacingError.from(
         e,
@@ -52,6 +57,7 @@ class ProfileController extends ChangeNotifier {
     try {
       final updated = await _service.updateProfile(payload);
       _profile = {..._profile, ...updated};
+      AppRuntimeCache.rememberProfile(_profile);
       return true;
     } catch (e) {
       _error = UserFacingError.from(
@@ -75,6 +81,7 @@ class ProfileController extends ChangeNotifier {
       // Fetch authoritative profile to capture latest avatar URL shape/path.
       final fresh = await _service.fetchProfile();
       _profile = {..._profile, ...fresh};
+      AppRuntimeCache.rememberProfile(_profile);
       _avatarRefreshTick = DateTime.now().millisecondsSinceEpoch;
       return true;
     } catch (e) {
@@ -108,6 +115,7 @@ class ProfileController extends ChangeNotifier {
       _profile = {..._profile, ...updated};
       final fresh = await _service.fetchProfile();
       _profile = {..._profile, ...fresh};
+      AppRuntimeCache.rememberProfile(_profile);
       return true;
     } catch (e) {
       _error = UserFacingError.from(

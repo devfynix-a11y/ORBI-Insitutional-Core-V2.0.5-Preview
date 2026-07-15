@@ -8,8 +8,11 @@ class UserFacingError {
     final lower = raw.toLowerCase();
 
     if (_containsAny(lower, const [
+      'invalid_credentials',
+      'invalid credential',
       'invalid login credentials',
       'invalid credentials',
+      'authentication failed',
       'incorrect password',
       'wrong password',
       'email or password',
@@ -101,6 +104,33 @@ class UserFacingError {
     }
 
     if (_containsAny(lower, const [
+      'use_email_for_non_tz_password_reset',
+      'password reset by phone is available for tanzania accounts only',
+    ])) {
+      return 'For accounts outside Tanzania, password reset uses email only. Please enter your registered email.';
+    }
+
+    if (_containsAny(lower, const [
+      'password_recently_used',
+      'invalidpasswordhistory',
+    ])) {
+      return 'Choose a new password you have not used before.';
+    }
+
+    if (_containsAny(lower, const [
+      'invalid_password_policy',
+      'invalid password',
+      'must contain at least 1 special',
+      'must contain at least 1 uppercase',
+      'must contain at least 1 lowercase',
+      'must contain at least 1 number',
+      'password must include',
+      'password must be at least',
+    ])) {
+      return 'Password must be at least 8 characters and include uppercase, lowercase, number, and special character.';
+    }
+
+    if (_containsAny(lower, const [
       'security_challenge',
       'challenge_required',
       'step_up_required',
@@ -170,11 +200,21 @@ class UserFacingError {
       return 'Too many attempts detected. Please wait about 60 seconds before trying again.';
     }
 
-    if (_containsAny(lower, const ['500', '502', '503', '504'])) {
-      return 'Server is temporarily unavailable. Please try again shortly.';
+    if (_containsAny(lower, const [
+      'invalid_otp',
+      'invalid otp',
+      'otp invalid',
+      'wrong otp',
+      'otp expired',
+      'expired otp',
+      'verification code',
+    ])) {
+      return 'The OTP code is invalid or expired. Request a new code and try again.';
     }
 
     if (_containsAny(lower, const [
+      'identity_not_found',
+      'user not found',
       'invalid or already processed',
       'not found',
       'goal not found',
@@ -182,6 +222,21 @@ class UserFacingError {
       'no receipt image provided',
     ])) {
       return 'We could not find the requested record. Refresh and try again.';
+    }
+
+    if (_containsAny(lower, const [
+      'identity_link_required',
+      'password_reset_challenge_required',
+      'account_not_active',
+      'account_not_activated',
+      'account_unconfirmed',
+      'unconfirmed_account',
+    ])) {
+      return 'This account needs activation or identity linking before password reset can continue.';
+    }
+
+    if (_containsAny(lower, const ['500', '502', '503', '504'])) {
+      return 'Server is temporarily unavailable. Please try again shortly.';
     }
 
     if (_containsAny(lower, const [

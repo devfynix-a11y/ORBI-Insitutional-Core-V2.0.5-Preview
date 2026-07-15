@@ -282,6 +282,10 @@ class _OrbiChatbotOverlayState extends State<OrbiChatbotOverlay> {
     final mediaQuery = MediaQuery.of(context);
     final ui = OrbiTheme.uiOf(context);
     final surfaces = OrbiTheme.surfacesOf(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final triggerIconColor = isDark
+        ? const Color(0xFF7DD3FC)
+        : const Color(0xFFFFC928);
     final isCompact = mediaQuery.size.width < 720;
     final bottomSafe = mediaQuery.padding.bottom;
     final keyboardInset = mediaQuery.viewInsets.bottom;
@@ -431,156 +435,41 @@ class _OrbiChatbotOverlayState extends State<OrbiChatbotOverlay> {
                           scale: _isDraggingTrigger ? 1.08 : 1,
                           child: Transform.translate(
                             offset: Offset(0, _isDraggingTrigger ? -5 : -2),
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 220),
-                              curve: Curves.easeOutCubic,
+                            child: SizedBox(
                               width: triggerSize,
                               height: triggerSize,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: LinearGradient(
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                  colors: _isOpen
-                                      ? [
-                                          ui.cardStrong,
-                                          Color.lerp(
-                                                ui.cardStrong,
-                                                ui.accent,
-                                                0.28,
-                                              ) ??
-                                              ui.cardStrong,
-                                        ]
-                                      : [
-                                          Color.lerp(
-                                                ui.accent,
-                                                Colors.white,
-                                                0.14,
-                                              ) ??
-                                              ui.accent,
-                                          ui.accent,
-                                          Color.lerp(
-                                                ui.accent,
-                                                Colors.black,
-                                                0.20,
-                                              ) ??
-                                              ui.accent,
-                                        ],
+                              child: Center(
+                                child: AnimatedScale(
+                                  duration: const Duration(milliseconds: 180),
+                                  scale: _isOpen ? 0.92 : 1.0,
+                                  child: Icon(
+                                    _isOpen
+                                        ? Icons.close_rounded
+                                        : Icons.chat_bubble_rounded,
+                                    size: 42,
+                                    color: triggerIconColor,
+                                    shadows: [
+                                      Shadow(
+                                        color: Colors.black.withValues(
+                                          alpha: _isOpen ? 0.34 : 0.26,
+                                        ),
+                                        blurRadius: 12,
+                                        offset: const Offset(0, 6),
+                                      ),
+                                      Shadow(
+                                        color: triggerIconColor.withValues(
+                                          alpha: _isDraggingTrigger
+                                              ? (isDark ? 0.30 : 0.34)
+                                              : (isDark ? 0.18 : 0.24),
+                                        ),
+                                        blurRadius: _isDraggingTrigger
+                                            ? 26
+                                            : 18,
+                                        offset: const Offset(0, 12),
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withValues(
-                                      alpha: _isOpen ? 0.30 : 0.26,
-                                    ),
-                                    blurRadius: 10,
-                                    spreadRadius: -3,
-                                    offset: const Offset(0, 7),
-                                  ),
-                                  BoxShadow(
-                                    color: Colors.black.withValues(alpha: 0.12),
-                                    blurRadius: 22,
-                                    spreadRadius: -5,
-                                    offset: const Offset(0, 17),
-                                  ),
-                                  BoxShadow(
-                                    color: ui.accent.withValues(
-                                      alpha: _isDraggingTrigger ? 0.34 : 0.24,
-                                    ),
-                                    blurRadius: _isDraggingTrigger ? 36 : 28,
-                                    spreadRadius: _isDraggingTrigger ? 4 : 1,
-                                    offset: const Offset(0, 13),
-                                  ),
-                                ],
-                              ),
-                              child: Stack(
-                                alignment: Alignment.center,
-                                children: [
-                                  Positioned(
-                                    top: 5,
-                                    left: 12,
-                                    right: 12,
-                                    child: Container(
-                                      height: 9,
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(
-                                          999,
-                                        ),
-                                        gradient: LinearGradient(
-                                          colors: [
-                                            Colors.white.withValues(
-                                              alpha: 0.34,
-                                            ),
-                                            Colors.white.withValues(
-                                              alpha: 0.02,
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 14,
-                                    ),
-                                    child: AnimatedScale(
-                                      duration: const Duration(
-                                        milliseconds: 180,
-                                      ),
-                                      scale: _isOpen ? 0.92 : 1.0,
-                                      child: OrbiLogoV2(
-                                        width: 44,
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                                  ),
-                                  Positioned(
-                                    right: 3,
-                                    bottom: 3,
-                                    child: AnimatedSwitcher(
-                                      duration: const Duration(
-                                        milliseconds: 180,
-                                      ),
-                                      transitionBuilder: (child, animation) =>
-                                          ScaleTransition(
-                                            scale: animation,
-                                            child: FadeTransition(
-                                              opacity: animation,
-                                              child: child,
-                                            ),
-                                          ),
-                                      child: Container(
-                                        key: ValueKey<bool>(_isOpen),
-                                        width: 21,
-                                        height: 21,
-                                        decoration: BoxDecoration(
-                                          color: _isOpen
-                                              ? ui.danger
-                                              : Colors.white,
-                                          shape: BoxShape.circle,
-                                          boxShadow: [
-                                            BoxShadow(
-                                              color: Colors.black.withValues(
-                                                alpha: 0.20,
-                                              ),
-                                              blurRadius: 7,
-                                              offset: const Offset(0, 3),
-                                            ),
-                                          ],
-                                        ),
-                                        child: Icon(
-                                          _isOpen
-                                              ? Icons.close_rounded
-                                              : Icons.chat_bubble_rounded,
-                                          size: 11,
-                                          color: _isOpen
-                                              ? Colors.white
-                                              : ui.accent,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
                               ),
                             ),
                           ),

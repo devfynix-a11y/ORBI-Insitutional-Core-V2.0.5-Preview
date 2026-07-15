@@ -7,7 +7,7 @@
       "type": "dart",
       "dartDefine": [
         "PASSKEY_ORIGIN=android:apk-key-hash:yixxqcqMA7Fe5pxXn3MopTNNOXityFYyWSXo1TxePow",
-        "PASSKEY_RP_ID=orbi-financial-technologies-c0re-v2026.onrender.com"
+        "PASSKEY_RP_ID=api.orbifinancial.com"
       ]
     },
     {
@@ -16,7 +16,7 @@
       "type": "dart",
       "dartDefine": [
         "PASSKEY_ORIGIN=android:apk-key-hash:REPLACE_WITH_RELEASE_APK_HASH",
-        "PASSKEY_RP_ID=orbi-financial-technologies-c0re-v2026.onrender.com"
+        "PASSKEY_RP_ID=api.orbifinancial.com"
       ]
     }
   ]

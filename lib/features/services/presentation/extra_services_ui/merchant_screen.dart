@@ -880,11 +880,10 @@ class _MerchantScreenState extends State<MerchantScreen> {
                                         title: 'Fee profile',
                                         subtitle:
                                             'Rate ${_pickDouble([fee['transaction_fee_percent']]).toStringAsFixed(4)}%',
-                                        trailing: formatCompactMoney(
+                                        trailing: formatFinancialMoney(
                                           _pickDouble([fee['fixed_fee']]),
                                           _pickString([fee['currency'], 'TZS']),
                                           locale: 'en_US',
-                                          compactFrom: kCompactMoneyThreshold,
                                         ),
                                       ),
                                     ],
@@ -912,14 +911,13 @@ class _MerchantScreenState extends State<MerchantScreen> {
                             wallet['status'],
                             wallet['currency'],
                           ]),
-                          trailing: formatCompactMoney(
+                          trailing: formatFinancialMoney(
                             _pickDouble([
                               wallet['balance'],
                               wallet['available_balance'],
                             ]),
                             _pickString([wallet['currency'], 'TZS']),
                             locale: 'en_US',
-                            compactFrom: kCompactMoneyThreshold,
                           ),
                         ),
                       ),
@@ -964,11 +962,10 @@ class _MerchantScreenState extends State<MerchantScreen> {
                             tx['reference_id'],
                             tx['transaction_id'],
                           ]),
-                          trailing: formatCompactMoney(
+                          trailing: formatFinancialMoney(
                             _pickDouble([tx['amount']]),
                             _pickString([tx['currency'], 'TZS']),
                             locale: 'en_US',
-                            compactFrom: kCompactMoneyThreshold,
                           ),
                         ),
                       ),

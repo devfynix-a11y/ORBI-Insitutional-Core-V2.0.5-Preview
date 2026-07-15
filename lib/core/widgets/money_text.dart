@@ -83,14 +83,17 @@ class MoneyText extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         if (!constraints.hasBoundedWidth) return text;
-        return FittedBox(
-          fit: BoxFit.scaleDown,
-          alignment: textAlign == TextAlign.center
-              ? Alignment.center
-              : textAlign == TextAlign.end
-              ? Alignment.centerRight
-              : Alignment.centerLeft,
-          child: text,
+        return SizedBox(
+          width: constraints.maxWidth,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: textAlign == TextAlign.center
+                ? Alignment.center
+                : textAlign == TextAlign.end
+                ? Alignment.centerRight
+                : Alignment.centerLeft,
+            child: text,
+          ),
         );
       },
     );

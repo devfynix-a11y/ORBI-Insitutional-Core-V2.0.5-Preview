@@ -8,7 +8,7 @@
 
 ## 1. The Basics
 
-*   **Base URL**: `https://orbi-financial-technologies-c0re-v2026.onrender.com`
+*   **Base URL**: `https://api.orbifinancial.com`
 *   **Auth Type**: Bearer Token (JWT)
 *   **Content-Type**: `application/json`
 
@@ -17,7 +17,7 @@
 Verify the node is online and the Neural Sentinel is active.
 
 ```bash
-curl -X GET https://orbi-financial-technologies-c0re-v2026.onrender.com/health
+curl -X GET https://api.orbifinancial.com/health
 ```
 **Response**:
 ```json

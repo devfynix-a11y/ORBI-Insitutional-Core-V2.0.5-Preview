@@ -23,10 +23,9 @@ class AppConfig {
   // ------------------------------------
   // 2. BASE URLS
   // ------------------------------------
-  // Primary AWS backend and Google fallback backend. Both hosts run the same
-  // ORBI Core API, with AWS kept as the canonical production endpoint.
+  // Canonical self-hosted ORBI Core endpoint. An independently managed
+  // recovery endpoint may be supplied explicitly at build time.
   static const String _primaryApiHost = 'api.orbifinancial.com';
-  static const String _googleFallbackApiHost = 'go-api.orbifinancial.com';
 
   // Override with --dart-define API_BASE_URL_DEV / API_BASE_URL_PROD as needed.
   static const String _devUrl = String.fromEnvironment(
@@ -39,7 +38,7 @@ class AppConfig {
   );
   static const String _fallbackProdUrl = String.fromEnvironment(
     'API_FALLBACK_BASE_URL_PROD',
-    defaultValue: 'https://$_googleFallbackApiHost',
+    defaultValue: '',
   );
 
   /// Passkey defaults used for diagnostics and environment consistency.
@@ -136,12 +135,15 @@ class AppConfig {
     }
   }
 
-  /// Secondary API root used only when the primary infrastructure is
-  /// unreachable. Keep this host pointed at the Google VM fallback.
+  /// Optional recovery API root. It must be independently hosted and must not
+  /// be configured to the same endpoint as the primary API.
   static String get fallbackBaseUrl {
     switch (_currentEnv) {
       case Environment.dev:
-        return _devUrl;
+        return const String.fromEnvironment(
+          'API_FALLBACK_BASE_URL_DEV',
+          defaultValue: '',
+        );
       case Environment.prod:
         return _fallbackProdUrl;
     }
@@ -176,16 +178,20 @@ class AppConfig {
   /// Full API base URL including version.
   ///
   /// NOTE: the server expects the version directly after the host (e.g. `/v1`),
-  /// not `/api/v1`. The `/api` prefix was causing 404s on the Render deployment.
+  /// not `/api/v1`.
   static String get apiUrl => '$baseUrl/$apiVersion';
 
-  static String get fallbackApiUrl => '$fallbackBaseUrl/$apiVersion';
+  static String get fallbackApiUrl {
+    final fallback = _stripTrailingSlash(fallbackBaseUrl);
+    return fallback.isEmpty ? '' : '$fallback/$apiVersion';
+  }
 
   static List<String> get apiUrls => baseUrls
       .map((url) => '${_stripTrailingSlash(url)}/$apiVersion')
       .toList(growable: false);
 
   static String? fallbackForBaseUrl(String candidate) {
+    if (fallbackBaseUrl.trim().isEmpty) return null;
     final normalized = _stripTrailingSlash(candidate);
     if (normalized == _stripTrailingSlash(baseUrl)) return fallbackBaseUrl;
     if (normalized == _stripTrailingSlash(apiUrl)) return fallbackApiUrl;
@@ -205,6 +211,7 @@ class AppConfig {
   }
 
   static String get fallbackWsUrl {
+    if (fallbackBaseUrl.trim().isEmpty) return '';
     final scheme = fallbackBaseUrl.startsWith('https') ? 'wss' : 'ws';
     final host = fallbackBaseUrl.replaceFirst(RegExp(r'^https?://'), '');
     return '$scheme://$host/nexus-stream';
@@ -218,6 +225,28 @@ class AppConfig {
     ].where((url) => url.isNotEmpty && seen.add(url)).toList(growable: false);
   }
 
+  // ------------------------------------
+  // 5. OIDC / KEYCLOAK
+  // ------------------------------------
+  static const bool keycloakPkceEnabled = bool.fromEnvironment(
+    'KEYCLOAK_PKCE_ENABLED',
+    defaultValue: false,
+  );
+  static const String keycloakIssuer = String.fromEnvironment(
+    'KEYCLOAK_ISSUER',
+    defaultValue: 'https://auth.orbifinancial.com/realms/orbi',
+  );
+  static const String keycloakMobileClientId = String.fromEnvironment(
+    'KEYCLOAK_MOBILE_CLIENT_ID',
+    defaultValue: 'orbi-mobile',
+  );
+  static const String keycloakRedirectUrl = String.fromEnvironment(
+    'KEYCLOAK_REDIRECT_URL',
+    defaultValue: 'com.orbi.mobile:/oauth2redirect',
+  );
+  static String get keycloakDiscoveryUrl =>
+      '${_stripTrailingSlash(keycloakIssuer)}/.well-known/openid-configuration';
+
   static String _stripTrailingSlash(String value) {
     var normalized = value.trim();
     while (normalized.endsWith('/')) {
@@ -227,7 +256,7 @@ class AppConfig {
   }
 
   // ------------------------------------
-  // 5. CLIENT IDENTIFICATION
+  // 6. CLIENT IDENTIFICATION
   // ------------------------------------
   static const String _appIdEnv = String.fromEnvironment(
     'ORBI_APP_ID',
@@ -250,13 +279,13 @@ class AppConfig {
       !kIsWeb && Platform.isAndroid && androidAppHash.isNotEmpty;
 
   // ------------------------------------
-  // 6. NETWORK TIMEOUTS
+  // 7. NETWORK TIMEOUTS
   // ------------------------------------
   static const int connectTimeout = 30000; // milliseconds (30s)
   static const int receiveTimeout = 30000; // milliseconds (30s)
 
   // ------------------------------------
-  // 7. ENDPOINT PATHS (optional, for convenience)
+  // 8. ENDPOINT PATHS (optional, for convenience)
   // ------------------------------------
   static const Map<String, String> endpoints = {
     // Auth
@@ -267,6 +296,7 @@ class AppConfig {
     'passwordResetInitiate': '/auth/password/reset/initiate',
     'passwordResetComplete': '/auth/password/reset/complete',
     'refresh': '/auth/refresh',
+    'logout': '/auth/logout',
     'session': '/auth/session',
     'authVerify': '/auth/verify',
     'pinEnroll': '/auth/pin/enroll',

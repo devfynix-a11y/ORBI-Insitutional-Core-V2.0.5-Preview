@@ -224,8 +224,9 @@ class _SignupScreenState extends State<SignupScreen> {
           _showMessage(l10n.signupPasswordRequired);
           return false;
         }
-        if (password.length < 8) {
-          _showMessage(l10n.signupPasswordMin);
+        final passwordError = _passwordPolicyError(password, l10n);
+        if (passwordError != null) {
+          _showMessage(passwordError);
           return false;
         }
         if (_confirmPasswordController.text != password) {
@@ -240,6 +241,40 @@ class _SignupScreenState extends State<SignupScreen> {
       default:
         return true;
     }
+  }
+
+  bool get _isSw =>
+      Localizations.localeOf(context).languageCode.toLowerCase() == 'sw';
+
+  String _copy(String en, String sw) => _isSw ? sw : en;
+
+  String? _passwordPolicyError(String password, AppLocalizations l10n) {
+    if (password.length < 8) return l10n.signupPasswordMin;
+    if (!RegExp(r'[a-z]').hasMatch(password)) {
+      return _copy(
+        'Password must include a lowercase letter.',
+        'Nywila lazima iwe na herufi ndogo.',
+      );
+    }
+    if (!RegExp(r'[A-Z]').hasMatch(password)) {
+      return _copy(
+        'Password must include an uppercase letter.',
+        'Nywila lazima iwe na herufi kubwa.',
+      );
+    }
+    if (!RegExp(r'[0-9]').hasMatch(password)) {
+      return _copy(
+        'Password must include a number.',
+        'Nywila lazima iwe na namba.',
+      );
+    }
+    if (!RegExp(r'[^A-Za-z0-9]').hasMatch(password)) {
+      return _copy(
+        'Password must include a special character, for example @, #, or !.',
+        'Nywila lazima iwe na alama maalum, mfano @, #, au !.',
+      );
+    }
+    return null;
   }
 
   void _goNext(AppLocalizations l10n) {
@@ -267,6 +302,9 @@ class _SignupScreenState extends State<SignupScreen> {
           : null,
       currency: _currency,
       languageCode: _selectedCountry.languageCode,
+      countryCode: _selectedCountry.code,
+      countryName: _selectedCountry.name,
+      dialCode: _selectedCountry.dialCode,
       requestOtp: _promptOtpDialog,
     );
 
@@ -288,7 +326,15 @@ class _SignupScreenState extends State<SignupScreen> {
             ? auth.pendingActivationIdentifier
             : _emailController.text.trim(),
       );
+      return;
     }
+    _showMessage(
+      auth.error ??
+          _copy(
+            'Unable to complete signup right now. Please try again.',
+            'Hatukuweza kukamilisha usajili sasa. Tafadhali jaribu tena.',
+          ),
+    );
   }
 
   Future<String?> _promptOtpDialog() async {
@@ -629,6 +675,10 @@ class _SignupScreenState extends State<SignupScreen> {
                 context: context,
                 label: l10n.labelPassword,
                 icon: Icons.lock_outline,
+                helperText: _copy(
+                  'Use uppercase, lowercase, number, and special character.',
+                  'Tumia herufi kubwa, ndogo, namba, na alama maalum.',
+                ),
                 suffixIcon: IconButton(
                   onPressed: () => setState(() {
                     _obscurePassword = !_obscurePassword;
@@ -644,8 +694,7 @@ class _SignupScreenState extends State<SignupScreen> {
               validator: (value) {
                 final text = value ?? '';
                 if (text.isEmpty) return l10n.signupPasswordRequired;
-                if (text.length < 8) return l10n.signupPasswordMin;
-                return null;
+                return _passwordPolicyError(text, l10n);
               },
             ),
             const SizedBox(height: 12),

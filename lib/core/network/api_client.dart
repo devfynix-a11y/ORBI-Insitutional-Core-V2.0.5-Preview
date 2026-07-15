@@ -100,7 +100,7 @@ class ApiClient {
             debugPrint(
               '📥 [${response.requestOptions.method}] ${_requestUrl(response.requestOptions)} -> ${response.statusCode}',
             );
-            debugPrint('📋 Response body: ${response.data}');
+            debugPrint('📋 Response received');
           } catch (e) {
             debugPrint('⚠️ api_client: failed to log response: $e');
           }
@@ -112,7 +112,8 @@ class ApiClient {
             try {
               final retryOptions = error.requestOptions;
               retryOptions.baseUrl = fallbackBaseUrl;
-              retryOptions.headers['x-orbi-fallback-attempt'] = 'google-vm';
+              retryOptions.headers['x-orbi-fallback-attempt'] =
+                  'configured-recovery';
               debugPrint(
                 '🌐 [API_CLIENT] Primary API unavailable; retrying via $fallbackBaseUrl',
               );
@@ -140,7 +141,8 @@ class ApiClient {
 
   String? _fallbackBaseUrlFor(RequestOptions options) {
     if (options.headers['x-orbi-fallback-attempt'] != null) return null;
-    if (options.path.startsWith('http://') || options.path.startsWith('https://')) {
+    if (options.path.startsWith('http://') ||
+        options.path.startsWith('https://')) {
       return null;
     }
     return AppConfig.fallbackForBaseUrl(options.baseUrl);

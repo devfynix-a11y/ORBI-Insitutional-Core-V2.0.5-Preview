@@ -5,7 +5,7 @@ This is the **Sovereign Financial Operating System** powering the ORBI ecosystem
 
 ## 📚 Documentation
 
-*   **[Deployment Guide](./DEPLOYMENT_GUIDE.md)**: Steps to deploy on Render.
+*   Backend deployment is maintained in the ORBI Core repository.
 *   **[Financial Core Engine (Core Banking Architecture)](./CORE_BANKING_ARCHITECTURE.md)**: **NEW** - Multi-Tenant Fintech Platform, Banking-as-a-Service (BaaS).
 *   **[Enterprise B2B Architecture](./ENTERPRISE_B2B_ARCHITECTURE.md)**: Multi-Tenancy, Corporate Goals, and Hard Budgets.
 *   **[Multi-Tenant Merchant Architecture](./MERCHANT_ARCHITECTURE.md)**: Marketplaces, Payment Gateways, and Business Accounts.

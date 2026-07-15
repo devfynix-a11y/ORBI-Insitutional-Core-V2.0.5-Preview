@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:orbi_mobileapp/core/auth/auth_repository.dart';
 import 'package:orbi_mobileapp/core/auth/token_manager.dart';
 import 'package:orbi_mobileapp/core/session/session_manager.dart';
+import 'package:orbi_mobileapp/core/state/app_runtime_cache.dart';
 import 'package:orbi_mobileapp/core/storage/secure_storage_service.dart';
 
 class AuthService {
@@ -13,14 +14,33 @@ class AuthService {
   AuthService(this._repo, this._session, this._storage, this._tokenManager);
 
   Future<void> establishSession(Map<String, dynamic> response) async {
-    final nested = response['session'];
-    final nestedSession = nested is Map ? nested : const <String, dynamic>{};
+    final root = _asStringMap(response['data']) ?? response;
+    final nestedSession =
+        _asStringMap(root['session']) ??
+        _asStringMap(root['tokens']) ??
+        const <String, dynamic>{};
 
-    final accessToken =
-        response['access_token'] ?? nestedSession['access_token'];
-    final refreshToken =
-        response['refresh_token'] ?? nestedSession['refresh_token'];
-    final rawUser = response['user'] ?? nestedSession['user'];
+    final accessToken = _pickString([
+      root['access_token'],
+      root['accessToken'],
+      root['token'],
+      root['jwt'],
+      nestedSession['access_token'],
+      nestedSession['accessToken'],
+      nestedSession['token'],
+      nestedSession['jwt'],
+    ]);
+    final refreshToken = _pickString([
+      root['refresh_token'],
+      root['refreshToken'],
+      nestedSession['refresh_token'],
+      nestedSession['refreshToken'],
+    ]);
+    final rawUser =
+        root['user'] ??
+        root['profile'] ??
+        nestedSession['user'] ??
+        nestedSession['profile'];
     final existingProfile = await _session.getStoredProfile();
     final normalizedUser = rawUser is Map
         ? Map<String, dynamic>.from(rawUser)
@@ -29,18 +49,35 @@ class AuthService {
         ? normalizedUser
         : (existingProfile ?? const <String, dynamic>{});
 
-    if (accessToken is! String || accessToken.isEmpty) {
+    if (accessToken.isEmpty) {
       throw Exception('Access token missing in auth response');
     }
 
-    await _session.saveSession({
+    await _session.saveSession({'access_token': accessToken, 'user': user});
+    AppRuntimeCache.rememberSession({
       'access_token': accessToken,
       'user': user,
     });
 
-    if (refreshToken is String && refreshToken.isNotEmpty) {
+    if (refreshToken.isNotEmpty) {
       await _storage.saveRefreshToken(refreshToken);
     }
+  }
+
+  Map<String, dynamic>? _asStringMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return null;
+  }
+
+  String _pickString(Iterable<dynamic> values) {
+    for (final value in values) {
+      final text = value?.toString().trim();
+      if (text != null && text.isNotEmpty && text.toLowerCase() != 'null') {
+        return text;
+      }
+    }
+    return '';
   }
 
   Future<String?> getValidAccessToken() async {
@@ -61,6 +98,7 @@ class AuthService {
   Future<void> clearSession() async {
     await _session.clearSession();
     await _storage.clearRefreshToken();
+    AppRuntimeCache.clear();
   }
 
   Future<void> clearSessionPreservingResume() async {
@@ -79,7 +117,9 @@ class AuthService {
       return await _session.getStoredToken();
     } catch (error) {
       if (_shouldClearSessionAfterRefreshFailure(error)) {
-        debugPrint('🔐 [AUTH] Refresh token rejected. Clearing stored session.');
+        debugPrint(
+          '🔐 [AUTH] Refresh token rejected. Clearing stored session.',
+        );
         await clearSession();
       } else {
         debugPrint(

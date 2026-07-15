@@ -28,7 +28,7 @@ class OrbiBackground extends StatelessWidget {
         return SizedBox.expand(
           child: Container(
             decoration: BoxDecoration(
-              color: isDark ? surfaces.shellStart : const Color(0xFFE9F4F8),
+              color: isDark ? surfaces.shellStart : const Color(0xFFF7FBFF),
             ),
             child: Stack(
               children: [
@@ -49,6 +49,61 @@ class OrbiBackground extends StatelessWidget {
                       ),
                     ),
                   ),
+                if (!isDark)
+                  Positioned.fill(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            const Color(0xFFFFFFFF),
+                            surfaces.heroTop,
+                            const Color(0xFFEFF7FB),
+                          ],
+                          stops: const [0.0, 0.48, 1.0],
+                        ),
+                      ),
+                    ),
+                  ),
+
+                if (!isDark) ...[
+                  Positioned(
+                    top: screenHeight * -0.18,
+                    right: screenWidth * -0.18,
+                    child: Container(
+                      width: screenWidth * (0.72 * density),
+                      height: screenWidth * (0.72 * density),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: RadialGradient(
+                          colors: [
+                            OrbiTheme.uiOf(
+                              context,
+                            ).accent.withValues(alpha: 0.10),
+                            Colors.transparent,
+                          ],
+                          radius: 0.72,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: screenWidth * -0.24,
+                    bottom: screenHeight * -0.16,
+                    child: Container(
+                      width: screenWidth * (0.68 * density),
+                      height: screenWidth * (0.68 * density),
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: RadialGradient(
+                          colors: [Color(0x10E57C3C), Colors.transparent],
+                          radius: 0.70,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
 
                 if (richBackground) ...[
                   // --- 3. 60° diagonal gradient lines (thick & thin) ---

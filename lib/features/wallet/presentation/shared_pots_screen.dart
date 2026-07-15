@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:orbi_mobileapp/l10n/app_localizations.dart';
 import 'package:orbi_mobileapp/l10n/wealth_localizations.dart';
 
+import '../../../core/reports/orbi_resource_report_printer.dart';
 import '../../../core/theme/orbi_theme.dart';
 import '../../../core/utils/amount_input_formatter.dart';
 import '../../../core/utils/backend_status_message.dart';
@@ -12,9 +13,11 @@ import '../../../core/widgets/orbi_amount_field.dart';
 import '../../../core/widgets/orbi_async_feedback.dart';
 import '../../../core/widgets/orbi_activity_card.dart';
 import '../../../core/widgets/orbi_background.dart';
+import '../../../core/widgets/orbi_brand_hero_card.dart';
 import '../../../core/widgets/orbi_state_card.dart';
 import '../data/wealth_service.dart';
 import 'widgets/invitee_lookup_card.dart';
+import 'widgets/wealth_hero_card.dart';
 
 const Color _sharedPotAccent = Color(0xFF0EA5A4);
 
@@ -35,6 +38,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
   OrbiStatusTone _statusTone = OrbiStatusTone.info;
   String? _error;
   List<Map<String, dynamic>> _pots = const [];
+  List<Map<String, dynamic>> _invitations = const [];
 
   @override
   void initState() {
@@ -48,9 +52,15 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
       _error = null;
     });
     try {
-      final items = await _service.listSharedPots();
+      final results = await Future.wait([
+        _service.listSharedPots(),
+        _service.listMySharedPotInvitations(),
+      ]);
       if (!mounted) return;
-      setState(() => _pots = items);
+      setState(() {
+        _pots = results[0];
+        _invitations = results[1];
+      });
     } catch (e) {
       if (!mounted) return;
       final l10n = AppLocalizations.of(context)!;
@@ -66,6 +76,113 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
         setState(() => _loading = false);
       }
     }
+  }
+
+  String _accessModelHelp(AppLocalizations l10n, String accessModel) {
+    switch (accessModel.toUpperCase()) {
+      case 'PRIVATE':
+        return l10n.pick(
+          en: 'Private Fungu is controlled by the owner only. Invites are disabled and withdrawals are owner-only.',
+          swText:
+              'Fungu binafsi hudhibitiwa na mmiliki pekee. Mialiko imefungwa na kutoa fedha ni kwa mmiliki tu.',
+        );
+      case 'ORG':
+        return l10n.pick(
+          en: 'Organisation Fungu is linked to your organisation and uses stricter approval governance.',
+          swText:
+              'Fungu la taasisi huunganishwa na taasisi yako na hutumia idhini kali zaidi kabla ya kutoa fedha.',
+        );
+      default:
+        return l10n.pick(
+          en: 'Invite-only Fungu is ideal for weddings, trips, projects, and group contributions. Owners or managers can withdraw; contributors can add money.',
+          swText:
+              'Fungu la mwaliko linafaa kwa harusi, safari, miradi na michango ya pamoja. Mmiliki au meneja anaweza kutoa; wachangiaji huongeza fedha.',
+        );
+    }
+  }
+
+  Future<void> _showInbox() async {
+    final l10n = AppLocalizations.of(context)!;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => _SheetFrame(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _SheetTitle(
+              title: l10n.pick(en: 'Fungu inbox', swText: 'Inbox ya Fungu'),
+            ),
+            const SizedBox(height: 16),
+            if (_invitations.isEmpty)
+              _InlineEmpty(
+                message: l10n.pick(
+                  en: 'No invitations right now.',
+                  swText: 'Hakuna mialiko kwa sasa.',
+                ),
+              )
+            else
+              ..._invitations.map((invite) {
+                final pot = invite['shared_pots'] is Map
+                    ? Map<String, dynamic>.from(invite['shared_pots'] as Map)
+                    : const <String, dynamic>{};
+                final pending =
+                    (invite['status'] ?? '').toString().toUpperCase() ==
+                    'PENDING';
+                return _InviteRow(
+                  title:
+                      (pot['name'] ?? l10n.pick(en: 'Fungu', swText: 'Fungu'))
+                          .toString(),
+                  subtitle:
+                      '${(invite['role'] ?? 'CONTRIBUTOR').toString()} • ${(invite['status'] ?? 'PENDING').toString()}',
+                  pending: pending,
+                  onAccept: () async {
+                    Navigator.of(context).pop();
+                    await _respondToInvitation(
+                      invite['id'].toString(),
+                      'ACCEPT',
+                    );
+                  },
+                  onReject: () async {
+                    Navigator.of(context).pop();
+                    await _respondToInvitation(
+                      invite['id'].toString(),
+                      'REJECT',
+                    );
+                  },
+                );
+              }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _respondToInvitation(String id, String action) async {
+    await _runBusy(
+      AppLocalizations.of(
+        context,
+      )!.pick(en: 'Saving response...', swText: 'Inahifadhi jibu...'),
+      () async {
+        await _service.respondToSharedPotInvitation(id, {'action': action});
+        if (!mounted) return;
+        final l10n = AppLocalizations.of(context)!;
+        setState(() {
+          _statusMessage = l10n.pick(
+            en: action == 'ACCEPT'
+                ? 'Invitation accepted.'
+                : 'Invitation rejected.',
+            swText: action == 'ACCEPT'
+                ? 'Mwaliko umekubaliwa.'
+                : 'Mwaliko umekataliwa.',
+          );
+          _statusTone = OrbiStatusTone.success;
+        });
+        await _load();
+      },
+    );
   }
 
   Future<bool> _runBusy(String message, Future<void> Function() action) async {
@@ -173,7 +290,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      l10n.wealthNewSharedPot,
+                      l10n.pick(en: 'Create Fungu', swText: 'Unda Fungu'),
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         color: ui.textPrimary,
                         fontWeight: FontWeight.w800,
@@ -181,7 +298,11 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      l10n.wealthSharedGoalShort,
+                      l10n.pick(
+                        en: 'Keep this shared fund simple, clear, and easy to manage.',
+                        swText:
+                            'Hifadhi fungu hili liwe rahisi, wazi, na rahisi kusimamia.',
+                      ),
                       style: TextStyle(color: ui.textMuted, height: 1.35),
                     ),
                     if (formError != null) ...[
@@ -199,8 +320,14 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                       controller: nameController,
                       textInputAction: TextInputAction.next,
                       decoration: InputDecoration(
-                        labelText: l10n.wealthPotName,
-                        hintText: l10n.wealthPotNameHint,
+                        labelText: l10n.pick(
+                          en: 'Fungu name',
+                          swText: 'Jina la Fungu',
+                        ),
+                        hintText: l10n.pick(
+                          en: 'Example school fees',
+                          swText: 'Mfano ada ya shule',
+                        ),
                       ),
                     ),
                     const SizedBox(height: 10),
@@ -209,7 +336,10 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                       textInputAction: TextInputAction.next,
                       decoration: InputDecoration(
                         labelText: l10n.wealthPurpose,
-                        hintText: l10n.wealthPurposeHint,
+                        hintText: l10n.pick(
+                          en: 'Family, team, business',
+                          swText: 'Familia, timu, biashara',
+                        ),
                       ),
                     ),
                     const SizedBox(height: 10),
@@ -223,18 +353,27 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                     const SizedBox(height: 10),
                     DropdownButtonFormField<String>(
                       initialValue: accessModel,
-                      items: const [
+                      items: [
                         DropdownMenuItem(
                           value: 'INVITE',
-                          child: Text('Invite only'),
+                          child: Text(
+                            l10n.pick(
+                              en: 'Invite only',
+                              swText: 'Mwaliko pekee',
+                            ),
+                          ),
                         ),
                         DropdownMenuItem(
                           value: 'PRIVATE',
-                          child: Text('Private'),
+                          child: Text(
+                            l10n.pick(en: 'Private', swText: 'Binafsi'),
+                          ),
                         ),
                         DropdownMenuItem(
                           value: 'ORG',
-                          child: Text('Organisation'),
+                          child: Text(
+                            l10n.pick(en: 'Organisation', swText: 'Taasisi'),
+                          ),
                         ),
                       ],
                       onChanged: submitting
@@ -246,6 +385,11 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                         labelText: l10n.wealthAccessModel,
                         isDense: true,
                       ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _accessModelHelp(l10n, accessModel),
+                      style: TextStyle(color: ui.textMuted, height: 1.35),
                     ),
                     const SizedBox(height: 14),
                     SizedBox(
@@ -307,7 +451,12 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                                   Text(l10n.wealthSaving),
                                 ],
                               )
-                            : Text(l10n.wealthSavePot),
+                            : Text(
+                                l10n.pick(
+                                  en: 'Save Fungu',
+                                  swText: 'Hifadhi Fungu',
+                                ),
+                              ),
                       ),
                     ),
                   ],
@@ -378,7 +527,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      l10n.wealthEditSharedPot,
+                      l10n.pick(en: 'Edit Fungu', swText: 'Hariri Fungu'),
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         color: ui.textPrimary,
                         fontWeight: FontWeight.w800,
@@ -399,7 +548,10 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                       controller: nameController,
                       textInputAction: TextInputAction.next,
                       decoration: InputDecoration(
-                        labelText: l10n.wealthPotName,
+                        labelText: l10n.pick(
+                          en: 'Fungu name',
+                          swText: 'Jina la Fungu',
+                        ),
                       ),
                     ),
                     const SizedBox(height: 10),
@@ -421,18 +573,27 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                     const SizedBox(height: 10),
                     DropdownButtonFormField<String>(
                       initialValue: accessModel,
-                      items: const [
+                      items: [
                         DropdownMenuItem(
                           value: 'INVITE',
-                          child: Text('Invite only'),
+                          child: Text(
+                            l10n.pick(
+                              en: 'Invite only',
+                              swText: 'Mwaliko pekee',
+                            ),
+                          ),
                         ),
                         DropdownMenuItem(
                           value: 'PRIVATE',
-                          child: Text('Private'),
+                          child: Text(
+                            l10n.pick(en: 'Private', swText: 'Binafsi'),
+                          ),
                         ),
                         DropdownMenuItem(
                           value: 'ORG',
-                          child: Text('Organisation'),
+                          child: Text(
+                            l10n.pick(en: 'Organisation', swText: 'Taasisi'),
+                          ),
                         ),
                       ],
                       onChanged: submitting
@@ -444,6 +605,11 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                         labelText: l10n.wealthAccessModel,
                         isDense: true,
                       ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _accessModelHelp(l10n, accessModel),
+                      style: TextStyle(color: ui.textMuted, height: 1.35),
                     ),
                     const SizedBox(height: 14),
                     SizedBox(
@@ -508,7 +674,12 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                                   Text(l10n.wealthSaving),
                                 ],
                               )
-                            : Text(l10n.wealthSaveChanges),
+                            : Text(
+                                l10n.pick(
+                                  en: 'Save Fungu changes',
+                                  swText: 'Hifadhi mabadiliko ya Fungu',
+                                ),
+                              ),
                       ),
                     ),
                   ],
@@ -569,7 +740,10 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      l10n.wealthContributeToSharedPot,
+                      l10n.pick(
+                        en: 'Contribute to Fungu',
+                        swText: 'Changia Fungu',
+                      ),
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         color: ui.textPrimary,
                         fontWeight: FontWeight.w800,
@@ -577,7 +751,10 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      l10n.wealthContributeToPotHelp,
+                      l10n.pick(
+                        en: 'Add money into this shared fund.',
+                        swText: 'Ongeza fedha kwenye fungu hili.',
+                      ),
                       style: TextStyle(color: ui.textMuted, height: 1.35),
                     ),
                     if (formError != null) ...[
@@ -657,7 +834,12 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                                   Text(l10n.wealthSaving),
                                 ],
                               )
-                            : Text(l10n.wealthContributeNow),
+                            : Text(
+                                l10n.pick(
+                                  en: 'Contribute now',
+                                  swText: 'Changia sasa',
+                                ),
+                              ),
                       ),
                     ),
                   ],
@@ -684,9 +866,10 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
   Future<void> _showWithdrawSheet(Map<String, dynamic> pot) async {
     final l10n = AppLocalizations.of(context)!;
     final amountController = TextEditingController();
+    final reasonController = TextEditingController();
     String? formError;
     bool submitting = false;
-    final withdrawn = await showModalBottomSheet<bool>(
+    final result = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       builder: (sheetContext) {
@@ -716,7 +899,10 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      l10n.wealthWithdrawFromSharedPot,
+                      l10n.pick(
+                        en: 'Withdraw from Fungu',
+                        swText: 'Toa kutoka Fungu',
+                      ),
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         color: ui.textPrimary,
                         fontWeight: FontWeight.w800,
@@ -724,7 +910,10 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      l10n.wealthWithdrawFromPotHelp,
+                      l10n.pick(
+                        en: 'Take money out of this shared fund.',
+                        swText: 'Toa fedha kutoka kwenye fungu hili.',
+                      ),
                       style: TextStyle(color: ui.textMuted, height: 1.35),
                     ),
                     if (formError != null) ...[
@@ -740,10 +929,27 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                     const SizedBox(height: 12),
                     OrbiAmountField(
                       controller: amountController,
-                      textInputAction: TextInputAction.done,
+                      textInputAction: TextInputAction.next,
                       inputFormatters: [AmountInputFormatter()],
                       label: l10n.wealthAmount,
                       currency: (pot['currency'] ?? 'TZS').toString(),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: reasonController,
+                      minLines: 2,
+                      maxLines: 3,
+                      textInputAction: TextInputAction.done,
+                      decoration: InputDecoration(
+                        labelText: l10n.pick(
+                          en: 'Reason for withdrawal',
+                          swText: 'Sababu ya kutoa fedha',
+                        ),
+                        hintText: l10n.pick(
+                          en: 'Example: pay supplier, emergency support...',
+                          swText: 'Mfano: kulipa huduma, dharura...',
+                        ),
+                      ),
                     ),
                     const SizedBox(height: 14),
                     SizedBox(
@@ -768,12 +974,22 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                                   formError = null;
                                 });
                                 try {
-                                  await _service.withdrawFromSharedPot(
-                                    (pot['id'] ?? '').toString(),
-                                    {'amount': amount},
-                                  );
+                                  final response = await _service
+                                      .withdrawFromSharedPot(
+                                        (pot['id'] ?? '').toString(),
+                                        {
+                                          'amount': amount,
+                                          'reason': reasonController.text
+                                              .trim(),
+                                        },
+                                      );
                                   if (!sheetContext.mounted) return;
-                                  Navigator.of(sheetContext).pop(true);
+                                  final requiresApproval =
+                                      response['requires_approval'] == true ||
+                                      response['request'] != null;
+                                  Navigator.of(sheetContext).pop(
+                                    requiresApproval ? 'approval' : 'withdrawn',
+                                  );
                                 } catch (e) {
                                   if (!sheetContext.mounted) return;
                                   setSheetState(() {
@@ -804,7 +1020,12 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                                   Text(l10n.wealthSaving),
                                 ],
                               )
-                            : Text(l10n.wealthWithdrawNow),
+                            : Text(
+                                l10n.pick(
+                                  en: 'Withdraw now',
+                                  swText: 'Toa sasa',
+                                ),
+                              ),
                       ),
                     ),
                   ],
@@ -817,12 +1038,18 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
     );
 
     amountController.dispose();
+    reasonController.dispose();
 
-    if (withdrawn == true) {
+    if (result != null) {
       await _load();
       if (!mounted) return;
       setState(() {
-        _statusMessage = l10n.wealthFundsWithdrawn;
+        _statusMessage = result == 'approval'
+            ? l10n.pick(
+                en: 'Withdrawal request sent for approval.',
+                swText: 'Ombi la kutoa fedha limetumwa kwa idhini.',
+              )
+            : l10n.wealthFundsWithdrawn;
         _statusTone = OrbiStatusTone.success;
       });
     }
@@ -1012,18 +1239,27 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                       const SizedBox(height: 10),
                       DropdownButtonFormField<String>(
                         initialValue: role,
-                        items: const [
+                        items: [
                           DropdownMenuItem(
                             value: 'MANAGER',
-                            child: Text('Manager'),
+                            child: Text(
+                              l10n.pick(en: 'Manager', swText: 'Meneja'),
+                            ),
                           ),
                           DropdownMenuItem(
                             value: 'CONTRIBUTOR',
-                            child: Text('Contributor'),
+                            child: Text(
+                              l10n.pick(
+                                en: 'Contributor',
+                                swText: 'Mchangiaji',
+                              ),
+                            ),
                           ),
                           DropdownMenuItem(
                             value: 'VIEWER',
-                            child: Text('Viewer'),
+                            child: Text(
+                              l10n.pick(en: 'Viewer', swText: 'Mtazamaji'),
+                            ),
                           ),
                         ],
                         onChanged: submitting
@@ -1070,9 +1306,14 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                                     formError = null;
                                   });
                                   try {
+                                    final payload = _service.buildInvitePayload(
+                                      invitee: lookupPreview,
+                                      fallback: identifierController.text,
+                                      role: role,
+                                    );
                                     await _service.addSharedPotMember(
                                       (pot['id'] ?? '').toString(),
-                                      {'identifier': identifier, 'role': role},
+                                      payload,
                                     );
                                     if (!sheetContext.mounted) return;
                                     Navigator.of(sheetContext).pop(true);
@@ -1155,7 +1396,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                l10n.wealthPotMembers,
+                l10n.pick(en: 'Fungu members', swText: 'Wanachama wa Fungu'),
                 style: Theme.of(sheetContext).textTheme.titleLarge?.copyWith(
                   color: ui.textPrimary,
                   fontWeight: FontWeight.w800,
@@ -1163,15 +1404,24 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
               ),
               const SizedBox(height: 6),
               Text(
-                l10n.wealthPotMembersHelp,
+                l10n.pick(
+                  en: 'Everyone with access to this Fungu.',
+                  swText: 'Wote wenye ruhusa kwenye Fungu hili.',
+                ),
                 style: TextStyle(color: ui.textMuted, height: 1.35),
               ),
               const SizedBox(height: 16),
               if (members.isEmpty)
                 OrbiStateCard(
                   icon: Icons.group_off_rounded,
-                  title: l10n.wealthNoMembersYet,
-                  message: l10n.wealthSendFirstInvite,
+                  title: l10n.pick(
+                    en: 'No members yet',
+                    swText: 'Hakuna wanachama bado',
+                  ),
+                  message: l10n.pick(
+                    en: 'Send the first invite to grow this Fungu.',
+                    swText: 'Tuma mwaliko wa kwanza kuongeza Fungu hili.',
+                  ),
                   accentColor: ui.textMuted,
                   accentBackground: ui.cardMuted,
                 )
@@ -1279,6 +1529,170 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
     );
   }
 
+  Future<void> _showReportSheet(Map<String, dynamic> pot) async {
+    final l10n = AppLocalizations.of(context)!;
+    final potId = (pot['id'] ?? '').toString();
+    if (potId.isEmpty) return;
+    await OrbiResourceReportPrinter.openReportSheet(
+      context,
+      title: l10n.pick(en: 'Fungu report', swText: 'Ripoti ya Fungu'),
+      subtitle: (pot['name'] ?? 'Fungu').toString(),
+      filePrefix: 'orbi_fungu_report',
+      loadReport: (range) => _service.getSharedPotReport(potId, range: range),
+    );
+  }
+
+  Future<void> _requestArchivePot(Map<String, dynamic> pot) async {
+    final l10n = AppLocalizations.of(context)!;
+    final potId = (pot['id'] ?? '').toString();
+    if (potId.isEmpty) return;
+
+    if (_asDouble(pot['current_amount']) >= 1) {
+      setState(() {
+        _statusMessage = l10n.pick(
+          en: 'This Fungu must have a zero balance before it can be archived.',
+          swText:
+              'Fungu hili lazima liwe na salio sifuri kabla ya kuhifadhiwa.',
+        );
+        _statusTone = OrbiStatusTone.error;
+      });
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(l10n.pick(en: 'Archive Fungu?', swText: 'Hifadhi Fungu?')),
+        content: Text(
+          l10n.pick(
+            en: 'For safety, archiving requires OTP and 3 approvals. Once approved, it waits 24 hours before leaving the main list, and can still be cancelled during that time.',
+            swText:
+                'Kwa usalama, kuhifadhi kunahitaji OTP na idhini 3. Baada ya kuidhinishwa, husubiri saa 24 kabla ya kutoka kwenye orodha kuu, na bado kuna nafasi ya kughairi ndani ya muda huo.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(l10n.pick(en: 'Cancel', swText: 'Ghairi')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(l10n.pick(en: 'Continue', swText: 'Endelea')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    Future<Map<String, dynamic>> submit({
+      String? otpRequestId,
+      String? otpCode,
+    }) {
+      final payload = <String, dynamic>{};
+      if (otpRequestId != null) payload['otp_request_id'] = otpRequestId;
+      if (otpCode != null) payload['otp_code'] = otpCode;
+      return _service.requestSharedPotArchive(potId, payload);
+    }
+
+    final first = await _loadBusyData<Map<String, dynamic>>(
+      l10n.pick(
+        en: 'Preparing archive request...',
+        swText: 'Tunaandaa ombi la kuhifadhi...',
+      ),
+      submit,
+    );
+    if (!mounted || first == null) return;
+
+    var result = first;
+    if (first['error']?.toString().toUpperCase() == 'SECURITY_CHALLENGE') {
+      final challenge = first['challenge'] is Map
+          ? Map<String, dynamic>.from(first['challenge'] as Map)
+          : const <String, dynamic>{};
+      final otpRequestId =
+          (challenge['otp_request_id'] ?? challenge['id'] ?? '').toString();
+      final contact = (challenge['delivery_contact'] ?? '').toString();
+      final otpCode = await _promptArchiveOtp(contact: contact);
+      if (!mounted || otpCode == null || otpCode.trim().isEmpty) return;
+      final verifiedResult = await _loadBusyData<Map<String, dynamic>>(
+        l10n.pick(en: 'Verifying OTP...', swText: 'Tunathibitisha OTP...'),
+        () => submit(otpRequestId: otpRequestId, otpCode: otpCode.trim()),
+      );
+      if (!mounted || verifiedResult == null) return;
+      result = verifiedResult;
+    }
+
+    await _load();
+    if (!mounted) return;
+    final request = result['request'] is Map
+        ? Map<String, dynamic>.from(result['request'] as Map)
+        : const <String, dynamic>{};
+    final status = (request['status'] ?? '').toString().toUpperCase();
+    setState(() {
+      _statusMessage = status == 'SCHEDULED'
+          ? l10n.pick(
+              en: 'Archive approved and scheduled. It can be cancelled within 24 hours.',
+              swText:
+                  'Ombi limeidhinishwa na kupangwa. Linaweza kughairiwa ndani ya saa 24.',
+            )
+          : l10n.pick(
+              en: 'Archive request sent. It now needs 3 approvals.',
+              swText: 'Ombi la kuhifadhi limetumwa. Sasa linahitaji idhini 3.',
+            );
+      _statusTone = OrbiStatusTone.success;
+    });
+  }
+
+  Future<String?> _promptArchiveOtp({required String contact}) async {
+    final l10n = AppLocalizations.of(context)!;
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(l10n.pick(en: 'Confirm OTP', swText: 'Thibitisha OTP')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              contact.isEmpty
+                  ? l10n.pick(
+                      en: 'Enter the OTP sent to your verified contact.',
+                      swText:
+                          'Weka OTP iliyotumwa kwenye mawasiliano yako yaliyothibitishwa.',
+                    )
+                  : l10n.pick(
+                      en: 'Enter the OTP sent to $contact.',
+                      swText: 'Weka OTP iliyotumwa kwenda $contact.',
+                    ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                labelText: l10n.pick(en: 'OTP code', swText: 'Msimbo wa OTP'),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(l10n.pick(en: 'Cancel', swText: 'Ghairi')),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(controller.text.trim()),
+            child: Text(l10n.pick(en: 'Verify', swText: 'Thibitisha')),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    return result;
+  }
+
   Future<void> _changePotState(
     Map<String, dynamic> pot,
     String nextStatus,
@@ -1319,10 +1733,91 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
     return double.tryParse('$value'.replaceAll(',', '').trim()) ?? 0;
   }
 
+  bool _isArchivedOrPendingArchive(Map<String, dynamic> pot) {
+    final status = (pot['status'] ?? 'ACTIVE').toString().toUpperCase();
+    final metadata = pot['metadata'] is Map
+        ? Map<String, dynamic>.from(pot['metadata'] as Map)
+        : const <String, dynamic>{};
+    return status == 'ARCHIVED' || metadata['pending_archive'] == true;
+  }
+
+  Future<void> _showArchivedPotsSheet(
+    List<Map<String, dynamic>> archived,
+  ) async {
+    final l10n = AppLocalizations.of(context)!;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => _SheetFrame(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _SheetTitle(
+              title: l10n.pick(
+                en: 'Archived Fungu',
+                swText: 'Fungu zilizohifadhiwa',
+              ),
+            ),
+            const SizedBox(height: 12),
+            if (archived.isEmpty)
+              _InlineEmpty(
+                message: l10n.pick(
+                  en: 'No archived Fungu yet.',
+                  swText: 'Hakuna Fungu zilizohifadhiwa bado.',
+                ),
+              )
+            else
+              ...archived.map((pot) {
+                final metadata = pot['metadata'] is Map
+                    ? Map<String, dynamic>.from(pot['metadata'] as Map)
+                    : const <String, dynamic>{};
+                final pending = metadata['pending_archive'] == true;
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(
+                    pending ? Icons.schedule_rounded : Icons.archive_outlined,
+                    color: _sharedPotAccent,
+                  ),
+                  title: Text((pot['name'] ?? 'Fungu').toString()),
+                  subtitle: Text(
+                    pending
+                        ? l10n.pick(
+                            en: 'Archive pending. It can still be cancelled.',
+                            swText:
+                                'Inasubiri kuhifadhiwa. Bado inaweza kughairiwa.',
+                          )
+                        : l10n.pick(
+                            en: 'Archived and hidden from the main list.',
+                            swText:
+                                'Imehifadhiwa na imefichwa kwenye orodha kuu.',
+                          ),
+                  ),
+                );
+              }),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final ui = OrbiTheme.uiOf(context);
+    final pendingInvites = _invitations
+        .where(
+          (invite) =>
+              (invite['status'] ?? '').toString().toUpperCase() == 'PENDING',
+        )
+        .length;
+    final activePots = _pots
+        .where((pot) => !_isArchivedOrPendingArchive(pot))
+        .toList(growable: false);
+    final archivedPots = _pots
+        .where(_isArchivedOrPendingArchive)
+        .toList(growable: false);
     return Scaffold(
       appBar: AppBar(
         title: Row(
@@ -1330,14 +1825,25 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
           children: [
             Icon(Icons.savings_outlined, color: _sharedPotAccent, size: 18),
             const SizedBox(width: 8),
-            Flexible(child: Text(l10n.wealthSharedPotsTitle)),
+            const Flexible(child: Text('Fungu')),
           ],
         ),
+        actions: [
+          IconButton(
+            tooltip: l10n.pick(en: 'Inbox', swText: 'Inbox'),
+            onPressed: _showInbox,
+            icon: Badge.count(
+              isLabelVisible: pendingInvites > 0,
+              count: pendingInvites,
+              child: const Icon(Icons.mail_outline_rounded),
+            ),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _showCreatePotSheet,
         icon: const Icon(Icons.group_add_rounded),
-        label: Text(l10n.wealthNewPot),
+        label: Text(l10n.pick(en: 'Create Fungu', swText: 'Unda Fungu')),
         backgroundColor: _sharedPotAccent,
         foregroundColor: Colors.white,
       ),
@@ -1353,58 +1859,41 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
             child: ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                OrbiActivityCard(
-                  accent: _sharedPotAccent,
-                  hero: true,
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                WealthHeroCard(
+                  icon: Icons.groups_2_rounded,
+                  title: 'Fungu',
+                  subtitle: l10n.pick(
+                    en: 'Track and review this shared fund when needed.',
+                    swText: 'Fuatilia na hakiki fungu hili ukihitaji.',
+                  ),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
                     children: [
-                      Row(
-                        children: [
-                          Container(
-                            width: 38,
-                            height: 38,
-                            decoration: BoxDecoration(
-                              color: _sharedPotAccent.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            child: const Icon(
-                              Icons.groups_2_rounded,
-                              color: _sharedPotAccent,
-                              size: 20,
-                            ),
+                      OrbiHeroMetricChip(
+                        icon: Icons.groups_2_rounded,
+                        label: l10n.pick(en: 'Total pots', swText: 'Vifungu'),
+                        value: '${activePots.length}',
+                      ),
+                      OrbiHeroMetricChip(
+                        icon: Icons.people_alt_outlined,
+                        label: l10n.pick(en: 'Members', swText: 'Members'),
+                        value: '${activePots.length}',
+                      ),
+                      OrbiHeroMetricChip(
+                        icon: Icons.mail_outline_rounded,
+                        label: l10n.pick(en: 'Inbox', swText: 'Inbox'),
+                        value: '$pendingInvites',
+                      ),
+                      ActionChip(
+                        avatar: const Icon(Icons.archive_outlined, size: 16),
+                        label: Text(
+                          l10n.pick(
+                            en: 'Archived ${archivedPots.length}',
+                            swText: 'Zilizohifadhiwa ${archivedPots.length}',
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  l10n.wealthSharedMoneyOrganized,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: Theme.of(context).textTheme.titleMedium
-                                      ?.copyWith(
-                                        color: ui.textPrimary,
-                                        fontWeight: FontWeight.w900,
-                                      ),
-                                ),
-                                const SizedBox(height: 3),
-                                Text(
-                                  l10n.wealthSharedMoneyHelp,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: ui.textMuted,
-                                    fontSize: 12.5,
-                                    height: 1.25,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
+                        ),
+                        onPressed: () => _showArchivedPotsSheet(archivedPots),
                       ),
                     ],
                   ),
@@ -1432,7 +1921,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                       child: Text(l10n.commonTryAgain),
                     ),
                   )
-                else if (_pots.isEmpty)
+                else if (activePots.isEmpty)
                   OrbiStateCard(
                     icon: Icons.people_outline_rounded,
                     title: l10n.wealthNoSharedPotYet,
@@ -1452,7 +1941,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                     children: [
                       Expanded(
                         child: Text(
-                          l10n.wealthSharedPotsTitle,
+                          'Fungu',
                           style: TextStyle(
                             color: ui.textPrimary,
                             fontSize: 17,
@@ -1462,12 +1951,12 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                       ),
                       _metaChip(
                         context,
-                        '${_pots.length} ${_pots.length == 1 ? 'pot' : 'pots'}',
+                        '${activePots.length} ${activePots.length == 1 ? l10n.pick(en: 'Fungu', swText: 'Fungu') : l10n.pick(en: 'Vifungu', swText: 'Vifungu')}',
                       ),
                     ],
                   ),
                   const SizedBox(height: 10),
-                  ..._pots.map((pot) {
+                  ...activePots.map((pot) {
                     final role = (pot['my_role'] ?? 'OWNER').toString();
                     final canWithdraw = role == 'OWNER' || role == 'MANAGER';
                     final canInvite = role == 'OWNER' || role == 'MANAGER';
@@ -1528,8 +2017,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                                         CrossAxisAlignment.start,
                                     children: [
                                       Text(
-                                        (pot['name'] ?? 'Shared Pot')
-                                            .toString(),
+                                        (pot['name'] ?? 'Fungu').toString(),
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                         style: TextStyle(
@@ -1540,7 +2028,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                                       ),
                                       const SizedBox(height: 3),
                                       Text(
-                                        (pot['purpose'] ?? 'Shared pot saving')
+                                        (pot['purpose'] ?? 'Uwekaji wa Fungu')
                                             .toString(),
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
@@ -1584,6 +2072,8 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                                       _showWithdrawSheet(pot);
                                     } else if (value == 'members') {
                                       _showMembersSheet(pot);
+                                    } else if (value == 'report') {
+                                      _showReportSheet(pot);
                                     } else if (value == 'share') {
                                       _showInviteMemberSheet(pot);
                                     } else if (value == 'edit') {
@@ -1593,7 +2083,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                                     } else if (value == 'activate') {
                                       _changePotState(pot, 'ACTIVE');
                                     } else if (value == 'archive') {
-                                      _changePotState(pot, 'ARCHIVED');
+                                      _requestArchivePot(pot);
                                     }
                                   },
                                   itemBuilder: (context) => [
@@ -1604,6 +2094,15 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                                     PopupMenuItem(
                                       value: 'members',
                                       child: Text(l10n.wealthMembers),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'report',
+                                      child: Text(
+                                        l10n.pick(
+                                          en: 'Report',
+                                          swText: 'Ripoti',
+                                        ),
+                                      ),
                                     ),
                                     if (canInvite)
                                       PopupMenuItem(
@@ -1722,6 +2221,151 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
           fontWeight: FontWeight.w600,
         ),
       ),
+    );
+  }
+}
+
+class _SheetFrame extends StatelessWidget {
+  const _SheetFrame({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final ui = OrbiTheme.uiOf(context);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      decoration: BoxDecoration(
+        color: ui.card,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        border: Border(top: BorderSide(color: ui.border)),
+      ),
+      child: SafeArea(top: false, child: child),
+    );
+  }
+}
+
+class _SheetTitle extends StatelessWidget {
+  const _SheetTitle({required this.title});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    final ui = OrbiTheme.uiOf(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Align(
+          child: Container(
+            width: 42,
+            height: 4,
+            decoration: BoxDecoration(
+              color: ui.borderStrong,
+              borderRadius: BorderRadius.circular(999),
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        Text(
+          title,
+          style: TextStyle(
+            color: ui.textPrimary,
+            fontSize: 18,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _InviteRow extends StatelessWidget {
+  const _InviteRow({
+    required this.title,
+    required this.subtitle,
+    required this.pending,
+    this.onAccept,
+    this.onReject,
+  });
+
+  final String title;
+  final String subtitle;
+  final bool pending;
+  final VoidCallback? onAccept;
+  final VoidCallback? onReject;
+
+  @override
+  Widget build(BuildContext context) {
+    final ui = OrbiTheme.uiOf(context);
+    final sw =
+        Localizations.localeOf(context).languageCode.toLowerCase() == 'sw';
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: ui.cardMuted,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: ui.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              color: ui.textPrimary,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            style: TextStyle(color: ui.textMuted, fontSize: 12, height: 1.35),
+          ),
+          if (pending) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: onReject,
+                    child: Text(sw ? 'Kataa' : 'Reject'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: onAccept,
+                    child: Text(sw ? 'Kubali' : 'Accept'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _InlineEmpty extends StatelessWidget {
+  const _InlineEmpty({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final ui = OrbiTheme.uiOf(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: ui.cardMuted,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: ui.border),
+      ),
+      child: Text(message, style: TextStyle(color: ui.textMuted, height: 1.45)),
     );
   }
 }

@@ -92,8 +92,21 @@ class ProfileService {
             .map((item) => Map<String, dynamic>.from(item))
             .toList();
       }
+      if (_looksLikeUserProfile(data)) {
+        return [Map<String, dynamic>.from(data)];
+      }
     }
     return const <Map<String, dynamic>>[];
+  }
+
+  bool _looksLikeUserProfile(Map<dynamic, dynamic> data) {
+    return data.containsKey('id') ||
+        data.containsKey('customer_id') ||
+        data.containsKey('customerId') ||
+        data.containsKey('full_name') ||
+        data.containsKey('fullName') ||
+        data.containsKey('phone') ||
+        data.containsKey('email');
   }
 
   Future<Map<String, dynamic>> lookupUserByCustomerId(String customerId) async {
@@ -416,7 +429,7 @@ class ProfileService {
   String _inferImageContentType(String filePath) {
     final lower = filePath.toLowerCase();
     if (lower.endsWith('.png')) return 'image/png';
-    if (lower.endsWith('.jpg')) return 'image/jpg';
+    if (lower.endsWith('.jpg')) return 'image/jpeg';
     if (lower.endsWith('.jpeg')) {
       return 'image/jpeg';
     }

@@ -23,10 +23,10 @@ This manual provides the definitive technical specification for integrating:
 
 | Parameter | Value | Description |
 | :--- | :--- | :--- |
-| **Production Endpoint** | `https://orbi-financial-technologies-c0re-v2026.onrender.com` | The primary Edge Gateway. **NO LOCALHOST**. |
-| **Development Endpoint** | `https://orbi-financial-technologies-c0re-v2026.onrender.com` | The sandbox environment for testing. |
+| **Production Endpoint** | `https://api.orbifinancial.com` | The organization-managed Core API. **NO LOCALHOST**. |
+| **Development Endpoint** | `https://api.orbifinancial.com` | The configured integration environment. |
 | **API Versioning** | `/v1/{DOMAIN}/{RESOURCE}` | Strict semantic versioning. (Alias: `/api/v1/...` and `/`) |
-| **Real-Time Nexus** | `wss://orbi-financial-technologies-c0re-v2026.onrender.com/nexus-stream` | WebSocket for live balance/security events. |
+| **Real-Time Nexus** | `wss://api.orbifinancial.com/nexus-stream` | WebSocket for live balance/security events. |
 | **Transport Security** | TLS 1.3 (ECC-384) | Mandatory encryption in transit. |
 | **Data Encoding** | JSON (UTF-8) | Standard payload format. |
 
@@ -61,7 +61,7 @@ The system is composed of six autonomous engines working in concert:
 
 The **Nexus Stream** provides a persistent, full-duplex connection for real-time updates.
 
-**Endpoint**: `wss://orbi-financial-technologies-c0re-v2026.onrender.com/nexus-stream`
+**Endpoint**: `wss://api.orbifinancial.com/nexus-stream`
 
 **Authentication Protocol**:
 1.  **Connect**: Establish WebSocket connection.
@@ -667,7 +667,7 @@ The API returns standard HTTP status codes along with a JSON error object: `{ "s
 
 ### 8.1 Login Request
 ```bash
-curl -X POST https://orbi-financial-technologies-c0re-v2026.onrender.com/v1/auth/login \
+curl -X POST https://api.orbifinancial.com/v1/auth/login \
   -H "Content-Type: application/json" \
   -H "x-orbi-app-id: mobile-android" \
   -d '{
@@ -701,14 +701,14 @@ curl -X POST https://orbi-financial-technologies-c0re-v2026.onrender.com/v1/auth
 
 ### 8.2 Get User Profile
 ```bash
-curl -X GET https://orbi-financial-technologies-c0re-v2026.onrender.com/v1/user/profile \
+curl -X GET https://api.orbifinancial.com/v1/user/profile \
   -H "Authorization: Bearer <YOUR_ACCESS_TOKEN>" \
   -H "x-orbi-app-id: mobile-android"
 ```
 
 ### 8.3 System Health Check
 ```bash
-curl -X GET https://orbi-financial-technologies-c0re-v2026.onrender.com/health
+curl -X GET https://api.orbifinancial.com/health
 ```
 
 ---
@@ -751,7 +751,7 @@ Use the `id` from Step 1 to construct the callback URL you provide to the partne
 `https://<YOUR_APP_URL>/v1/webhooks/<PARTNER_UUID>`
 
 **Example**:
-`https://orbi-financial-technologies-c0re-v2026.onrender.com/v1/webhooks/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11`
+`https://api.orbifinancial.com/v1/webhooks/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11`
 
 ### 9.4 Step 3: Security & Verification
 When a request hits this URL:

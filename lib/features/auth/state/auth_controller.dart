@@ -22,6 +22,7 @@ import 'package:orbi_mobileapp/core/utils/user_facing_error.dart';
 import 'package:orbi_mobileapp/core/services/firebase_service.dart';
 import 'package:orbi_mobileapp/core/services/notification_preferences_service.dart';
 import 'package:orbi_mobileapp/core/state/app_settings_controller.dart';
+import 'package:orbi_mobileapp/core/state/app_runtime_cache.dart';
 import 'package:orbi_mobileapp/features/auth/auth_models.dart';
 import 'package:orbi_mobileapp/features/profile/data/profile_service.dart';
 
@@ -46,6 +47,7 @@ class AuthController extends ChangeNotifier {
   final SecureStorageService _storage = SecureStorageService();
 
   bool _isLoading = false;
+  bool _hasInitialized = false;
   bool _isAuthenticated = false;
   String? _error;
   bool _biometricInFlight = false;
@@ -80,6 +82,7 @@ class AuthController extends ChangeNotifier {
   }
 
   bool get isLoading => _isLoading;
+  bool get isInitializing => _isLoading && !_hasInitialized;
   bool get isAuthenticated => _isAuthenticated;
   bool get isReauthLocked => _isReauthLocked;
   bool get accountActivationRequired => _accountActivationRequired;
@@ -733,6 +736,9 @@ class AuthController extends ChangeNotifier {
     String? nationality,
     String? address,
     String? languageCode,
+    String? countryCode,
+    String? countryName,
+    String? dialCode,
     Future<String?> Function()? requestOtp,
   }) async {
     _isLoading = true;
@@ -766,6 +772,9 @@ class AuthController extends ChangeNotifier {
         address: address,
         currency: normalizedCurrency,
         languageCode: languageCode,
+        countryCode: countryCode,
+        countryName: countryName,
+        dialCode: dialCode,
         fcmToken: fcmToken,
       );
 
@@ -831,11 +840,31 @@ class AuthController extends ChangeNotifier {
 
     try {
       final result = await _repo.initiatePasswordReset(normalized);
-      _pendingActivationRequestId =
-          result['requestId']?.toString() ?? result['request_id']?.toString();
+      _pendingActivationRequestId = _pickString([
+        result['requestId'],
+        result['request_id'],
+        result['otpRequestId'],
+        result['otp_request_id'],
+        if (result['challenge'] is Map)
+          (result['challenge'] as Map)['requestId'],
+        if (result['challenge'] is Map)
+          (result['challenge'] as Map)['request_id'],
+      ]);
       _pendingActivationDelivery =
           result['deliveryContact']?.toString() ??
           result['delivery_contact']?.toString();
+      final resolvedRequestId = (_pendingActivationRequestId ?? '').trim();
+      if (resolvedRequestId.isEmpty) {
+        _error =
+            'Password reset could not be started for this account. Confirm the email/phone is registered and active, then request a new OTP.';
+        return false;
+      }
+      if (_isRejectedOtpRequestId(resolvedRequestId)) {
+        _pendingActivationRequestId = null;
+        _error =
+            'Too many OTP requests. Please wait about 60 seconds, then request a fresh OTP.';
+        return false;
+      }
       return true;
     } catch (e) {
       _error = UserFacingError.from(
@@ -857,18 +886,30 @@ class AuthController extends ChangeNotifier {
     String? code,
   }) async {
     final normalized = password.trim();
-    if (normalized.length < 8) {
-      _error = 'Password must be at least 8 characters.';
+    final passwordPolicyError = _passwordPolicyError(normalized);
+    if (passwordPolicyError != null) {
+      _error = passwordPolicyError;
       notifyListeners();
       return false;
     }
 
+    final normalizedIdentifier = (identifier ?? '').trim();
+    final normalizedRequestId = (requestId ?? '').trim();
+    final normalizedCode = _normalizeOtp(code);
+    if (normalizedRequestId.isNotEmpty &&
+        _isRejectedOtpRequestId(normalizedRequestId)) {
+      _error = 'Request a fresh OTP before changing your password.';
+      notifyListeners();
+      return false;
+    }
     final usingOtp =
-        (identifier ?? '').trim().isNotEmpty &&
-        (requestId ?? '').trim().isNotEmpty &&
-        (code ?? '').trim().isNotEmpty;
+        normalizedIdentifier.isNotEmpty &&
+        normalizedRequestId.isNotEmpty &&
+        normalizedCode.isNotEmpty;
     final token = usingOtp ? null : await getValidAccessToken();
     if (!usingOtp && (token == null || token.isEmpty)) {
+      _error = 'Request and verify an OTP before changing your password.';
+      notifyListeners();
       return false;
     }
 
@@ -880,9 +921,9 @@ class AuthController extends ChangeNotifier {
       await _repo.completePasswordReset(
         normalized,
         accessToken: token,
-        identifier: identifier,
-        requestId: requestId,
-        code: code,
+        identifier: normalizedIdentifier,
+        requestId: normalizedRequestId,
+        code: normalizedCode,
       );
       return true;
     } catch (e) {
@@ -896,6 +937,25 @@ class AuthController extends ChangeNotifier {
       _isLoading = false;
       notifyListeners();
     }
+  }
+
+  String? _passwordPolicyError(String password) {
+    if (password.length < 8) {
+      return 'Password must be at least 8 characters.';
+    }
+    if (!RegExp(r'[a-z]').hasMatch(password)) {
+      return 'Password must include a lowercase letter.';
+    }
+    if (!RegExp(r'[A-Z]').hasMatch(password)) {
+      return 'Password must include an uppercase letter.';
+    }
+    if (!RegExp(r'[0-9]').hasMatch(password)) {
+      return 'Password must include a number.';
+    }
+    if (!RegExp(r'[^A-Za-z0-9]').hasMatch(password)) {
+      return 'Password must include a special character, for example @, #, or !.';
+    }
+    return null;
   }
 
   Future<bool> initiateAccountConfirmation(
@@ -1029,9 +1089,24 @@ class AuthController extends ChangeNotifier {
 
   String _pickString(List<dynamic> values) {
     for (final v in values) {
-      if (v is String && v.trim().isNotEmpty) return v.trim();
+      final text = v?.toString().trim();
+      if (text != null && text.isNotEmpty && text.toLowerCase() != 'null') {
+        return text;
+      }
     }
     return '';
+  }
+
+  String _normalizeOtp(String? value) {
+    return (value ?? '').replaceAll(RegExp(r'[\s-]'), '').trim();
+  }
+
+  bool _isRejectedOtpRequestId(String requestId) {
+    final upper = requestId.trim().toUpperCase();
+    return upper.isEmpty ||
+        upper == 'THROTTLED' ||
+        upper.startsWith('ERROR_') ||
+        upper == 'ERROR';
   }
 
   bool _looksLikeActivationRequirement(Object error) {

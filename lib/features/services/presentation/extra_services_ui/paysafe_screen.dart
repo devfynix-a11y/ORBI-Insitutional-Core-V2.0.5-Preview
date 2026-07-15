@@ -11,6 +11,7 @@ import '../../../../core/utils/money_format.dart';
 import '../../../../core/widgets/orbi_amount_field.dart';
 import '../../../../core/widgets/orbi_async_feedback.dart';
 import '../../../payment/data/escrow_service.dart';
+import '../../../profile/data/profile_service.dart';
 
 class PaySafeScreen extends StatefulWidget {
   const PaySafeScreen({super.key});
@@ -85,6 +86,8 @@ class _PaySafeScreenState extends State<PaySafeScreen>
       builder: (_) => _PaySafeCreateSheet(isSw: _isSw),
     );
     if (result == null) return;
+    final confirmed = await _confirmPaySafeCreation(result);
+    if (!confirmed) return;
 
     await _runAction(
       success: _t('PaySafe created.', 'PaySafe imeundwa.'),
@@ -101,6 +104,134 @@ class _PaySafeScreenState extends State<PaySafeScreen>
       referenceId: null,
       actionType: 'create',
     );
+  }
+
+  Future<bool> _confirmPaySafeCreation(_PaySafeDraft draft) async {
+    final amount = formatAppBalanceAmount(
+      draft.amount,
+      'TZS',
+      locale: _isSw ? 'sw_TZ' : 'en_US',
+    );
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        final colors = OrbiTheme.uiOf(dialogContext);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 18,
+            vertical: 24,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          title: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: colors.successSoft,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Icon(Icons.verified_user_rounded, color: colors.success),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  _t('Confirm PaySafe', 'Thibitisha PaySafe'),
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        colors.successSoft.withValues(alpha: 0.88),
+                        colors.cardMuted.withValues(alpha: 0.72),
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: colors.success.withValues(alpha: 0.24),
+                    ),
+                  ),
+                  child: Text(
+                    _t(
+                      'Money is safe until you confirm release.',
+                      'Fedha ziko salama hadi uthibitishe kuziachia.',
+                    ),
+                    style: TextStyle(
+                      color: colors.textPrimary,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                _PaySafeConfirmRow(
+                  label: _t('Receiver', 'Mpokeaji'),
+                  value: draft.recipientName,
+                ),
+                _PaySafeConfirmRow(
+                  label: _t('Amount', 'Kiasi'),
+                  value: amount,
+                  highlight: true,
+                ),
+                _PaySafeConfirmRow(
+                  label: _t('Hold window', 'Muda wa hold'),
+                  value: _t(
+                    '${draft.holdWindowHours} hours',
+                    'Saa ${draft.holdWindowHours}',
+                  ),
+                ),
+                _PaySafeConfirmRow(
+                  label: _t('Purpose', 'Sababu'),
+                  value: draft.description,
+                ),
+                _PaySafeConfirmRow(
+                  label: _t('Release terms', 'Masharti'),
+                  value: draft.terms,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _t(
+                    'We will notify both sides after this PaySafe is created.',
+                    'Tutawajulisha pande zote baada ya PaySafe hii kuundwa.',
+                  ),
+                  style: TextStyle(color: colors.textMuted, fontSize: 12.5),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: Text(_t('Review', 'Pitia tena')),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              icon: const Icon(Icons.lock_rounded),
+              label: Text(_t('Confirm & Create', 'Thibitisha na Unda')),
+            ),
+          ],
+        );
+      },
+    );
+    return confirmed == true;
   }
 
   Future<void> _releasePaySafe(Map<String, dynamic> escrow) async {
@@ -237,7 +368,7 @@ class _PaySafeScreenState extends State<PaySafeScreen>
     if (!mounted) return;
     setState(() => _busy = true);
     try {
-      final rawResult = await action().timeout(const Duration(seconds: 15));
+      final rawResult = await action().timeout(const Duration(seconds: 28));
       final result = rawResult is Map
           ? Map<String, dynamic>.from(rawResult)
           : const <String, dynamic>{};
@@ -257,10 +388,38 @@ class _PaySafeScreenState extends State<PaySafeScreen>
       unawaited(_loadPaySafe(quiet: true));
     } catch (error) {
       if (!mounted) return;
+      if (_isActionPendingError(error)) {
+        setState(() => _busy = false);
+        _showSnack(
+          _t(
+            'PaySafe request is still processing. We are refreshing your list.',
+            'Ombi la PaySafe bado linachakatwa. Tunahuisha orodha yako.',
+          ),
+        );
+        await _refreshAfterPendingAction();
+        return;
+      }
       _showSnack(_friendlyError(error), isError: true);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  bool _isActionPendingError(Object error) {
+    if (error is TimeoutException) return true;
+    if (error is DioException) {
+      return error.type == DioExceptionType.connectionTimeout ||
+          error.type == DioExceptionType.receiveTimeout ||
+          error.type == DioExceptionType.sendTimeout;
+    }
+    return false;
+  }
+
+  Future<void> _refreshAfterPendingAction() async {
+    await _loadPaySafe(quiet: true);
+    await Future<void>.delayed(const Duration(seconds: 2));
+    if (!mounted) return;
+    await _loadPaySafe(quiet: true);
   }
 
   void _showSnack(String message, {bool isError = false}) {
@@ -287,7 +446,10 @@ class _PaySafeScreenState extends State<PaySafeScreen>
     } else if (error is DioException) {
       final data = error.response?.data;
       if (data is Map) {
-        raw = (data['message'] ?? data['error'] ?? data).toString();
+        // Prefer machine-readable codes so localized business guidance is not
+        // masked by a generic gateway message.
+        raw = (data['code'] ?? data['error'] ?? data['message'] ?? data)
+            .toString();
       } else {
         raw = error.message ?? raw;
       }
@@ -439,7 +601,10 @@ class _PaySafeScreenState extends State<PaySafeScreen>
     if (_availableActionFlag(escrow, 'accept')) return true;
     return _actorRole(escrow) == 'receiver' &&
         _isAwaitingReceiverAcceptance(escrow) &&
-        !_pickBool([escrow['holdWindowExpired'], escrow['hold_window_expired']]);
+        !_pickBool([
+          escrow['holdWindowExpired'],
+          escrow['hold_window_expired'],
+        ]);
   }
 
   bool _canRefund(Map<String, dynamic> escrow) {
@@ -480,8 +645,11 @@ class _PaySafeScreenState extends State<PaySafeScreen>
     required String action,
   }) {
     final merged = Map<String, dynamic>.from(current)..addAll(response);
-    if (_pickString([merged['status'], merged['state'], merged['escrow_status']])
-        .isNotEmpty) {
+    if (_pickString([
+      merged['status'],
+      merged['state'],
+      merged['escrow_status'],
+    ]).isNotEmpty) {
       return merged;
     }
 
@@ -494,10 +662,7 @@ class _PaySafeScreenState extends State<PaySafeScreen>
           'release_requested_at': DateTime.now().toUtc().toIso8601String(),
         };
       case 'refund':
-        return {
-          ...merged,
-          'status': 'REFUND_PENDING',
-        };
+        return {...merged, 'status': 'REFUND_PENDING'};
       case 'accept':
         return {
           ...merged,
@@ -506,10 +671,7 @@ class _PaySafeScreenState extends State<PaySafeScreen>
           'receiver_accepted_at': DateTime.now().toUtc().toIso8601String(),
         };
       case 'dispute':
-        return {
-          ...merged,
-          'status': 'UNDER_REVIEW',
-        };
+        return {...merged, 'status': 'UNDER_REVIEW'};
       default:
         return merged;
     }
@@ -520,10 +682,7 @@ class _PaySafeScreenState extends State<PaySafeScreen>
       return _t('Receiver accepted hold', 'Mpokeaji amekubali hold');
     }
     if (_isAwaitingReceiverAcceptance(escrow)) {
-      return _t(
-        'Awaiting receiver acceptance',
-        'Inasubiri idhini ya mpokeaji',
-      );
+      return _t('Awaiting receiver acceptance', 'Inasubiri idhini ya mpokeaji');
     }
     final status = _normalizedStatus(escrow);
     if (status.isEmpty) return _t('Pending', 'Inasubiri');
@@ -546,12 +705,7 @@ class _PaySafeScreenState extends State<PaySafeScreen>
       escrow['totalAmount'],
       escrow['total_amount'],
     ]);
-    return formatCompactMoney(
-      amount,
-      _currency(escrow),
-      locale: _localeTag,
-      compactFrom: kCompactMoneyThreshold,
-    );
+    return formatFinancialMoney(amount, _currency(escrow), locale: _localeTag);
   }
 
   String _title(Map<String, dynamic> escrow) {
@@ -655,7 +809,10 @@ class _PaySafeScreenState extends State<PaySafeScreen>
       ),
       body: OrbiLoadingOverlay(
         loading: _busy,
-        message: _t('Please wait', 'Tafadhali subiri'),
+        message: _t(
+          'Processing PaySafe securely...',
+          'Tunachakata PaySafe kwa usalama...',
+        ),
         child: Stack(
           children: [
             Positioned.fill(
@@ -802,6 +959,7 @@ class _PaySafeScreenState extends State<PaySafeScreen>
 class _PaySafeDraft {
   const _PaySafeDraft({
     required this.recipientId,
+    required this.recipientName,
     required this.amount,
     required this.description,
     required this.terms,
@@ -809,10 +967,25 @@ class _PaySafeDraft {
   });
 
   final String recipientId;
+  final String recipientName;
   final double amount;
   final String description;
   final String terms;
   final int holdWindowHours;
+}
+
+class _PaySafeRecipientPreview {
+  const _PaySafeRecipientPreview({
+    required this.recipientId,
+    required this.name,
+    required this.displayIdentifier,
+    this.avatarUrl,
+  });
+
+  final String recipientId;
+  final String name;
+  final String displayIdentifier;
+  final String? avatarUrl;
 }
 
 class _PaySafeCreateSheet extends StatefulWidget {
@@ -826,14 +999,21 @@ class _PaySafeCreateSheet extends StatefulWidget {
 
 class _PaySafeCreateSheetState extends State<_PaySafeCreateSheet> {
   final _formKey = GlobalKey<FormState>();
+  final _profileService = ProfileService();
   final _recipientController = TextEditingController();
   final _amountController = TextEditingController();
   final _descriptionController = TextEditingController();
   final _termsController = TextEditingController();
+  Timer? _lookupDebounce;
+  bool _lookupLoading = false;
+  String? _lookupError;
+  _PaySafeRecipientPreview? _recipientPreview;
+  int _lookupGeneration = 0;
   int _holdWindowHours = 24;
 
   @override
   void dispose() {
+    _lookupDebounce?.cancel();
     _recipientController.dispose();
     _amountController.dispose();
     _descriptionController.dispose();
@@ -842,6 +1022,142 @@ class _PaySafeCreateSheetState extends State<_PaySafeCreateSheet> {
   }
 
   String _t(String en, String sw) => widget.isSw ? sw : en;
+
+  void _onRecipientChanged(String value) {
+    _lookupDebounce?.cancel();
+    final query = value.trim();
+    if (query.isEmpty) {
+      _lookupGeneration++;
+      setState(() {
+        _lookupLoading = false;
+        _lookupError = null;
+        _recipientPreview = null;
+      });
+      return;
+    }
+
+    if (query.length < 5) {
+      _lookupGeneration++;
+      setState(() {
+        _lookupLoading = false;
+        _recipientPreview = null;
+        _lookupError = _t(
+          'Enter at least 5 characters to search.',
+          'Weka angalau herufi 5 kutafuta.',
+        );
+      });
+      return;
+    }
+
+    final normalized = _normalizeLookupQuery(query);
+    final generation = ++_lookupGeneration;
+    setState(() {
+      _lookupLoading = true;
+      _lookupError = null;
+      _recipientPreview = null;
+    });
+    _lookupDebounce = Timer(const Duration(milliseconds: 350), () {
+      _lookupRecipient(normalized, generation);
+    });
+  }
+
+  Future<void> _lookupRecipient(String query, int generation) async {
+    try {
+      final users = await _profileService.lookupUsers(query);
+      if (!_isLookupCurrent(query, generation)) return;
+      final match = users.isEmpty ? null : users.first;
+      if (match == null) {
+        setState(() {
+          _lookupLoading = false;
+          _recipientPreview = null;
+          _lookupError = _t(
+            'Recipient not found. Check the ORBI ID or mobile number.',
+            'Mpokeaji hajapatikana. Hakiki ORBI ID au namba ya simu.',
+          );
+        });
+        return;
+      }
+
+      final recipientId = _pickString([
+        match['customer_id'],
+        match['customerId'],
+        match['recipient_id'],
+        match['recipientId'],
+        match['id'],
+      ]);
+      final name = _pickString([
+        match['full_name'],
+        match['fullName'],
+        match['name'],
+        match['display_name'],
+      ]);
+      if (recipientId.isEmpty || name.isEmpty) {
+        setState(() {
+          _lookupLoading = false;
+          _recipientPreview = null;
+          _lookupError = _t(
+            'Recipient details are incomplete. Try another ORBI ID or phone.',
+            'Taarifa za mpokeaji hazijakamilika. Jaribu ORBI ID au simu nyingine.',
+          );
+        });
+        return;
+      }
+
+      setState(() {
+        _lookupLoading = false;
+        _lookupError = null;
+        _recipientPreview = _PaySafeRecipientPreview(
+          recipientId: recipientId,
+          name: name,
+          displayIdentifier: _pickString([
+            match['customer_id'],
+            match['customerId'],
+            match['phone'],
+            match['email'],
+            query,
+          ]),
+          avatarUrl: _pickString([
+            match['avatar_url'],
+            match['avatarUrl'],
+            match['profile_image'],
+          ]),
+        );
+      });
+    } catch (error) {
+      if (!_isLookupCurrent(query, generation)) return;
+      setState(() {
+        _lookupLoading = false;
+        _recipientPreview = null;
+        _lookupError = mapBackendStatusMessage(
+          error.toString(),
+          sw: widget.isSw,
+          fallback: _t(
+            'Recipient lookup is unavailable right now. Please try again.',
+            'Utafutaji wa mpokeaji haupatikani kwa sasa. Tafadhali jaribu tena.',
+          ),
+        );
+      });
+    }
+  }
+
+  bool _isLookupCurrent(String query, int generation) =>
+      generation == _lookupGeneration &&
+      _normalizeLookupQuery(_recipientController.text.trim()) == query;
+
+  String _normalizeLookupQuery(String value) {
+    final trimmed = value.trim();
+    final upper = trimmed.toUpperCase();
+    if (upper.startsWith('OB') || upper.contains('-')) return upper;
+    return trimmed;
+  }
+
+  String _pickString(Iterable<dynamic> values) {
+    for (final value in values) {
+      final text = value?.toString().trim() ?? '';
+      if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
+    }
+    return '';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -898,20 +1214,60 @@ class _PaySafeCreateSheetState extends State<_PaySafeCreateSheet> {
                 TextFormField(
                   controller: _recipientController,
                   textInputAction: TextInputAction.next,
+                  onChanged: _onRecipientChanged,
                   decoration: InputDecoration(
-                    labelText: _t('Recipient ORBI ID', 'ORBI ID ya mpokeaji'),
-                    hintText: 'OB26-0000-0000',
+                    labelText: _t(
+                      'Recipient ORBI ID / Mobile Number',
+                      'ORBI ID / Namba ya simu ya mpokeaji',
+                    ),
+                    hintText: 'OB26-0000-0000 / +255...',
+                    suffixIcon: _lookupLoading
+                        ? const Padding(
+                            padding: EdgeInsets.all(13),
+                            child: SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : _recipientPreview != null
+                        ? Icon(Icons.verified_rounded, color: colors.success)
+                        : null,
                   ),
                   validator: (value) {
                     if ((value ?? '').trim().isEmpty) {
                       return _t(
-                        'Enter recipient ORBI ID',
-                        'Weka ORBI ID ya mpokeaji',
+                        'Enter recipient ORBI ID or mobile number',
+                        'Weka ORBI ID au namba ya simu ya mpokeaji',
+                      );
+                    }
+                    if (_recipientPreview == null) {
+                      return _t(
+                        'Verify the recipient before continuing.',
+                        'Thibitisha mpokeaji kabla ya kuendelea.',
                       );
                     }
                     return null;
                   },
                 ),
+                if (_lookupError != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    _lookupError!,
+                    style: TextStyle(
+                      color: colors.danger,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+                if (_recipientPreview != null) ...[
+                  const SizedBox(height: 10),
+                  _PaySafeRecipientCard(
+                    preview: _recipientPreview!,
+                    isSw: widget.isSw,
+                  ),
+                ],
                 const SizedBox(height: 12),
                 OrbiAmountField(
                   controller: _amountController,
@@ -972,6 +1328,7 @@ class _PaySafeCreateSheetState extends State<_PaySafeCreateSheet> {
                     DropdownMenuItem(value: 24, child: Text('24 hours')),
                     DropdownMenuItem(value: 48, child: Text('48 hours')),
                     DropdownMenuItem(value: 72, child: Text('72 hours')),
+                    DropdownMenuItem(value: 168, child: Text('7 days')),
                   ],
                   onChanged: (value) {
                     setState(() => _holdWindowHours = value ?? 24);
@@ -987,22 +1344,31 @@ class _PaySafeCreateSheetState extends State<_PaySafeCreateSheet> {
                 ),
                 const SizedBox(height: 20),
                 FilledButton.icon(
-                  onPressed: () {
-                    if (!(_formKey.currentState?.validate() ?? false)) return;
-                    final amount =
-                        AmountInputFormatter.tryParse(_amountController.text) ??
-                        0;
-                    if (amount <= 0) return;
-                    Navigator.of(context).pop(
-                      _PaySafeDraft(
-                        recipientId: _recipientController.text.trim(),
-                        amount: amount,
-                        description: _descriptionController.text.trim(),
-                        terms: _termsController.text.trim(),
-                        holdWindowHours: _holdWindowHours,
-                      ),
-                    );
-                  },
+                  onPressed: _lookupLoading || _recipientPreview == null
+                      ? null
+                      : () {
+                          if (!(_formKey.currentState?.validate() ?? false)) {
+                            return;
+                          }
+                          final amount =
+                              AmountInputFormatter.tryParse(
+                                _amountController.text,
+                              ) ??
+                              0;
+                          if (amount <= 0) return;
+                          final recipient = _recipientPreview;
+                          if (recipient == null) return;
+                          Navigator.of(context).pop(
+                            _PaySafeDraft(
+                              recipientId: recipient.recipientId,
+                              recipientName: recipient.name,
+                              amount: amount,
+                              description: _descriptionController.text.trim(),
+                              terms: _termsController.text.trim(),
+                              holdWindowHours: _holdWindowHours,
+                            ),
+                          );
+                        },
                   icon: const Icon(Icons.lock_outline_rounded),
                   label: Text(_t('Create PaySafe', 'Unda PaySafe')),
                 ),
@@ -1011,6 +1377,169 @@ class _PaySafeCreateSheetState extends State<_PaySafeCreateSheet> {
           ),
         );
       },
+    );
+  }
+}
+
+class _PaySafeRecipientCard extends StatelessWidget {
+  const _PaySafeRecipientCard({required this.preview, required this.isSw});
+
+  final _PaySafeRecipientPreview preview;
+  final bool isSw;
+
+  String _t(String en, String sw) => isSw ? sw : en;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = OrbiTheme.uiOf(context);
+    final avatarUrl = preview.avatarUrl?.trim() ?? '';
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [colors.card, colors.cardMuted.withValues(alpha: 0.78)],
+        ),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: colors.borderStrong.withValues(alpha: 0.55)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.10),
+            blurRadius: 18,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(2),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: colors.success.withValues(alpha: 0.55)),
+              color: colors.successSoft.withValues(alpha: 0.35),
+            ),
+            child: CircleAvatar(
+              radius: 24,
+              backgroundColor: colors.cardStrong,
+              backgroundImage: avatarUrl.isNotEmpty
+                  ? NetworkImage(avatarUrl)
+                  : null,
+              child: avatarUrl.isEmpty
+                  ? Icon(Icons.person_rounded, color: colors.success)
+                  : null,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: colors.successSoft.withValues(alpha: 0.75),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: colors.success.withValues(alpha: 0.22),
+                    ),
+                  ),
+                  child: Text(
+                    _t('Recipient verified', 'Mpokeaji amethibitishwa'),
+                    style: TextStyle(
+                      color: colors.success,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  preview.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  preview.displayIdentifier,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: colors.textMuted,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: colors.successSoft,
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: Icon(Icons.check_rounded, color: colors.success, size: 20),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PaySafeConfirmRow extends StatelessWidget {
+  const _PaySafeConfirmRow({
+    required this.label,
+    required this.value,
+    this.highlight = false,
+  });
+
+  final String label;
+  final String value;
+  final bool highlight;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = OrbiTheme.uiOf(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 98,
+            child: Text(
+              label,
+              style: TextStyle(
+                color: colors.textMuted,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                color: highlight ? colors.success : colors.textPrimary,
+                fontWeight: highlight ? FontWeight.w900 : FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

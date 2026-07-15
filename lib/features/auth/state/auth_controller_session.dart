@@ -151,6 +151,7 @@ Future<void> _authPopulateInMemorySessionFromStorage(
     'access_token': token,
     'user': storedProfile ?? {},
   });
+  AppRuntimeCache.rememberSession(controller.currentSession!.toJson());
 }
 
 Future<void> _authRefreshFullSessionProfile(
@@ -188,6 +189,7 @@ Future<void> _authRefreshFullSessionProfile(
     'access_token': token,
     'user': merged,
   });
+  AppRuntimeCache.rememberSession(controller.currentSession!.toJson());
   await controller._sessionManager.saveSession(
     controller.currentSession!.toJson(),
   );
@@ -289,6 +291,7 @@ Future<bool> _authRestoreSessionFromPin(AuthController controller) async {
         controller.currentSession?.user.rawData ??
         const <String, dynamic>{},
   });
+  AppRuntimeCache.rememberSession(controller.currentSession!.toJson());
   controller._client.setAccessToken(token);
   await controller._finalizeAuthenticatedSession(
     fallbackEmail: fallbackEmail,
@@ -358,6 +361,7 @@ Future<void> _authInitialize(AuthController controller) async {
         'access_token': token,
         'user': profile ?? {},
       });
+      AppRuntimeCache.rememberSession(controller.currentSession!.toJson());
       controller._client.setAccessToken(token);
       final coldStartFromBackground =
           appBackgroundedAt != null && !reauthLockRequired;
@@ -418,6 +422,7 @@ Future<void> _authInitialize(AuthController controller) async {
     controller._clearReauthLock();
     await controller._storage.clearAppBackgroundedAt();
   } finally {
+    controller._hasInitialized = true;
     controller._isLoading = false;
     controller._notifyChanged();
   }

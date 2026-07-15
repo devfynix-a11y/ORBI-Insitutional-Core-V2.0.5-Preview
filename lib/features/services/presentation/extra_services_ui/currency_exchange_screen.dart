@@ -134,12 +134,7 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
   }
 
   String _money(double amount, String currency) {
-    return formatCompactMoney(
-      amount,
-      currency,
-      locale: _localeTag,
-      compactFrom: kCompactMoneyThreshold,
-    );
+    return formatFinancialMoney(amount, currency, locale: _localeTag);
   }
 
   String _fxRateLabel(double rate) {

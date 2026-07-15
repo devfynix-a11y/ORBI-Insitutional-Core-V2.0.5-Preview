@@ -39,6 +39,7 @@ import '../../core/widgets/orbi_app_bar_new.dart';
 import '../../core/widgets/orbi_loading_landing.dart';
 import '../../core/widgets/orbi_state_card.dart';
 import '../dashboard/state/dashboard_controller.dart';
+import '../wallet/data/wallet_service.dart';
 
 part 'app_shell_bootstrap.dart';
 part 'app_shell_navigation.dart';
@@ -150,10 +151,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       final profileController = context.read<ProfileController>();
       final notificationController = context.read<NotificationController>();
       final goalsController = context.read<GoalsController>();
+      final walletService = WalletService();
 
       await Future.wait<void>([
         dashboardController.fetchDashboardData(token),
         profileController.loadProfile(),
+        walletService.getWallets(forceRefresh: true).then((_) {}),
       ]);
       if (!mounted) return;
 
@@ -171,6 +174,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           await Future.wait<void>([
             notificationController.fetch(token),
             goalsController.loadAll(token, notify: false),
+            walletService
+                .getWalletTransactions(
+                  '',
+                  limit: 50,
+                  offset: 0,
+                  forceRefresh: true,
+                )
+                .then((_) {}),
           ]);
           await _auth?.refreshCurrentProfile();
         } catch (e) {

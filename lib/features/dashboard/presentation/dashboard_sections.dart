@@ -800,7 +800,7 @@ class _SmartCarouselLayerState extends State<_SmartCarouselLayer> {
         ? [
             SmartCarouselCardData(
               type: SmartCarouselCardType.goalProgress,
-              title: sw ? 'Mapendekezo' : 'Smart Carousel',
+              title: sw ? 'Huduma na Kazi' : 'Services & Tasks',
               headline: sw
                   ? 'Hakuna pendekezo jipya'
                   : 'No live recommendation yet',
@@ -819,10 +819,10 @@ class _SmartCarouselLayerState extends State<_SmartCarouselLayer> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _SectionHeading(
-          title: sw ? 'Muhtasari Mahiri' : 'Smart Carousel',
+          title: sw ? 'Huduma na Kazi' : 'Services & Tasks',
           subtitle: sw
-              ? 'Taarifa muhimu zinazobadilika zenyewe.'
-              : 'Useful updates that rotate automatically.',
+              ? 'Fuatilia huduma, maombi na kazi muhimu hapa.'
+              : 'Track services, requests, and important tasks here.',
         ),
         const SizedBox(height: 12),
         Listener(

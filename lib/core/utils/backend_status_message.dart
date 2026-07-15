@@ -49,6 +49,53 @@ String mapBackendStatusMessage(
       'Kikao chako kinahitaji kusasishwa. Tafadhali ingia tena.',
     );
   }
+  if (upper.contains('OTP_THROTTLED') ||
+      upper.contains('TOO MANY') ||
+      upper.contains('RATE LIMIT') ||
+      upper.contains('429') ||
+      upper.contains('THROTTLE')) {
+    return pick(
+      'Too many attempts. Please wait about 60 seconds, then try again.',
+      'Majaribio ni mengi. Tafadhali subiri takriban sekunde 60, kisha jaribu tena.',
+    );
+  }
+  if (upper.contains('INVALID_OTP') ||
+      upper.contains('OTP INVALID') ||
+      upper.contains('OTP EXPIRED') ||
+      upper.contains('VERIFICATION CODE')) {
+    return pick(
+      'The OTP code is invalid or expired. Request a new code and try again.',
+      'Msimbo wa OTP si sahihi au umeisha muda. Omba msimbo mpya kisha jaribu tena.',
+    );
+  }
+  if (upper.contains('PASSWORD_RECENTLY_USED') ||
+      upper.contains('INVALIDPASSWORDHISTORY')) {
+    return pick(
+      'Choose a new password you have not used before.',
+      'Chagua nywila mpya ambayo hujawahi kutumia kabla.',
+    );
+  }
+  if (upper.contains('INVALID_PASSWORD_POLICY') ||
+      upper.contains('INVALID PASSWORD') ||
+      upper.contains('PASSWORD MUST') ||
+      upper.contains('MUST CONTAIN AT LEAST 1')) {
+    return pick(
+      'Password must be at least 8 characters and include uppercase, lowercase, number, and special character.',
+      'Nywila lazima iwe na angalau herufi/tarakimu 8, herufi kubwa, herufi ndogo, namba, na alama maalum.',
+    );
+  }
+  if (upper.contains('PASSWORD_RESET_CHALLENGE_REQUIRED')) {
+    return pick(
+      'Request and enter the OTP before changing your password.',
+      'Omba na uweke OTP kabla ya kubadili nywila.',
+    );
+  }
+  if (upper.contains('USE_EMAIL_FOR_NON_TZ_PASSWORD_RESET')) {
+    return pick(
+      'For accounts outside Tanzania, password reset works best with your registered email.',
+      'Kwa akaunti zilizo nje ya Tanzania, kubadili nywila hufanya kazi vizuri kwa email uliyosajili.',
+    );
+  }
   if (upper.contains('NODE_ORIGIN_MISMATCH') ||
       upper.contains('ROLE_HEADER_REQUIRED') ||
       upper.contains('ROLE_HEADER_MISMATCH')) {
@@ -61,6 +108,124 @@ String mapBackendStatusMessage(
     return pick(
       'This wallet is locked. Unlock it first to continue.',
       'Walleti hii imefungwa. Ifungue kwanza ili kuendelea.',
+    );
+  }
+  if (upper.contains('PAYSAFE_ESCROW_QUERY_FAILED')) {
+    return pick(
+      'PaySafe records could not be loaded from the ledger. Please try again shortly.',
+      'Taarifa za PaySafe hazikuweza kusomwa kutoka ledger. Tafadhali jaribu tena baada ya muda mfupi.',
+    );
+  }
+  if (upper.contains('PAYSAFE_ESCROW_QUERY_TIMEOUT') ||
+      upper.contains('PAYSAFE_ESCROW_CREATE_TIMEOUT') ||
+      upper.contains('PAYSAFE_TRANSITION_TIMEOUT')) {
+    return pick(
+      'PaySafe is taking longer than expected. Please try again shortly.',
+      'PaySafe inachukua muda kuliko kawaida. Tafadhali jaribu tena baada ya muda mfupi.',
+    );
+  }
+  if (upper.contains('PAYSAFE_VAULT_NOT_FOUND')) {
+    return pick(
+      'Your PaySafe wallet is not ready yet. Refresh your wallet or contact support if this continues.',
+      'Walleti yako ya PaySafe bado haijawa tayari. Sasisha walleti au wasiliana na support ikiwa itaendelea.',
+    );
+  }
+  if (upper.contains('PAYSAFE_VAULT_UNAVAILABLE') ||
+      upper.contains('PAYSAFE_VAULT_LOOKUP_FAILED')) {
+    return pick(
+      'PaySafe wallet service is temporarily unavailable. Please try again shortly.',
+      'Huduma ya walleti ya PaySafe haipatikani kwa muda. Tafadhali jaribu tena baada ya muda mfupi.',
+    );
+  }
+  if (upper.contains('VAULT_OFFLINE')) {
+    return pick(
+      'Vault service is offline. Please try again shortly.',
+      'Huduma ya vault haipo hewani kwa sasa. Tafadhali jaribu tena baada ya muda mfupi.',
+    );
+  }
+  if (upper.contains('SERVICE_ROLE_REQUIRED')) {
+    return pick(
+      'PaySafe settlement service is not configured correctly. Please contact support.',
+      'Huduma ya settlement ya PaySafe haijasanidiwa vizuri. Tafadhali wasiliana na support.',
+    );
+  }
+  if (upper.contains('PAYSAFE_AMOUNT_INVALID')) {
+    return pick(
+      'Enter a valid PaySafe amount.',
+      'Weka kiasi sahihi cha PaySafe.',
+    );
+  }
+  if (upper.contains('PAYSAFE_DESCRIPTION_REQUIRED')) {
+    return pick(
+      'Enter a short PaySafe description.',
+      'Weka maelezo mafupi ya PaySafe.',
+    );
+  }
+  if (upper.contains('RECIPIENT_NOT_FOUND')) {
+    return pick(
+      'We could not find that recipient. Check their ORBI ID, phone, or email and try again.',
+      'Hatukumpata mpokeaji huyo. Hakiki ORBI ID, simu, au email yake kisha jaribu tena.',
+    );
+  }
+  if (upper.contains('PAYSAFE_SELF_ESCROW_NOT_ALLOWED')) {
+    return pick(
+      'You cannot create a PaySafe with yourself.',
+      'Huwezi kutengeneza PaySafe na wewe mwenyewe.',
+    );
+  }
+  if (upper.contains('OPERATING_WALLET_REQUIRED')) {
+    return pick(
+      'Your main wallet is not ready for PaySafe yet. Refresh your wallet or contact support.',
+      'Walleti yako kuu bado haiko tayari kwa PaySafe. Sasisha walleti au wasiliana na support.',
+    );
+  }
+  if (upper.contains('RECIPIENT_VAULT_NOT_FOUND')) {
+    return pick(
+      'The recipient wallet is not ready for PaySafe yet.',
+      'Walleti ya mpokeaji bado haiko tayari kwa PaySafe.',
+    );
+  }
+  if (upper.contains('PAYSAFE_SENDER_REGISTRY_INVALID')) {
+    return pick(
+      'This PaySafe can only be created from a customer account.',
+      'PaySafe hii inaweza kuanzishwa na akaunti ya mteja pekee.',
+    );
+  }
+  if (upper.contains('PAYSAFE_RECIPIENT_REGISTRY_INVALID')) {
+    return pick(
+      'This recipient type is not supported for this PaySafe flow yet.',
+      'Aina hii ya mpokeaji bado haiungwi mkono kwenye PaySafe hii.',
+    );
+  }
+  if (upper.contains('PAYSAFE_CURRENCY_MISMATCH')) {
+    return pick(
+      'Both PaySafe wallets must use the same currency.',
+      'Walleti zote za PaySafe lazima zitumie sarafu moja.',
+    );
+  }
+  if (upper.contains('INSUFFICIENT_FUNDS')) {
+    return pick(
+      'You do not have enough balance to create this PaySafe.',
+      'Salio lako halitoshi kutengeneza PaySafe hii.',
+    );
+  }
+  if (upper.contains('PAYSAFE_SENDER_ACCOUNT_NOT_ACTIVE') ||
+      upper.contains('PAYSAFE_RECIPIENT_ACCOUNT_NOT_ACTIVE')) {
+    return pick(
+      'One of the accounts is not active for PaySafe.',
+      'Moja ya akaunti haiko active kwa PaySafe.',
+    );
+  }
+  if (upper.contains('ESCROW_ACCESS_DENIED')) {
+    return pick(
+      'You do not have access to this PaySafe.',
+      'Huna ruhusa ya kuona PaySafe hii.',
+    );
+  }
+  if (upper.contains('ESCROW_NOT_FOUND')) {
+    return pick(
+      'This PaySafe record could not be found.',
+      'Taarifa hii ya PaySafe haijapatikana.',
     );
   }
   if (upper.contains('LOCKED') && upper.contains('TRANSACTION')) {
@@ -127,6 +292,93 @@ String mapBackendStatusMessage(
     return pick(
       'Only the pot owner or manager can withdraw from this shared pot.',
       'Mmiliki au meneja wa pot pekee ndiye anaweza kutoa fedha kwenye shared pot hii.',
+    );
+  }
+  if (upper.contains('SHARED_POT_ORG_REQUIRED')) {
+    return pick(
+      'Organisation Fungu requires your account to be linked to an organisation.',
+      'Fungu la taasisi linahitaji akaunti yako iwe imeunganishwa na taasisi.',
+    );
+  }
+  if (upper.contains('SHARED_POT_PRIVATE_INVITES_DISABLED')) {
+    return pick(
+      'Private Fungu does not allow member invitations.',
+      'Fungu binafsi haliruhusu kualika wanachama.',
+    );
+  }
+  if (upper.contains('SHARED_POT_ORG_MEMBER_REQUIRED')) {
+    return pick(
+      'Only users from the same organisation can join this Fungu.',
+      'Ni watumiaji wa taasisi hiyo hiyo pekee wanaoweza kujiunga na Fungu hili.',
+    );
+  }
+  if (upper.contains('SHARED_POT_WITHDRAWAL_REASON_REQUIRED')) {
+    return pick(
+      'Enter a reason for this withdrawal request.',
+      'Weka sababu ya ombi hili la kutoa fedha.',
+    );
+  }
+  if (upper.contains('SHARED_POT_NOT_MATURED')) {
+    return pick(
+      'This Fungu is locked until its maturity date.',
+      'Fungu hili limefungwa hadi tarehe yake ya ukomavu.',
+    );
+  }
+  if (upper.contains('SHARED_POT_WITHDRAWAL_LIMIT_EXCEEDED')) {
+    return pick(
+      'This withdrawal is above the allowed Fungu limit.',
+      'Kiasi hiki cha kutoa kimezidi kikomo cha Fungu.',
+    );
+  }
+  if (upper.contains('SHARED_POT_WITHDRAW_SELF_APPROVAL_DENIED')) {
+    return pick(
+      'Another authorised member must approve this withdrawal.',
+      'Mwanachama mwingine mwenye ruhusa lazima aidhinishe utoaji huu.',
+    );
+  }
+  if (upper.contains('ORG_ADMIN_MAX_REACHED')) {
+    return pick(
+      'This organization already has two admins. Remove one admin before adding another.',
+      'Taasisi hii tayari ina admins wawili. Ondoa admin mmoja kabla ya kuongeza mwingine.',
+    );
+  }
+  if (upper.contains('ORG_ADMIN_MIN_REQUIRED')) {
+    return pick(
+      'This organization must keep at least one admin. Add another admin before removing this one.',
+      'Taasisi lazima ibaki na angalau admin mmoja. Ongeza admin mwingine kabla ya kumuondoa huyu.',
+    );
+  }
+  if (upper.contains('SHARED_POT_DELETE_BALANCE_NOT_EMPTY')) {
+    return pick(
+      'This Fungu must have a zero balance before it can be archived.',
+      'Fungu hili lazima liwe na salio sifuri kabla ya kuhifadhiwa.',
+    );
+  }
+  if (upper.contains('SHARED_POT_DELETE_DENIED') ||
+      upper.contains('SHARED_POT_DELETE_APPROVAL_DENIED') ||
+      upper.contains('SHARED_POT_DELETE_CANCEL_DENIED')) {
+    return pick(
+      'Only an authorised owner or manager can manage this archive request.',
+      'Ni mmiliki au meneja mwenye ruhusa pekee anayeweza kusimamia ombi hili la kuhifadhi.',
+    );
+  }
+  if (upper.contains('SHARED_POT_DELETE_ALREADY_REVIEWED')) {
+    return pick(
+      'You have already responded to this archive request.',
+      'Tayari umejibu ombi hili la kuhifadhi.',
+    );
+  }
+  if (upper.contains('SHARED_POT_DELETE_CANCEL_CLOSED') ||
+      upper.contains('SHARED_POT_DELETE_REQUEST_NOT_PENDING')) {
+    return pick(
+      'This archive request can no longer be changed.',
+      'Ombi hili la kuhifadhi haliwezi kubadilishwa tena.',
+    );
+  }
+  if (upper.contains('SHARED_POT_DELETE_REQUEST_EXISTS')) {
+    return pick(
+      'There is already an active archive request for this Fungu.',
+      'Tayari kuna ombi la kuhifadhi linaloendelea kwa Fungu hili.',
     );
   }
   if (upper.contains('INSUFFICIENT_POT_FUNDS')) {

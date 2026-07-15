@@ -113,6 +113,22 @@ String formatExactMoney(
   );
 }
 
+String formatFinancialMoney(
+  double value,
+  String currencyCode, {
+  String locale = 'en_US',
+  int decimalDigits = kExactMoneyDecimalDigits,
+  bool hideBalances = false,
+}) {
+  return formatExactMoney(
+    value,
+    currencyCode,
+    locale: locale,
+    decimalDigits: decimalDigits,
+    hideBalances: hideBalances,
+  );
+}
+
 String formatDisplayMoney(
   double value,
   String currencyCode, {
@@ -184,8 +200,7 @@ String formatCompactMoney(
       ? value / 1000000
       : value / 1000;
 
-  final digits =
-      scaled.abs() >= 100 || scaled == scaled.roundToDouble()
+  final digits = scaled.abs() >= 100 || scaled == scaled.roundToDouble()
       ? 0
       : maxCompactFractionDigits.clamp(0, 6);
   final formatter = NumberFormat.decimalPattern(locale)
@@ -211,7 +226,9 @@ MoneyParts splitMoneyParts(String value) {
       suffix: compactMatch.group(3) ?? '',
     );
   }
-  final match = RegExp(r'^([^\d-]*)(-?[\d,]+)(\.\d+)?(\s+.+)?$').firstMatch(value);
+  final match = RegExp(
+    r'^([^\d-]*)(-?[\d,]+)(\.\d+)?(\s+.+)?$',
+  ).firstMatch(value);
   if (match == null) {
     return MoneyParts(prefix: '', main: value, decimals: '', suffix: '');
   }

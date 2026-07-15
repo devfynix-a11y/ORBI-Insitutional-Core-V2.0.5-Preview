@@ -8,17 +8,15 @@ import 'package:geolocator/geolocator.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:orbi_mobileapp/l10n/app_localizations.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../core/config/app_config.dart';
 import '../../../core/network/orbi_request_headers.dart';
+import '../../../core/receipts/orbi_receipt_pdf_builder.dart';
 import '../../../core/security/transaction_geo_context.dart';
 import '../../../core/security/device_fingerprint.dart';
 import '../../../core/session/activity_tracker.dart';
@@ -29,6 +27,7 @@ import '../../../core/utils/backend_status_message.dart';
 import '../../../core/utils/money_format.dart';
 import '../../../core/utils/otp_autofill.dart';
 import '../../../core/utils/provider_asset_resolver.dart';
+import '../../../core/utils/session_currency.dart';
 import '../../../core/utils/user_facing_error.dart';
 import '../../../core/widgets/money_text.dart';
 import '../../../core/widgets/orbi_amount_field.dart';
@@ -806,7 +805,9 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
   }
 
   String _walletId(Map<String, dynamic> wallet) {
-    return _pickString([wallet['wallet_id'], wallet['id']]);
+    final raw = _pickString([wallet['wallet_id'], wallet['id']]);
+    if (raw.startsWith('goal::')) return raw;
+    return _safeDatabaseIdentifier(raw);
   }
 
   String _walletName(Map<String, dynamic> wallet) {
@@ -983,12 +984,11 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     }
     final amount = _walletBalance(wallet);
     final currency = _walletCurrency(wallet);
-    return formatCompactMoney(
+    return formatFinancialMoney(
       amount,
       currency,
       locale: _localeTag,
       hideBalances: context.read<AppSettingsController>().hideBalances,
-      compactFrom: kCompactMoneyThreshold,
     );
   }
 
@@ -1675,6 +1675,20 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     return '';
   }
 
+  String _safeDatabaseIdentifier(dynamic value) {
+    final raw = _pickString([value]);
+    if (raw.isEmpty) return '';
+    final lower = raw.toLowerCase();
+    if (lower == '*' ||
+        lower == 'all' ||
+        lower == 'null' ||
+        lower == 'undefined') {
+      return '';
+    }
+    if (RegExp(r'''[\s;'"`]''').hasMatch(raw)) return '';
+    return raw;
+  }
+
   InputDecoration _fieldDecoration({
     required String label,
     required String hint,
@@ -1846,6 +1860,14 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     }
 
     final effectiveWalletId = _effectiveInternalWalletId();
+    if (effectiveWalletId.isEmpty) {
+      _showSnack(
+        _isSw
+            ? 'Walleti ya kutumia haijapatikana. Tafadhali refresh akaunti yako kisha jaribu tena.'
+            : 'Source wallet is not available. Please refresh your account and try again.',
+      );
+      return;
+    }
     final unlocked = await _ensureWalletUnlockedForTransfer(
       walletId: effectiveWalletId,
       wallet: _effectiveInternalWallet(),
@@ -1955,16 +1977,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
   }
 
   String _resolveCurrency() {
-    final session = context.read<AuthController>().session;
-    final user = session['user'];
-    if (user is Map) {
-      return resolveCurrencyCode([
-        user['currency'],
-        user['currency_code'],
-        user['preferred_currency'],
-      ]);
-    }
-    return resolveCurrencyCode([session['currency'], session['currency_code']]);
+    return resolveSessionCurrency(context.read<AuthController>().session);
   }
 
   String? _requireTransferCurrency() {
@@ -2173,15 +2186,30 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
       computedTotal > 0 ? computedTotal : null,
       transaction['amount'],
     ]);
-    final availableBalance = _firstAmountOrNull([
+    final backendAvailableBalance = _firstAmountOrNull([
       breakdown['available_balance'],
       breakdown['availableBalance'],
       data['available_balance'],
       data['availableBalance'],
       balance['available'],
+      balance['available_balance'],
+      balance['availableBalance'],
+      balance['current'],
+      balance['current_balance'],
+      balance['currentBalance'],
       transaction['available_balance'],
       transaction['availableBalance'],
     ]);
+    final localWallet = _effectiveInternalWallet();
+    final localAvailableBalance = localWallet == null
+        ? null
+        : _walletBalance(localWallet);
+    final availableBalance =
+        backendAvailableBalance != null && backendAvailableBalance >= 0
+        ? backendAvailableBalance
+        : localAvailableBalance != null && localAvailableBalance >= 0
+        ? localAvailableBalance
+        : backendAvailableBalance;
     final requiredBalance = _firstAmountOrNull([
       balance['required'],
       debit['total'],
@@ -2287,10 +2315,9 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
       final code = _pickString([issue['code']]);
       final message = _pickString([issue['message'], issue['detail']]);
       if (severity == 'blocking') {
-        return [
-          code,
-          message,
-        ].where((part) => part.trim().isNotEmpty).join(': ');
+        return _friendlyPreviewIssueMessage(
+          [code, message].where((part) => part.trim().isNotEmpty).join(': '),
+        );
       }
     }
     for (final rawIssue in issuesRaw) {
@@ -2302,9 +2329,20 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
         code,
         message,
       ].where((part) => part.trim().isNotEmpty).join(': ');
-      if (text.isNotEmpty) return text;
+      if (text.isNotEmpty) return _friendlyPreviewIssueMessage(text);
     }
     return '';
+  }
+
+  String _friendlyPreviewIssueMessage(String raw) {
+    final text = raw.trim();
+    final normalized = text.toUpperCase();
+    if (normalized.contains('UNSAFE_DATABASE_IDENTIFIER')) {
+      return _isSw
+          ? 'Chanzo cha wallet hakijathibitishwa vizuri. Tafadhali refresh akaunti yako kisha jaribu tena.'
+          : 'The source wallet could not be verified. Please refresh your account and try again.';
+    }
+    return text;
   }
 
   String _extractBackendMessage(String? rawBody, {int? statusCode}) {
@@ -4207,7 +4245,6 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     const receiptInk = Color(0xFF163126);
     const receiptMutedInk = Color(0xFF5E7268);
     const receiptBorder = Color(0xFF2E8B57);
-    const receiptSoft = Color(0xFFE7F5EC);
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 360),
@@ -4235,27 +4272,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
                           color: receiptInk,
                         ),
                       ),
-                      const SizedBox(height: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 5,
-                        ),
-                        decoration: BoxDecoration(
-                          color: receiptSoft,
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(color: receiptBorder),
-                        ),
-                        child: Text(
-                          'ORBI',
-                          style: GoogleFonts.michroma(
-                            color: receiptBorder,
-                            fontSize: 14,
-                            letterSpacing: 1.0,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 10),
                       const Text(
                         'TRANSACTION RECEIPT',
                         textAlign: TextAlign.center,
@@ -4380,244 +4397,14 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
   }) async {
     try {
       final logoBytes = await _loadReceiptLogoBytes();
-      final brandFont = await PdfGoogleFonts.michromaRegular();
-      final doc = pw.Document();
-      final receiptInk = PdfColor.fromHex('#163126');
-      final receiptMutedInk = PdfColor.fromHex('#5E7268');
-      final receiptBorder = PdfColor.fromHex('#2E8B57');
-      final receiptSoft = PdfColor.fromHex('#E7F5EC');
-      final now = DateTime.now();
-      final printedAt = DateFormat('yyyy-MM-dd HH:mm:ss').format(now);
-      final tzName = now.timeZoneName.trim();
-      final offset = now.timeZoneOffset;
-      final offsetSign = offset.isNegative ? '-' : '+';
-      final offsetHours = offset.inHours.abs().toString().padLeft(2, '0');
-      final offsetMinutes = (offset.inMinutes.abs() % 60).toString().padLeft(
-        2,
-        '0',
+      final pdf = await OrbiReceiptPdfBuilder.build(
+        rows: rows,
+        heading: title,
+        logoBytes: logoBytes,
+        barcodeValue: _receiptBarcodeValue(rows),
+        primaryRowMode: OrbiReceiptPrimaryRowMode.lastMoney,
       );
-      final offsetLabel = 'UTC$offsetSign$offsetHours:$offsetMinutes';
-      final printedAtLabel = tzName.isNotEmpty && tzName.toUpperCase() != 'UTC'
-          ? '$printedAt $tzName ($offsetLabel)'
-          : printedAt;
-
-      final receiptPageFormat = PdfPageFormat(
-        80 * PdfPageFormat.mm,
-        PdfPageFormat.a4.height,
-      );
-
-      final barcodeValue = _receiptBarcodeValue(rows);
-      final bars = _barcodeWidths(barcodeValue);
-      var dark = true;
-      final pdfBars = bars.map((w) {
-        final bar = pw.Container(
-          width: w.toDouble(),
-          color: dark ? receiptInk : PdfColor.fromHex('#FFFFFF'),
-        );
-        dark = !dark;
-        return bar;
-      }).toList();
-
-      doc.addPage(
-        pw.Page(
-          pageFormat: receiptPageFormat,
-          margin: pw.EdgeInsets.zero,
-          build: (context) {
-            final receiptBody = pw.CustomPaint(
-              foregroundPainter: (canvas, size) {
-                const zigZagHeight = 4.0;
-                const zigZagWidth = 10.0;
-                final width = size.x;
-                final height = size.y;
-                canvas
-                  ..setStrokeColor(receiptBorder)
-                  ..setLineWidth(0.8);
-                var x = 0.0;
-                canvas.moveTo(0, height - zigZagHeight);
-                while (x < width) {
-                  canvas
-                    ..lineTo(x + zigZagWidth / 2, height)
-                    ..lineTo(x + zigZagWidth, height - zigZagHeight);
-                  x += zigZagWidth;
-                }
-                canvas.strokePath();
-                x = width;
-                canvas.moveTo(width, zigZagHeight);
-                while (x > 0) {
-                  canvas
-                    ..lineTo(x - zigZagWidth / 2, 0)
-                    ..lineTo(x - zigZagWidth, zigZagHeight);
-                  x -= zigZagWidth;
-                }
-                canvas.strokePath();
-              },
-              child: pw.Container(
-                width: double.infinity,
-                padding: const pw.EdgeInsets.fromLTRB(18, 18, 18, 16),
-                decoration: pw.BoxDecoration(
-                  borderRadius: pw.BorderRadius.circular(4),
-                ),
-                child: pw.DefaultTextStyle(
-                  style: pw.TextStyle(color: receiptInk),
-                  child: pw.Column(
-                    crossAxisAlignment: pw.CrossAxisAlignment.start,
-                    children: [
-                      pw.Header(
-                        level: 0,
-                        margin: pw.EdgeInsets.zero,
-                        child: pw.Center(
-                          child: pw.Column(
-                            children: [
-                              if (logoBytes != null) ...[
-                                pw.Image(
-                                  pw.MemoryImage(logoBytes),
-                                  width: 34,
-                                  height: 34,
-                                ),
-                                pw.SizedBox(height: 6),
-                              ],
-                              pw.Container(
-                                padding: const pw.EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 5,
-                                ),
-                                decoration: pw.BoxDecoration(
-                                  color: receiptSoft,
-                                  border: pw.Border.all(color: receiptBorder),
-                                  borderRadius: pw.BorderRadius.circular(999),
-                                ),
-                                child: pw.Text(
-                                  'ORBI',
-                                  style: pw.TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: pw.FontWeight.bold,
-                                    letterSpacing: 1.2,
-                                    color: receiptBorder,
-                                    font: brandFont,
-                                  ),
-                                ),
-                              ),
-                              pw.SizedBox(height: 4),
-                              pw.Text(
-                                'TRANSACTION RECEIPT',
-                                textAlign: pw.TextAlign.center,
-                                style: pw.TextStyle(
-                                  fontSize: 10.5,
-                                  fontWeight: pw.FontWeight.bold,
-                                ),
-                              ),
-                              pw.SizedBox(height: 3),
-                              pw.Text(
-                                'Orbi Financial Technologies\n'
-                                'P.O. BOX 02, Dar es Salaam, Tanzania\n'
-                                'Main Branch Kariakoo Alikoma-Magira Street, Block No 123 Second Floor\n'
-                                'Tel +255764258114',
-                                textAlign: pw.TextAlign.center,
-                                style: pw.TextStyle(
-                                  fontSize: 8,
-                                  color: receiptMutedInk,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      pw.SizedBox(height: 10),
-                      pw.Table(
-                        columnWidths: {
-                          0: const pw.FlexColumnWidth(2.2),
-                          1: const pw.FixedColumnWidth(14),
-                          2: const pw.FlexColumnWidth(3.8),
-                        },
-                        defaultVerticalAlignment:
-                            pw.TableCellVerticalAlignment.top,
-                        children: rows
-                            .map(
-                              (row) => pw.TableRow(
-                                children: [
-                                  pw.Padding(
-                                    padding: const pw.EdgeInsets.only(
-                                      bottom: 7,
-                                    ),
-                                    child: pw.Text(
-                                      row.key.toUpperCase(),
-                                      style: pw.TextStyle(
-                                        fontSize: 8.6,
-                                        color: receiptMutedInk,
-                                      ),
-                                    ),
-                                  ),
-                                  pw.Padding(
-                                    padding: const pw.EdgeInsets.only(
-                                      bottom: 7,
-                                    ),
-                                    child: pw.Text(
-                                      ':',
-                                      textAlign: pw.TextAlign.center,
-                                      style: const pw.TextStyle(fontSize: 9),
-                                    ),
-                                  ),
-                                  pw.Padding(
-                                    padding: const pw.EdgeInsets.only(
-                                      bottom: 7,
-                                    ),
-                                    child: pw.Text(
-                                      row.value,
-                                      softWrap: true,
-                                      style: pw.TextStyle(
-                                        fontSize: 9.2,
-                                        fontWeight:
-                                            row.key == 'Amount' ||
-                                                row.key == 'Base Amount' ||
-                                                row.key == 'Tax' ||
-                                                row.key == 'Service Fee' ||
-                                                row.key == 'Total Charged'
-                                            ? pw.FontWeight.bold
-                                            : pw.FontWeight.normal,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            )
-                            .toList(),
-                      ),
-                      pw.SizedBox(height: 10),
-                      pw.Container(
-                        width: double.infinity,
-                        height: 56,
-                        padding: const pw.EdgeInsets.symmetric(horizontal: 10),
-                        decoration: pw.BoxDecoration(
-                          color: receiptSoft,
-                          border: pw.Border.all(color: receiptBorder),
-                          borderRadius: pw.BorderRadius.circular(6),
-                        ),
-                        child: pw.Row(
-                          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                          children: pdfBars,
-                        ),
-                      ),
-                      pw.SizedBox(height: 6),
-                      pw.Center(
-                        child: pw.Text(
-                          'Printed: $printedAtLabel',
-                          style: pw.TextStyle(
-                            fontSize: 7.5,
-                            color: receiptMutedInk,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-            return receiptBody;
-          },
-        ),
-      );
-
-      await Printing.layoutPdf(onLayout: (_) async => doc.save());
+      await Printing.layoutPdf(onLayout: (_) async => pdf);
     } catch (e) {
       if (!mounted) return;
       _showSnack(
@@ -4629,7 +4416,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
   Future<Uint8List?> _loadReceiptLogoBytes() async {
     try {
       final data = await rootBundle.load(
-        'assets/images/brand/orbi-logo-v2-dark-blue.png',
+        'assets/images/brand/orbi-logo-v2-black.png',
       );
       return data.buffer.asUint8List();
     } catch (_) {
@@ -4994,9 +4781,10 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
 
   Map<String, dynamic> _buildSourceContext({required String walletId}) {
     final user = _currentUserContext();
+    final safeWalletId = _safeDatabaseIdentifier(walletId);
     return {
       'selection': 'OPERATING_WALLET',
-      if (walletId.isNotEmpty) 'wallet_id': walletId,
+      if (safeWalletId.isNotEmpty) 'wallet_id': safeWalletId,
       if (user['customer_id'] is String) 'customer_id': user['customer_id'],
       if (user['id'] is String) 'user_id': user['id'],
     };
@@ -5033,9 +4821,10 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
 
   Map<String, dynamic> _buildSourceTopLevelFields({required String walletId}) {
     final user = _currentUserContext();
+    final safeWalletId = _safeDatabaseIdentifier(walletId);
     return {
-      if (walletId.isNotEmpty) 'source_wallet_id': walletId,
-      if (walletId.isNotEmpty) 'wallet_id': walletId,
+      if (safeWalletId.isNotEmpty) 'source_wallet_id': safeWalletId,
+      if (safeWalletId.isNotEmpty) 'wallet_id': safeWalletId,
       if (user['customer_id'] is String)
         'source_customer_id': user['customer_id'],
       if (user['id'] is String) 'source_user_id': user['id'],
@@ -5043,20 +4832,6 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
   }
 
   String _resolveOperatingWalletId() {
-    final session = context.read<AuthController>().session;
-    final user = session['user'];
-    if (user is Map) {
-      final fromUser = _pickString([
-        user['operating_wallet_id'],
-        user['operatingWalletId'],
-        user['default_wallet_id'],
-        user['defaultWalletId'],
-        user['wallet_id'],
-        user['walletId'],
-      ]);
-      if (fromUser.isNotEmpty) return fromUser;
-    }
-
     final internalWallets = _backendWallets
         .where(
           (wallet) => _matchesSourceWalletType(
@@ -5074,6 +4849,21 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     for (final wallet in internalWallets) {
       final id = _walletId(wallet);
       if (id.isNotEmpty) return id;
+    }
+
+    final session = context.read<AuthController>().session;
+    final user = session['user'];
+    if (user is Map) {
+      final fromUser = _pickString([
+        user['operating_wallet_id'],
+        user['operatingWalletId'],
+        user['default_wallet_id'],
+        user['defaultWalletId'],
+        user['wallet_id'],
+        user['walletId'],
+      ]);
+      final safeFromUser = _safeDatabaseIdentifier(fromUser);
+      if (safeFromUser.isNotEmpty) return safeFromUser;
     }
 
     for (final wallet in _backendWallets) {

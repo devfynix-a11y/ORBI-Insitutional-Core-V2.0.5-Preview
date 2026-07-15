@@ -80,12 +80,14 @@ class WebSocketService {
             ...uri.queryParameters,
             ...?(_token == null ? null : {'token': _token!}),
             ...?(_clientTraceId == null ? null : {'trace': _clientTraceId!}),
-            ...?(_userId == null || _userId!.isEmpty ? null : {'userId': _userId!}),
+            ...?(_userId == null || _userId!.isEmpty
+                ? null
+                : {'userId': _userId!}),
           },
         );
 
         try {
-          debugPrint('🔌 WebSocket connecting to: $uriWithToken');
+          debugPrint('🔌 WebSocket connecting to: ${_redactUri(uriWithToken)}');
           _channel = await _connectChannel(uriWithToken);
           _lastConnectionErrorSignature = null;
           _lastActivityAt = DateTime.now();
@@ -122,7 +124,8 @@ class WebSocketService {
         }
       }
 
-      throw lastError ?? Exception('Unable to connect to any WebSocket endpoint');
+      throw lastError ??
+          Exception('Unable to connect to any WebSocket endpoint');
     } catch (_) {
       _isConnected = false;
       _scheduleReconnect();
@@ -144,9 +147,13 @@ class WebSocketService {
     }
 
     if (primary.host.contains('c0re')) {
-      candidates.add(primary.replace(host: primary.host.replaceAll('c0re', 'core')));
+      candidates.add(
+        primary.replace(host: primary.host.replaceAll('c0re', 'core')),
+      );
     } else if (primary.host.contains('core')) {
-      candidates.add(primary.replace(host: primary.host.replaceAll('core', 'c0re')));
+      candidates.add(
+        primary.replace(host: primary.host.replaceAll('core', 'c0re')),
+      );
     }
 
     return candidates.toSet().toList(growable: false);
@@ -157,19 +164,27 @@ class WebSocketService {
       return WebSocketChannel.connect(uri);
     }
 
-    final socket = await WebSocket.connect(uri.toString()).timeout(
-      const Duration(seconds: 15),
-    );
+    final socket = await WebSocket.connect(
+      uri.toString(),
+    ).timeout(const Duration(seconds: 15));
     return IOWebSocketChannel(socket);
   }
 
+  String _redactUri(Uri uri) {
+    if (!uri.queryParameters.containsKey('token')) return uri.toString();
+    return uri
+        .replace(queryParameters: {...uri.queryParameters, 'token': '***'})
+        .toString();
+  }
+
   void _logConnectionFailure(Uri uri, Object error) {
-    final signature = '${uri.host}|${error.runtimeType}|$error';
+    final safeUri = _redactUri(uri);
+    final signature = '$safeUri|${error.runtimeType}|$error';
     if (_lastConnectionErrorSignature == signature) {
       return;
     }
     _lastConnectionErrorSignature = signature;
-    debugPrint('❌ WebSocket connection error via ${uri.host}: $error');
+    debugPrint('❌ WebSocket connection error via $safeUri: $error');
   }
 
   void _onMessage(dynamic message, {required int serial}) {

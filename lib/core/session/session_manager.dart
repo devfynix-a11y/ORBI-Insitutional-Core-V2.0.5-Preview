@@ -41,9 +41,7 @@ class SessionManager {
         throw Exception('No access_token in session');
       }
 
-      debugPrint(
-        '🔍 saveSession: token type = ${token.runtimeType}, value = $token',
-      );
+      debugPrint('🔍 saveSession: token type = ${token.runtimeType}');
 
       if (token is! String) {
         throw Exception(

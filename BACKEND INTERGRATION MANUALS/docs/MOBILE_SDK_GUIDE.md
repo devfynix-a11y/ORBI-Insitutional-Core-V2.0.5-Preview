@@ -10,8 +10,8 @@
 The **ORBI Mobile SDK** connects your application to the **Sovereign Backend Node**. It handles authentication, secure storage, and real-time ledger synchronization.
 
 ### 1.1 Base Configuration
-*   **API Endpoint**: `https://orbi-financial-technologies-c0re-v2026.onrender.com`
-*   **WebSocket Endpoint**: `wss://orbi-financial-technologies-c0re-v2026.onrender.com/nexus-stream`
+*   **API Endpoint**: `https://api.orbifinancial.com`
+*   **WebSocket Endpoint**: `wss://api.orbifinancial.com/nexus-stream`
 *   **App ID**: You must include `x-orbi-app-id` in every request (e.g., `com.orbi.consumer.ios`).
 
 ---
@@ -106,7 +106,7 @@ const uploadAvatar = async (imageUri) => {
     name: 'avatar.jpg',
   });
 
-  const response = await fetch('https://orbi-financial-technologies-c0re-v2026.onrender.com/v1/user/avatar', {
+  const response = await fetch('https://api.orbifinancial.com/v1/user/avatar', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
@@ -225,7 +225,7 @@ Connect to the WebSocket to update the UI instantly when money arrives or leaves
 
 **Implementation**:
 ```typescript
-const ws = new WebSocket('wss://orbi-financial-technologies-c0re-v2026.onrender.com/nexus-stream');
+const ws = new WebSocket('wss://api.orbifinancial.com/nexus-stream');
 
 ws.onopen = () => {
   console.log('Connected to Nexus');

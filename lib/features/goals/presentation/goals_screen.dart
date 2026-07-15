@@ -10,6 +10,7 @@ import '../../../core/theme/orbi_theme.dart';
 import '../../../core/utils/amount_input_formatter.dart';
 import '../../../core/utils/backend_status_message.dart';
 import '../../../core/utils/money_format.dart';
+import '../../../core/utils/session_currency.dart';
 import '../../../core/state/app_settings_controller.dart';
 import '../../../core/widgets/orbi_amount_field.dart';
 import '../../../core/widgets/orbi_async_feedback.dart';
@@ -141,14 +142,7 @@ class _GoalsScreenState extends State<GoalsScreen> {
   }
 
   String get _currencyCode {
-    final raw = context.read<AuthController>().session;
-    return resolveCurrencyCode([
-      raw['currency'],
-      raw['currency_code'],
-      raw['user']?['currency'],
-      raw['user']?['currency_code'],
-      raw['user']?['preferred_currency'],
-    ]);
+    return resolveSessionCurrency(context.read<AuthController>().session);
   }
 
   Future<String?> _promptSecurityPin() async {

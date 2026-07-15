@@ -62,7 +62,7 @@ class AuthApiException implements Exception {
 /// A production-ready client for interacting with the Orbi Sovereign Backend.
 /// Handles Login, Signup, Token Management, and Authenticated Requests.
 class OrbiAuthClient {
-  static const Duration _authRequestTimeout = Duration(seconds: 5);
+  static const Duration _authRequestTimeout = Duration(seconds: 15);
 
   /// Build device info payload for authentication requests
   static Future<Map<String, dynamic>> buildDevicePayload() {
@@ -80,19 +80,15 @@ class OrbiAuthClient {
 
   OrbiAuthClient({required this.baseUrl});
 
-  // Temporary deep debug for passkey flows (debug builds only).
-  static const bool _enableBiometricDebug = kDebugMode;
   static bool _didLogApkHashHeader = false;
   static bool _didLogAppOriginHeader = false;
 
   void _logBiometricDebug(String label, Object? payload) {
-    if (!_enableBiometricDebug) return;
-    try {
-      final encoded = payload is String ? payload : jsonEncode(payload);
-      debugPrint('🔐 [PASSKEY][DEBUG] $label: $encoded');
-    } catch (e) {
-      debugPrint('🔐 [PASSKEY][DEBUG] $label: <unserializable> $e');
-    }
+    if (!kDebugMode) return;
+    final keysOrType = payload is Map
+        ? payload.keys.toList()
+        : payload.runtimeType;
+    debugPrint('🔐 [PASSKEY][DEBUG] $label keys/type: $keysOrType');
   }
 
   void setAccessToken(String? token) {
@@ -221,7 +217,14 @@ class OrbiAuthClient {
       debugPrint('📤 [LOGIN] POST $path');
       debugPrint('📋 Payload: {e: $email, p: ***}');
 
-      final payload = <String, dynamic>{'e': email, 'p': password};
+      final payload = <String, dynamic>{
+        // Official Core contract.
+        'email': email,
+        'password': password,
+        // Legacy compatibility for older self-hosted Core builds.
+        'e': email,
+        'p': password,
+      };
       if (deviceId != null && deviceId.isNotEmpty) {
         payload['device_id'] = deviceId;
       }
@@ -247,7 +250,7 @@ class OrbiAuthClient {
       );
 
       debugPrint('📥 Response Status: ${response.statusCode}');
-      debugPrint('📥 Response Body: ${response.body}');
+      debugPrint('📥 Login response received');
 
       final body = _tryDecodeJsonMap(response.body);
       if (body == null) {
@@ -328,7 +331,7 @@ class OrbiAuthClient {
       );
 
       debugPrint('📥 Response Status: ${response.statusCode}');
-      debugPrint('📥 Response Body: ${response.body}');
+      debugPrint('📥 PIN login response received');
 
       final body = _tryDecodeJsonMap(response.body);
       if (body == null) {
@@ -447,6 +450,9 @@ class OrbiAuthClient {
     String? nationality,
     String? address,
     String? languageCode,
+    String? countryCode,
+    String? countryName,
+    String? dialCode,
     String? fcmToken,
   }) async {
     final normalizedCurrency = currency.trim().toUpperCase();
@@ -463,11 +469,19 @@ class OrbiAuthClient {
       ...?(nationality == null ? null : {'nationality': nationality}),
       ...?(address == null ? null : {'address': address}),
       'currency': normalizedCurrency,
+      'preferred_currency': normalizedCurrency,
+      ...?(countryCode == null ? null : {'country_code': countryCode}),
+      ...?(countryName == null ? null : {'country_name': countryName}),
+      ...?(dialCode == null ? null : {'dial_code': dialCode}),
       ...?(languageCode == null ? null : {'language': languageCode}),
       ...?(fcmToken == null ? null : {'fcm_token': fcmToken}),
       'metadata': {
         'app_origin': AppConfig.appOrigin,
         'registry_type': 'CONSUMER',
+        'preferred_currency': normalizedCurrency,
+        ...?(countryCode == null ? null : {'country_code': countryCode}),
+        ...?(countryName == null ? null : {'country_name': countryName}),
+        ...?(dialCode == null ? null : {'dial_code': dialCode}),
         ...?(languageCode == null ? null : {'language': languageCode}),
       },
     };
@@ -477,9 +491,7 @@ class OrbiAuthClient {
         headers: _getMandatoryHeaders(),
         body: jsonEncode(payload),
       );
-      debugPrint(
-        '📥 [SIGNUP] status=${response.statusCode} body=${response.body}',
-      );
+      debugPrint('📥 [SIGNUP] status=${response.statusCode}');
       if (response.statusCode == 200 ||
           response.statusCode == 201 ||
           response.statusCode == 202) {
@@ -618,11 +630,12 @@ class OrbiAuthClient {
     if (path == null) {
       throw Exception('Password reset initiate endpoint not configured');
     }
-    final url = Uri.parse('$baseUrl$path');
-    final response = await http.post(
-      url,
+    final response = await _postWithFallback(
+      path,
       headers: _getMandatoryHeaders(),
       body: jsonEncode({'identifier': identifier}),
+      logContext: 'PASSWORD reset/initiate',
+      allowRootFallbacks: false,
     );
     return _decodeOptionalDataResponse(
       response,
@@ -641,15 +654,24 @@ class OrbiAuthClient {
     if (path == null) {
       throw Exception('Password reset complete endpoint not configured');
     }
-    final url = Uri.parse('$baseUrl$path');
-    final payload = <String, dynamic>{'password': password};
+    final normalizedPassword = password.trim();
+    final payload = <String, dynamic>{
+      // Official Core contract.
+      'password': normalizedPassword,
+      // Compatibility for older gateway/Core builds and reset forms.
+      'newPassword': normalizedPassword,
+      'new_password': normalizedPassword,
+      'p': normalizedPassword,
+    };
     if (identifier != null) payload['identifier'] = identifier;
     if (requestId != null) payload['requestId'] = requestId;
     if (code != null) payload['code'] = code;
-    final response = await http.post(
-      url,
+    final response = await _postWithFallback(
+      path,
       headers: _getMandatoryHeaders(token: accessToken),
       body: jsonEncode(payload),
+      logContext: 'PASSWORD reset/complete',
+      allowRootFallbacks: false,
     );
     return _decodeOptionalDataResponse(
       response,
@@ -781,7 +803,6 @@ class OrbiAuthClient {
     );
     _logBiometricDebug('register/start response', {
       'status': response.statusCode,
-      'body': response.body,
     });
 
     final body = _tryDecodeJsonMap(response.body);
@@ -849,7 +870,6 @@ class OrbiAuthClient {
     );
     _logBiometricDebug('register/finish response', {
       'status': response.statusCode,
-      'body': response.body,
     });
     return _decodeAuthResponse(
       response,
@@ -882,7 +902,7 @@ class OrbiAuthClient {
         body: jsonEncode(payload),
       );
       debugPrint('📥 [PASSKEY] auth/verify status: ${response.statusCode}');
-      debugPrint('📥 [PASSKEY] auth/verify body: ${response.body}');
+      debugPrint('📥 [PASSKEY] auth/verify response received');
       if (response.statusCode >= 200 && response.statusCode < 300) {
         return _decodeAuthResponse(
           response,
@@ -1048,7 +1068,7 @@ class OrbiAuthClient {
     return paths.toSet();
   }
 
-  Iterable<Uri> _candidateUris(String path) {
+  Iterable<Uri> _candidateUris(String path, {bool allowRootFallbacks = true}) {
     String normalize(String input) {
       if (input.endsWith('/')) {
         return input.substring(0, input.length - 1);
@@ -1084,9 +1104,11 @@ class OrbiAuthClient {
       for (final normalizedBase in normalizedBases) {
         final root = stripVersion(normalizedBase);
         add(normalizedBase, candidatePath);
-        add(root, candidatePath);
-        add(root, '/v1$candidatePath');
-        add(root, '/api/v1$candidatePath');
+        if (allowRootFallbacks) {
+          add(root, candidatePath);
+          add(root, '/v1$candidatePath');
+          add(root, '/api/v1$candidatePath');
+        }
       }
     }
 
@@ -1098,9 +1120,14 @@ class OrbiAuthClient {
     required Map<String, String> headers,
     required Object body,
     required String logContext,
+    bool allowRootFallbacks = true,
   }) async {
     http.Response? lastResponse;
-    for (final url in _candidateUris(path)) {
+    TimeoutException? lastTimeout;
+    for (final url in _candidateUris(
+      path,
+      allowRootFallbacks: allowRootFallbacks,
+    )) {
       debugPrint('📤 [$logContext] POST $url');
       late final http.Response response;
       try {
@@ -1108,6 +1135,7 @@ class OrbiAuthClient {
             .post(url, headers: headers, body: body)
             .timeout(_authRequestTimeout);
       } on TimeoutException catch (error) {
+        lastTimeout = error;
         debugPrint('⏱️ [$logContext] timeout via $url: $error');
         continue;
       } on SocketException catch (error) {
@@ -1121,7 +1149,7 @@ class OrbiAuthClient {
         continue;
       }
       debugPrint('📥 [$logContext] status: ${response.statusCode}');
-      debugPrint('📥 [$logContext] body: ${response.body}');
+      debugPrint('📥 [$logContext] response received');
 
       final bodyMap = _tryDecodeJsonMap(response.body);
       final notFound =
@@ -1132,6 +1160,12 @@ class OrbiAuthClient {
         continue;
       }
       return response;
+    }
+    if (lastTimeout != null && lastResponse == null) {
+      throw TimeoutException(
+        '$logContext request timed out. Please try again in a moment.',
+        _authRequestTimeout,
+      );
     }
     return lastResponse ??
         await http
@@ -1291,7 +1325,7 @@ class OrbiAuthClient {
   }
 
   void _logBiometricAllowCredentialsMismatch(Map<String, dynamic> payload) {
-    if (!_enableBiometricDebug) return;
+    if (!kDebugMode) return;
     final registeredId = _lastRegisteredCredentialId?.trim();
     if (registeredId == null || registeredId.isEmpty) return;
 

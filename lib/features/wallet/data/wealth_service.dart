@@ -97,6 +97,69 @@ class WealthService {
         fallback.trim();
   }
 
+  Map<String, dynamic> buildInvitePayload({
+    required Map<String, dynamic>? invitee,
+    required String fallback,
+    required String role,
+    Map<String, dynamic> extra = const {},
+  }) {
+    final identifier = resolveInviteeIdentifier(invitee, fallback: fallback);
+    final customerId = _pickFirstString([
+      invitee?['customer_id'],
+      invitee?['customerId'],
+      invitee?['recipient_id'],
+      invitee?['recipientId'],
+      invitee?['orbi_id'],
+      invitee?['orbiId'],
+    ]);
+    final internalUserId = _pickFirstString([
+      invitee?['id'],
+      invitee?['user_id'],
+      invitee?['userId'],
+      invitee?['profile_id'],
+      invitee?['profileId'],
+    ]);
+    final email = _pickFirstString([invitee?['email']]);
+    final phone = _pickFirstString([
+      invitee?['phone'],
+      invitee?['phone_number'],
+      invitee?['phoneNumber'],
+      invitee?['msisdn'],
+    ]);
+
+    return {
+      'identifier': identifier,
+      'role': role,
+      ...?customerId == null
+          ? null
+          : {
+              'customer_id': customerId,
+              'customerId': customerId,
+              'invitee_customer_id': customerId,
+              'inviteeCustomerId': customerId,
+              'recipient_customer_id': customerId,
+              'recipientCustomerId': customerId,
+            },
+      ...?internalUserId == null
+          ? null
+          : {
+              'invitee_user_id': internalUserId,
+              'inviteeUserId': internalUserId,
+              'recipient_id': internalUserId,
+              'recipientId': internalUserId,
+            },
+      ...?email == null ? null : {'email': email},
+      ...?phone == null ? null : {'phone': phone, 'msisdn': phone},
+      'invitee_lookup': {
+        ...?customerId == null ? null : {'customer_id': customerId},
+        ...?internalUserId == null ? null : {'user_id': internalUserId},
+        ...?email == null ? null : {'email': email},
+        ...?phone == null ? null : {'phone': phone},
+      },
+      ...extra,
+    }..removeWhere((_, value) => value is String && value.trim().isEmpty);
+  }
+
   Future<Map<String, dynamic>> createSharedPot(
     Map<String, dynamic> payload,
   ) async {
@@ -134,12 +197,75 @@ class WealthService {
     return _extractItem(response.data);
   }
 
+  Future<List<Map<String, dynamic>>> listSharedPotWithdrawalRequests(
+    String potId,
+  ) async {
+    final response = await _get(
+      '/wealth/shared-pots/$potId/withdrawal-requests',
+    );
+    return _extractList(
+      response.data,
+      keys: const ['requests', 'items', 'results'],
+    );
+  }
+
+  Future<Map<String, dynamic>> respondToSharedPotWithdrawalRequest(
+    String requestId,
+    Map<String, dynamic> payload,
+  ) async {
+    final response = await _post(
+      '/wealth/shared-pot-withdrawal-requests/$requestId/respond',
+      payload,
+    );
+    return _extractItem(response.data);
+  }
+
+  Future<Map<String, dynamic>> requestSharedPotArchive(
+    String potId,
+    Map<String, dynamic> payload,
+  ) async {
+    try {
+      final response = await _dio.post(
+        '/wealth/shared-pots/$potId/delete-request',
+        data: payload,
+      );
+      return _extractItem(response.data);
+    } on DioException catch (error) {
+      final data = error.response?.data;
+      if (data is Map &&
+          data['error']?.toString().toUpperCase() == 'SECURITY_CHALLENGE') {
+        return Map<String, dynamic>.from(data);
+      }
+      throw Exception(_extractDioMessage(error));
+    }
+  }
+
+  Future<Map<String, dynamic>> cancelSharedPotArchiveRequest(
+    String requestId,
+  ) async {
+    final response = await _post(
+      '/wealth/shared-pot-delete-requests/$requestId/cancel',
+      const <String, dynamic>{},
+    );
+    return _extractItem(response.data);
+  }
+
   Future<List<Map<String, dynamic>>> listSharedPotMembers(String potId) async {
     final response = await _get('/wealth/shared-pots/$potId/members');
     return _extractList(
       response.data,
       keys: const ['members', 'items', 'results'],
     );
+  }
+
+  Future<Map<String, dynamic>> getSharedPotReport(
+    String potId, {
+    String range = 'month',
+  }) async {
+    final response = await _get(
+      '/wealth/shared-pots/$potId/report?range=${Uri.encodeQueryComponent(range)}',
+    );
+    return _extractItem(response.data);
   }
 
   Future<Map<String, dynamic>> addSharedPotMember(
@@ -215,6 +341,16 @@ class WealthService {
       response.data,
       keys: const ['transactions', 'items', 'results'],
     );
+  }
+
+  Future<Map<String, dynamic>> getSharedBudgetReport(
+    String budgetId, {
+    String range = 'month',
+  }) async {
+    final response = await _get(
+      '/wealth/shared-budgets/$budgetId/report?range=${Uri.encodeQueryComponent(range)}',
+    );
+    return _extractItem(response.data);
   }
 
   Future<List<Map<String, dynamic>>> listSharedBudgetInvitations(

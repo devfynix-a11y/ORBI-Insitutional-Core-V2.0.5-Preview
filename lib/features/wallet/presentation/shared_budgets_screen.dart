@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../core/reports/orbi_resource_report_printer.dart';
 import '../../../core/theme/orbi_theme.dart';
 import '../../../core/utils/amount_input_formatter.dart';
 import '../../../core/utils/backend_status_message.dart';
@@ -10,9 +11,11 @@ import '../../../core/widgets/orbi_amount_field.dart';
 import '../../../core/widgets/orbi_async_feedback.dart';
 import '../../../core/widgets/orbi_activity_card.dart';
 import '../../../core/widgets/orbi_background.dart';
+import '../../../core/widgets/orbi_brand_hero_card.dart';
 import '../../../core/widgets/orbi_empty_state.dart';
 import '../data/wealth_service.dart';
 import 'widgets/invitee_lookup_card.dart';
+import 'widgets/wealth_hero_card.dart';
 
 const Color _sharedBudgetAccent = Color(0xFF2563EB);
 
@@ -555,21 +558,27 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
                   lookupPreview,
                   fallback: identifierController.text,
                 );
-                await _service
-                    .addSharedBudgetInvitation(budget['id'].toString(), {
-                      'identifier': identifier,
-                      'role': role,
-                      if ((AmountInputFormatter.tryParse(
-                                memberLimitController.text,
-                              ) ??
-                              0) >
-                          0)
-                        'member_limit': AmountInputFormatter.tryParse(
-                          memberLimitController.text,
-                        ),
-                      if (messageController.text.trim().isNotEmpty)
-                        'message': messageController.text.trim(),
-                    });
+                final payload = _service.buildInvitePayload(
+                  invitee: lookupPreview,
+                  fallback: identifier,
+                  role: role,
+                  extra: {
+                    if ((AmountInputFormatter.tryParse(
+                              memberLimitController.text,
+                            ) ??
+                            0) >
+                        0)
+                      'member_limit': AmountInputFormatter.tryParse(
+                        memberLimitController.text,
+                      ),
+                    if (messageController.text.trim().isNotEmpty)
+                      'message': messageController.text.trim(),
+                  },
+                );
+                await _service.addSharedBudgetInvitation(
+                  budget['id'].toString(),
+                  payload,
+                );
                 if (!sheetContext.mounted) return;
                 Navigator.of(sheetContext).pop();
                 _showStatus(
@@ -986,6 +995,19 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
     );
   }
 
+  Future<void> _showReport(Map<String, dynamic> budget) async {
+    final budgetId = (budget['id'] ?? '').toString();
+    if (budgetId.isEmpty) return;
+    await OrbiResourceReportPrinter.openReportSheet(
+      context,
+      title: _text('Mezani report', 'Ripoti ya Mezani'),
+      subtitle: (budget['name'] ?? 'Mezani').toString(),
+      filePrefix: 'orbi_mezani_report',
+      loadReport: (range) =>
+          _service.getSharedBudgetReport(budgetId, range: range),
+    );
+  }
+
   Future<void> _showActivity(Map<String, dynamic> budget) async {
     final rows = await _loadBusyData(
       _text('Loading activity...', 'Inapakua shughuli...'),
@@ -1271,7 +1293,7 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
                 size: 18,
               ),
               const SizedBox(width: 8),
-              Flexible(child: Text(_text('Shared Budgets', 'Shared Budgets'))),
+              const Flexible(child: Text('Mezani')),
             ],
           ),
           actions: [
@@ -1289,7 +1311,7 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
         floatingActionButton: FloatingActionButton.extended(
           onPressed: _openBudgetForm,
           icon: const Icon(Icons.add_rounded),
-          label: Text(_text('New Budget', 'Budget Mpya')),
+          label: Text(_text('Create a shared budget (Mezani)', 'Unda Mezani')),
           backgroundColor: _sharedBudgetAccent,
           foregroundColor: Colors.white,
         ),
@@ -1301,67 +1323,31 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
               children: [
-                OrbiActivityCard(
-                  accent: _sharedBudgetAccent,
-                  hero: true,
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                WealthHeroCard(
+                  icon: Icons.account_balance_wallet_outlined,
+                  title: 'Mezani',
+                  subtitle: _text(
+                    'Track, review, and open budget controls when needed.',
+                    'Fuatilia, hakiki, na fungua controls za budget ukihitaji.',
+                  ),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
                     children: [
-                      Row(
-                        children: [
-                          Container(
-                            width: 38,
-                            height: 38,
-                            decoration: BoxDecoration(
-                              color: _sharedBudgetAccent.withValues(
-                                alpha: 0.12,
-                              ),
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            child: Icon(
-                              Icons.account_balance_wallet_outlined,
-                              color: _sharedBudgetAccent,
-                              size: 20,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  _text('Shared Budgets', 'Shared Budgets'),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: ui.textPrimary,
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                                const SizedBox(height: 3),
-                                Text(
-                                  _text(
-                                    'Family, team, or business spending with member visibility.',
-                                    'Matumizi ya familia, timu, au biashara kwa uwazi wa wanachama.',
-                                  ),
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: ui.textMuted,
-                                    fontSize: 12.5,
-                                    height: 1.25,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          if (pendingInvites > 0) ...[
-                            const SizedBox(width: 8),
-                            _Pill(text: '$pendingInvites inbox'),
-                          ],
-                        ],
+                      OrbiHeroMetricChip(
+                        icon: Icons.account_balance_wallet_outlined,
+                        label: _text('Total budgets', 'Jumla ya Bajeti'),
+                        value: '${_budgets.length}',
+                      ),
+                      OrbiHeroMetricChip(
+                        icon: Icons.people_alt_outlined,
+                        label: _text('Members', 'Members'),
+                        value: '${_budgets.length}',
+                      ),
+                      OrbiHeroMetricChip(
+                        icon: Icons.mail_outline_rounded,
+                        label: _text('Inbox', 'Inbox'),
+                        value: '$pendingInvites',
                       ),
                     ],
                   ),
@@ -1384,8 +1370,8 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
                       'Unda budget moja kwa matumizi ya familia, timu, au taasisi.',
                     ),
                     actionLabel: _text(
-                      'Create shared budget',
-                      'Unda shared budget',
+                      'Create a shared budget (Mezani)',
+                      'Unda Mezani',
                     ),
                     onAction: _openBudgetForm,
                   )
@@ -1407,7 +1393,7 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
                       ),
                       _Pill(
                         text:
-                            '${_budgets.length} ${_budgets.length == 1 ? 'budget' : 'budgets'}',
+                            '${_budgets.length} ${_budgets.length == 1 ? _text('budget', 'bajeti') : _text('budgets', 'bajeti')}',
                       ),
                     ],
                   ),
@@ -1613,6 +1599,11 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
                                   label: _text('Activity', 'Shughuli'),
                                   icon: Icons.receipt_long_outlined,
                                   onTap: () => _showActivity(budget),
+                                ),
+                                _ActionButton(
+                                  label: _text('Report', 'Ripoti'),
+                                  icon: Icons.summarize_outlined,
+                                  onTap: () => _showReport(budget),
                                 ),
                               ],
                             ),

@@ -2018,11 +2018,10 @@ class _PaymentScreenState extends State<PaymentScreen>
       amountLabel: l10n.paymentAmountLabel,
       dateLabel: l10n.paymentDateLabel,
       merchantValue: result.merchant,
-      amountValue: formatCompactMoney(
+      amountValue: formatFinancialMoney(
         result.amount,
         result.currency,
         locale: 'en_US',
-        compactFrom: kCompactMoneyThreshold,
       ),
       dateValue: result.date,
       draftCard: _buildDetectedPaymentDraftCard(

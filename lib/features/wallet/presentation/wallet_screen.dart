@@ -160,7 +160,10 @@ class _WalletScreenBodyState extends State<_WalletScreenBody> {
   }
 
   Future<void> _refreshAll() async {
-    await Future.wait([widget.viewModel.refresh(), _refreshWealthSnapshot()]);
+    await Future.wait([
+      widget.viewModel.refresh(forceRefresh: true),
+      _refreshWealthSnapshot(),
+    ]);
   }
 
   Future<void> _refreshWealthSnapshot() async {

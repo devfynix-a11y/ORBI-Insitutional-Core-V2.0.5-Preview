@@ -728,7 +728,7 @@ class _AgentScreenState extends State<AgentScreen> {
                                 _metric(
                                   ui,
                                   'Deposit total',
-                                  formatCompactMoney(
+                                  formatFinancialMoney(
                                     _sumAmounts(
                                       _transactions.where((tx) {
                                         final type = _pickString([
@@ -740,13 +740,12 @@ class _AgentScreenState extends State<AgentScreen> {
                                     ),
                                     'TZS',
                                     locale: 'en_US',
-                                    compactFrom: kCompactMoneyThreshold,
                                   ),
                                 ),
                                 _metric(
                                   ui,
                                   'Withdraw total',
-                                  formatCompactMoney(
+                                  formatFinancialMoney(
                                     _sumAmounts(
                                       _transactions.where((tx) {
                                         final type = _pickString([
@@ -758,7 +757,6 @@ class _AgentScreenState extends State<AgentScreen> {
                                     ),
                                     'TZS',
                                     locale: 'en_US',
-                                    compactFrom: kCompactMoneyThreshold,
                                   ),
                                 ),
                               ],
@@ -845,14 +843,13 @@ class _AgentScreenState extends State<AgentScreen> {
                             wallet['status'],
                             wallet['currency'],
                           ]),
-                          trailing: formatCompactMoney(
+                          trailing: formatFinancialMoney(
                             _pickDouble([
                               wallet['balance'],
                               wallet['available_balance'],
                             ]),
                             _pickString([wallet['currency'], 'TZS']),
                             locale: 'en_US',
-                            compactFrom: kCompactMoneyThreshold,
                           ),
                         ),
                       ),
@@ -902,11 +899,10 @@ class _AgentScreenState extends State<AgentScreen> {
                             tx['reference_id'],
                             tx['transaction_id'],
                           ]),
-                          trailing: formatCompactMoney(
+                          trailing: formatFinancialMoney(
                             _pickDouble([tx['amount']]),
                             _pickString([tx['currency'], 'TZS']),
                             locale: 'en_US',
-                            compactFrom: kCompactMoneyThreshold,
                           ),
                         ),
                       ),
@@ -975,11 +971,10 @@ class _AgentScreenState extends State<AgentScreen> {
                             commission['status'],
                             commission['source_transaction_id'],
                           ]),
-                          trailing: formatCompactMoney(
+                          trailing: formatFinancialMoney(
                             _pickDouble([commission['amount']]),
                             _pickString([commission['currency'], 'TZS']),
                             locale: 'en_US',
-                            compactFrom: kCompactMoneyThreshold,
                           ),
                         ),
                       ),

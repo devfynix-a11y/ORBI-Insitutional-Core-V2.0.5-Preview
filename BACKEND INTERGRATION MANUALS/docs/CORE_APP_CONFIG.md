@@ -8,16 +8,16 @@ This guide provides the specific connection endpoints and configuration paramete
 Use these settings for the live staging environment.
 
 *   **App Name**: `ORBI Core [PRE]`
-*   **Base URL**: `https://orbi-financial-technologies-c0re-v2026.onrender.com`
-*   **WebSocket URL**: `wss://orbi-financial-technologies-c0re-v2026.onrender.com/nexus-stream`
+*   **Base URL**: `https://api.orbifinancial.com`
+*   **WebSocket URL**: `wss://api.orbifinancial.com/nexus-stream`
 *   **Environment ID**: `production-pre`
 
 ### Development (Sandbox)
 Use these settings for testing and integration.
 
 *   **App Name**: `ORBI Core [DEV]`
-*   **Base URL**: `https://orbi-financial-technologies-c0re-v2026.onrender.com`
-*   **WebSocket URL**: `wss://orbi-financial-technologies-c0re-v2026.onrender.com/nexus-stream`
+*   **Base URL**: `https://api.orbifinancial.com`
+*   **WebSocket URL**: `wss://api.orbifinancial.com/nexus-stream`
 *   **Environment ID**: `development`
 
 ## 2. Required Headers

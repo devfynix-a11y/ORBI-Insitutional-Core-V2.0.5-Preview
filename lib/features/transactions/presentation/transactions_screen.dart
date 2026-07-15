@@ -1,18 +1,19 @@
 import 'dart:async';
+import 'dart:ui' as dart_ui;
 
 import 'package:flutter/material.dart';
 import 'package:orbi_mobileapp/l10n/app_localizations.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:provider/provider.dart';
 
+import '../../../core/receipts/orbi_receipt_image_pdf_builder.dart';
+import '../../../core/reports/orbi_resource_report_printer.dart';
 import '../../../core/theme/orbi_theme.dart';
-import '../../../core/theme/orbi_card_styles.dart';
 import '../../../core/utils/money_format.dart';
+import '../../../core/utils/session_currency.dart';
 import '../../../core/utils/user_facing_error.dart';
 import '../../../core/widgets/orbi_background.dart';
 import '../../../core/widgets/orbi_brand_hero_card.dart';
@@ -46,7 +47,6 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   String _selectedMoneyState = _allMoneyStates;
   List<Map<String, dynamic>> _transactions = const [];
   Uint8List? _logoBytesCache;
-  Uint8List? _watermarkBytesCache;
   Timer? _realtimeRefreshDebounce;
   StreamSubscription<Map<String, dynamic>>? _transactionUpdateSubscription;
 
@@ -155,15 +155,6 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     }
   }
 
-  PdfPageFormat _receiptPdfPageFormat() {
-    return PdfPageFormat.a4.copyWith(
-      marginLeft: 24,
-      marginRight: 24,
-      marginTop: 18,
-      marginBottom: 18,
-    );
-  }
-
   @override
   void initState() {
     super.initState();
@@ -185,7 +176,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     super.dispose();
   }
 
-  Future<void> _loadTransactions() async {
+  Future<void> _loadTransactions({bool forceRefresh = false}) async {
     if (_loading) return;
     final token = await context.read<AuthController>().getValidAccessToken();
     if (token == null || token.isEmpty) {
@@ -206,6 +197,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
         '',
         limit: 50,
         offset: 0,
+        forceRefresh: forceRefresh,
       );
       txs.sort((a, b) {
         final at = _asDate(
@@ -267,7 +259,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     _realtimeRefreshDebounce?.cancel();
     _realtimeRefreshDebounce = Timer(const Duration(milliseconds: 500), () {
       if (!mounted) return;
-      _loadTransactions();
+      _loadTransactions(forceRefresh: true);
     });
   }
 
@@ -330,6 +322,36 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     return v;
   }
 
+  String _personNameFrom(
+    Map<String, dynamic> map,
+    List<dynamic> fallbackValues,
+  ) {
+    final profile = map['user'] is Map
+        ? Map<String, dynamic>.from(map['user'] as Map)
+        : map['users'] is Map
+        ? Map<String, dynamic>.from(map['users'] as Map)
+        : <String, dynamic>{};
+    return _cleanUserFacing(
+      _pickString([
+        map['full_name'],
+        map['display_name'],
+        map['name'],
+        map['username'],
+        profile['full_name'],
+        profile['display_name'],
+        profile['name'],
+        profile['username'],
+        ...fallbackValues,
+        map['phone'],
+        map['email'],
+        profile['phone'],
+        profile['email'],
+        map['orbi_id'],
+        profile['orbi_id'],
+      ]),
+    );
+  }
+
   String _maskCustomerId(String value) {
     final v = value.trim();
     if (v.isEmpty) return v;
@@ -367,16 +389,12 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   }
 
   String _currency(Map<String, dynamic> tx) {
-    final sessionUser = context.read<AuthController>().session['user'];
-    final user = sessionUser is Map
-        ? Map<String, dynamic>.from(sessionUser)
-        : <String, dynamic>{};
+    final session = context.read<AuthController>().session;
     return resolveCurrencyCode([
       tx['currency'],
       tx['currency_code'],
-      user['currency'],
-      user['currency_code'],
-      user['preferred_currency'],
+      tx['currencyCode'],
+      resolveSessionCurrency(session),
     ]);
   }
 
@@ -398,52 +416,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     final isCredit = _isCredit(tx);
     final prefix = isCredit ? '+' : '-';
     final currency = _currency(tx);
-    return '$prefix${formatCompactMoney(amount.abs(), currency, locale: _localeTag, compactFrom: kCompactMoneyThreshold)}';
-  }
-
-  String _money(Map<String, dynamic> tx, double value) {
-    return formatCompactMoney(
-      value,
-      _currency(tx),
-      locale: _localeTag,
-      compactFrom: kCompactMoneyThreshold,
-    );
-  }
-
-  double _baseAmount(Map<String, dynamic> tx) {
-    return _asDouble(
-      tx['amount'] ??
-          tx['value'] ??
-          tx['total'] ??
-          tx['total_amount'] ??
-          tx['net_amount'],
-    ).abs();
-  }
-
-  double _taxAmount(Map<String, dynamic> tx) {
-    final breakdown = tx['breakdown'] is Map
-        ? Map<String, dynamic>.from(tx['breakdown'] as Map)
-        : <String, dynamic>{};
-    return _asDouble(
-      tx['tax'] ??
-          tx['tax_amount'] ??
-          tx['vat'] ??
-          tx['levy'] ??
-          breakdown['tax'],
-    ).abs();
-  }
-
-  double _feeAmount(Map<String, dynamic> tx) {
-    final breakdown = tx['breakdown'] is Map
-        ? Map<String, dynamic>.from(tx['breakdown'] as Map)
-        : <String, dynamic>{};
-    return _asDouble(
-      tx['fee'] ??
-          tx['service_fee'] ??
-          tx['charge'] ??
-          tx['charges'] ??
-          breakdown['fee'],
-    ).abs();
+    return '$prefix${formatFinancialMoney(amount.abs(), currency, locale: _localeTag)}';
   }
 
   String _title(Map<String, dynamic> tx) {
@@ -482,24 +455,6 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       'dd MMM yyyy, HH:mm',
     ).format(_asDate(tx['created_at'] ?? tx['createdAt'] ?? tx['timestamp']));
     return '$status • $when • ${ref.isEmpty ? '-' : ref}';
-  }
-
-  String _friendlyType(Map<String, dynamic> tx) {
-    final l10n = AppLocalizations.of(context)!;
-    final raw = _pickString([
-      tx['type'],
-      tx['transaction_type'],
-      tx['kind'],
-      tx['category'],
-    ]);
-    if (raw.isEmpty) return l10n.transactionsGenericTitle;
-    return raw
-        .replaceAll('_', ' ')
-        .toLowerCase()
-        .split(' ')
-        .where((e) => e.isNotEmpty)
-        .map((w) => w[0].toUpperCase() + w.substring(1))
-        .join(' ');
   }
 
   dynamic _lookupTransactionValue(Map<String, dynamic> tx, List<String> keys) {
@@ -665,23 +620,10 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     if (_logoBytesCache != null) return _logoBytesCache;
     try {
       final data = await rootBundle.load(
-        'assets/images/brand/orbi-logo-v2-dark-blue.png',
+        'assets/images/brand/orbi-logo-v2-black.png',
       );
       _logoBytesCache = data.buffer.asUint8List();
       return _logoBytesCache;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Future<Uint8List?> _loadWatermarkBytes() async {
-    if (_watermarkBytesCache != null) return _watermarkBytesCache;
-    try {
-      final data = await rootBundle.load(
-        'assets/images/brand/orbi-logo-v2-dark-blue.png',
-      );
-      _watermarkBytesCache = data.buffer.asUint8List();
-      return _watermarkBytesCache;
     } catch (_) {
       return null;
     }
@@ -702,31 +644,45 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     final date = DateFormat(
       'dd MMM yyyy, HH:mm',
     ).format(_asDate(tx['created_at'] ?? tx['createdAt'] ?? tx['timestamp']));
-    final direction = _isCredit(tx)
-        ? l10n.transactionsCredit
-        : l10n.transactionsDebit;
-    final senderName = _cleanUserFacing(
-      _pickString([
-        senderMap['name'],
-        tx['sender_name'],
-        tx['source_name'],
-        tx['from_name'],
-        tx['counterparty_name'],
-        tx['sender'],
-      ]),
-    );
-    final recipientName = _cleanUserFacing(
-      _pickString([
-        receiverMap['name'],
-        counterpartyMap['name'],
-        tx['recipient_name'],
-        tx['beneficiary_name'],
-        tx['target_name'],
-        tx['to_name'],
-        tx['counterparty_name'],
-        tx['recipient'],
-      ]),
-    );
+    final senderName = _personNameFrom(senderMap, [
+      tx['source_wallet_name'],
+      tx['sourceWalletName'],
+      tx['from_wallet_name'],
+      tx['fromWalletName'],
+      tx['sender_name'],
+      tx['source_name'],
+      tx['from_name'],
+      tx['counterparty_name'],
+      tx['sender'],
+    ]);
+    final recipientName = _personNameFrom(receiverMap, [
+      tx['destination_wallet_name'],
+      tx['destinationWalletName'],
+      tx['target_wallet_name'],
+      tx['targetWalletName'],
+      tx['to_wallet_name'],
+      tx['toWalletName'],
+      tx['wallet_name'],
+      counterpartyMap['full_name'],
+      counterpartyMap['display_name'],
+      counterpartyMap['name'],
+      tx['recipient_name'],
+      tx['beneficiary_name'],
+      tx['target_name'],
+      tx['to_name'],
+      tx['counterparty_name'],
+      tx['recipient'],
+      tx['recipient_phone'],
+      tx['beneficiary_phone'],
+      tx['target_phone'],
+      tx['to_phone'],
+      tx['recipient_email'],
+      tx['beneficiary_email'],
+      tx['target_email'],
+      tx['to_email'],
+      tx['recipient_orbi_id'],
+      tx['target_orbi_id'],
+    ]);
     final senderCustomerId = _pickString([
       senderMap['customerId'],
       senderMap['customer_id'],
@@ -755,6 +711,11 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       senderMaskedId,
       l10n.transactionsNotAvailable,
     ]);
+    final normalizedSource = _friendlyMovementLabel(
+      tx,
+      sourceDisplay,
+      toSide: false,
+    );
     final destinationDisplay = _pickString([
       if (recipientName.isNotEmpty && recipientMaskedId.isNotEmpty)
         '$recipientName ($recipientMaskedId)',
@@ -762,11 +723,22 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       recipientMaskedId,
       l10n.transactionsNotAvailable,
     ]);
-    final baseAmount = _baseAmount(tx);
-    final taxAmount = _taxAmount(tx);
-    final feeAmount = _feeAmount(tx);
-    final totalAmount = baseAmount + taxAmount + feeAmount;
+    final normalizedDestination = _friendlyMovementLabel(
+      tx,
+      destinationDisplay,
+      toSide: true,
+    );
     final ordered = <MapEntry<String, String>>[
+      MapEntry(l10n.transactionsReceiptAmount, _amountText(tx)),
+      MapEntry(
+        l10n.transactionsReceiptStatus,
+        _pickString([
+          tx['status'],
+          tx['state'],
+          l10n.transactionsStatusCompleted,
+        ]),
+      ),
+      MapEntry(l10n.transactionsReceiptDate, date),
       MapEntry(
         l10n.transactionsReceiptReferenceId,
         _pickString([
@@ -777,45 +749,62 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
           tx['transaction_id'],
         ]),
       ),
-      MapEntry(l10n.transactionsReceiptType, _friendlyType(tx)),
+      MapEntry(l10n.transactionsReceiptFrom, normalizedSource),
       MapEntry(
-        l10n.transactionsReceiptStatus,
-        _pickString([
-          tx['status'],
-          tx['state'],
-          l10n.transactionsStatusCompleted,
-        ]),
+        Localizations.localeOf(context).languageCode.toLowerCase() == 'sw'
+            ? 'Kwenda'
+            : 'To',
+        normalizedDestination,
       ),
-      MapEntry(l10n.transactionsReceiptAmount, _amountText(tx)),
-      MapEntry(l10n.transactionsReceiptBaseAmount, _money(tx, baseAmount)),
-      MapEntry(l10n.transactionsReceiptTax, _money(tx, taxAmount)),
-      MapEntry(l10n.transactionsReceiptServiceFee, _money(tx, feeAmount)),
-      MapEntry(l10n.transactionsReceiptTotalCharged, _money(tx, totalAmount)),
-      MapEntry(l10n.transactionsReceiptDirection, direction),
-      MapEntry(l10n.transactionsReceiptMoneyState, _lifecycleState(tx)),
-      MapEntry(l10n.transactionsReceiptDate, date),
-      MapEntry(l10n.transactionsReceiptFrom, sourceDisplay),
-      MapEntry(l10n.transactionsReceiptTo, destinationDisplay),
     ];
     return ordered.where((e) => e.value.trim().isNotEmpty).toList();
   }
 
-  String _lifecycleState(Map<String, dynamic> tx) {
-    final l10n = AppLocalizations.of(context)!;
-    switch (_lifecycleStateKey(tx)) {
-      case 'available':
-        return l10n.moneyStateAvailable;
-      case 'budgeted':
-        return l10n.moneyStateBudgeted;
-      case 'saved':
-        return l10n.moneyStateSaved;
-      case 'locked':
-        return l10n.moneyStateLocked;
-      case 'spent':
-        return l10n.moneyStateSpent;
-      default:
-        return l10n.moneyStateAllocated;
+  String _friendlyMovementLabel(
+    Map<String, dynamic> tx,
+    String current, {
+    required bool toSide,
+  }) {
+    final normalized = current.trim().toLowerCase();
+    final shouldReplace =
+        normalized.isEmpty ||
+        normalized.contains('external recipient') ||
+        normalized.contains('not available') ||
+        normalized.contains('haipatikani') ||
+        normalized == 'external' ||
+        normalized == 'n/a';
+    if (!shouldReplace) return current;
+
+    final raw = _pickString([
+      tx['allocation_source'],
+      tx['money_state'],
+      tx['moneyState'],
+      tx['wallet_type'],
+      tx['walletType'],
+      tx['transaction_type'],
+      tx['type'],
+      tx['category'],
+      tx['description'],
+      tx['note'],
+      tx['reference'],
+    ]).toLowerCase();
+
+    if (raw.contains('escrow') || raw.contains('safe')) {
+      return toSide ? 'PaySafe Escrow Wallet' : 'Operating Wallet';
     }
+    if (raw.contains('shared_pot') || raw.contains('pot')) {
+      return toSide ? 'Fungu Wallet' : 'Operating Wallet';
+    }
+    if (raw.contains('shared_budget') || raw.contains('budget')) {
+      return toSide ? 'Mezani Wallet' : 'Operating Wallet';
+    }
+    if (raw.contains('goal') || raw.contains('saving')) {
+      return toSide ? 'Goal Wallet' : 'Operating Wallet';
+    }
+    if (raw.contains('lock') || raw.contains('allocated')) {
+      return toSide ? 'Allocated Wallet' : 'Operating Wallet';
+    }
+    return current;
   }
 
   String _lifecycleStateKey(Map<String, dynamic> tx) {
@@ -924,62 +913,62 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     final isCredit = _isCredit(tx);
     final accent = _transactionAccent(tx, ui);
     final icon = _transactionIcon(tx, isCredit: isCredit);
+    final status = _transactionStatusMeta(tx, ui);
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: OrbiCardStyles.elevatedCardDecoration(
-        context,
-        radius: 16,
-        accent: accent,
-        branded: true,
-        elevated: true,
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: ui.card.withValues(alpha: 0.96),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: ui.border.withValues(alpha: 0.72)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.035),
+            blurRadius: 14,
+            offset: const Offset(0, 8),
+          ),
+        ],
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
         onTap: () => _openTransactionDetails(tx),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           child: LayoutBuilder(
             builder: (context, constraints) {
-              final compact = constraints.maxWidth < 340;
+              final compact = constraints.maxWidth < 360;
               if (compact) {
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        Container(
-                          width: 42,
-                          height: 42,
-                          decoration: OrbiCardStyles.iconBadgeDecoration(
-                            context,
-                            accent: accent,
-                            radius: 14,
-                          ),
-                          child: Icon(icon, color: accent, size: 21),
-                        ),
+                        _transactionIconBadge(icon, accent),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
                             children: [
                               Text(
                                 _title(tx),
-                                maxLines: 2,
+                                maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   color: ui.textPrimary,
-                                  fontWeight: FontWeight.w700,
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w800,
                                 ),
                               ),
-                              const SizedBox(height: 4),
+                              const SizedBox(height: 3),
                               Text(
-                                '${_subtitle(tx)} • ${_lifecycleState(tx)}',
-                                maxLines: 3,
+                                _subtitle(tx),
+                                maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   color: ui.textMuted,
-                                  fontSize: 12,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
                             ],
@@ -987,38 +976,41 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 10),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: MoneyText(
-                        value: amount,
-                        mainFontSize: 18,
-                        sideFontSize: 10,
-                        textAlign: TextAlign.end,
-                        mainColor: accent,
-                        sideColor: accent,
-                      ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        const SizedBox(width: 50),
+                        Expanded(child: _transactionStatusChip(status)),
+                        SizedBox(
+                          width: 126,
+                          child: MoneyText(
+                            value: amount,
+                            mainFontSize: 16,
+                            sideFontSize: 9,
+                            textAlign: TextAlign.end,
+                            mainColor: accent,
+                            sideColor: accent,
+                          ),
+                        ),
+                        Icon(
+                          Icons.chevron_right_rounded,
+                          color: ui.iconMuted.withValues(alpha: 0.72),
+                          size: 20,
+                        ),
+                      ],
                     ),
                   ],
                 );
               }
               return Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Container(
-                    width: 42,
-                    height: 42,
-                    decoration: OrbiCardStyles.iconBadgeDecoration(
-                      context,
-                      accent: accent,
-                      radius: 14,
-                    ),
-                    child: Icon(icon, color: accent, size: 21),
-                  ),
+                  _transactionIconBadge(icon, accent),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
                           _title(tx),
@@ -1026,32 +1018,49 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: ui.textPrimary,
-                            fontWeight: FontWeight.w700,
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w800,
                           ),
                         ),
-                        const SizedBox(height: 4),
+                        const SizedBox(height: 3),
                         Text(
-                          '${_subtitle(tx)} • ${_lifecycleState(tx)}',
-                          maxLines: 2,
+                          _subtitle(tx),
+                          maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: ui.textMuted, fontSize: 12),
+                          style: TextStyle(
+                            color: ui.textMuted,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ],
                     ),
                   ),
                   const SizedBox(width: 12),
-                  Flexible(
-                    child: Align(
-                      alignment: Alignment.topRight,
-                      child: MoneyText(
-                        value: amount,
-                        mainFontSize: 18,
-                        sideFontSize: 10,
-                        textAlign: TextAlign.end,
-                        mainColor: accent,
-                        sideColor: accent,
-                      ),
+                  SizedBox(
+                    width: 142,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        MoneyText(
+                          value: amount,
+                          mainFontSize: 17,
+                          sideFontSize: 9,
+                          textAlign: TextAlign.end,
+                          mainColor: accent,
+                          sideColor: accent,
+                        ),
+                        const SizedBox(height: 6),
+                        _transactionStatusChip(status),
+                      ],
                     ),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    color: ui.iconMuted.withValues(alpha: 0.64),
+                    size: 20,
                   ),
                 ],
               );
@@ -1059,6 +1068,110 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _transactionIconBadge(IconData icon, Color accent) {
+    return Container(
+      width: 38,
+      height: 38,
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: accent.withValues(alpha: 0.22)),
+      ),
+      child: Icon(icon, color: accent, size: 20),
+    );
+  }
+
+  Widget _transactionStatusChip(_TransactionStatusMeta status) {
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 124),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: status.color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: status.color.withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(status.icon, color: status.color, size: 12),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              status.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: status.color,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  _TransactionStatusMeta _transactionStatusMeta(
+    Map<String, dynamic> tx,
+    OrbiUiTokens ui,
+  ) {
+    final sw =
+        Localizations.localeOf(context).languageCode.toLowerCase() == 'sw';
+    final raw = _pickString([
+      tx['status'],
+      tx['state'],
+      tx['transaction_status'],
+      tx['transactionStatus'],
+      tx['payment_status'],
+      tx['paymentStatus'],
+      tx['lifecycle_status'],
+      tx['lifecycleStatus'],
+      'completed',
+    ]).toLowerCase();
+
+    if (raw.contains('fail') ||
+        raw.contains('reject') ||
+        raw.contains('declin') ||
+        raw.contains('error')) {
+      return _TransactionStatusMeta(
+        label: sw ? 'Imeshindikana' : 'Failed',
+        icon: Icons.cancel_rounded,
+        color: ui.danger,
+      );
+    }
+    if (raw.contains('cancel') || raw.contains('void')) {
+      return _TransactionStatusMeta(
+        label: sw ? 'Imeghairiwa' : 'Cancelled',
+        icon: Icons.block_rounded,
+        color: ui.textMuted,
+      );
+    }
+    if (raw.contains('pend') ||
+        raw.contains('process') ||
+        raw.contains('progress') ||
+        raw.contains('review') ||
+        raw.contains('hold')) {
+      return _TransactionStatusMeta(
+        label: sw ? 'Inaendelea' : 'In progress',
+        icon: Icons.sync_rounded,
+        color: ui.warning,
+      );
+    }
+    if (raw.contains('lock') || raw.contains('escrow')) {
+      return _TransactionStatusMeta(
+        label: sw ? 'Imehifadhiwa' : 'Secured',
+        icon: Icons.verified_user_rounded,
+        color: ui.accent,
+      );
+    }
+    return _TransactionStatusMeta(
+      label: sw ? 'Imekamilika' : 'Completed',
+      icon: Icons.check_circle_rounded,
+      color: ui.success,
     );
   }
 
@@ -1116,513 +1229,530 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     );
   }
 
-  Future<Uint8List> _buildReceiptPdf(
-    List<MapEntry<String, String>> rows, {
-    required String heading,
-    Uint8List? logoBytes,
-    Uint8List? watermarkBytes,
-    required String barcodeValue,
-  }) async {
-    final doc = pw.Document();
-    final brandFont = await PdfGoogleFonts.michromaRegular();
-    final receiptInk = PdfColor.fromHex('#163126');
-    final receiptMutedInk = PdfColor.fromHex('#5E7268');
-    final receiptBorder = PdfColor.fromHex('#2E8B57');
-    final receiptSoft = PdfColor.fromHex('#E7F5EC');
-    final now = DateTime.now();
-    final printedAt = DateFormat('yyyy-MM-dd HH:mm:ss').format(now);
-    final tzName = now.timeZoneName.trim();
-    final offset = now.timeZoneOffset;
-    final offsetSign = offset.isNegative ? '-' : '+';
-    final offsetHours = offset.inHours.abs().toString().padLeft(2, '0');
-    final offsetMinutes = (offset.inMinutes.abs() % 60).toString().padLeft(
-      2,
-      '0',
+  String _receiptStatusLabel(List<MapEntry<String, String>> detailRows) {
+    return detailRows.isNotEmpty && detailRows.first.value.trim().isNotEmpty
+        ? detailRows.first.value.trim()
+        : 'Completed';
+  }
+
+  String _receiptStatusKey(String status) {
+    final raw = status.toLowerCase();
+    if (raw.contains('fail') ||
+        raw.contains('reject') ||
+        raw.contains('declin') ||
+        raw.contains('error') ||
+        raw.contains('shindik')) {
+      return 'failed';
+    }
+    if (raw.contains('cancel') ||
+        raw.contains('void') ||
+        raw.contains('ghair')) {
+      return 'cancelled';
+    }
+    if (raw.contains('pend') ||
+        raw.contains('process') ||
+        raw.contains('progress') ||
+        raw.contains('review') ||
+        raw.contains('hold') ||
+        raw.contains('endelea')) {
+      return 'pending';
+    }
+    if (raw.contains('lock') ||
+        raw.contains('escrow') ||
+        raw.contains('secure') ||
+        raw.contains('hifadhi')) {
+      return 'secured';
+    }
+    return 'completed';
+  }
+
+  Color _receiptStatusColor(String status) {
+    switch (_receiptStatusKey(status)) {
+      case 'failed':
+        return const Color(0xFFDC2626);
+      case 'cancelled':
+        return const Color(0xFF64748B);
+      case 'pending':
+        return const Color(0xFFD97706);
+      case 'secured':
+        return const Color(0xFF2563EB);
+      default:
+        return const Color(0xFF16A34A);
+    }
+  }
+
+  Color _receiptStatusSoftColor(String status) {
+    switch (_receiptStatusKey(status)) {
+      case 'failed':
+        return const Color(0xFFFEF2F2);
+      case 'cancelled':
+        return const Color(0xFFF1F5F9);
+      case 'pending':
+        return const Color(0xFFFFFBEB);
+      case 'secured':
+        return const Color(0xFFEFF6FF);
+      default:
+        return const Color(0xFFF0FDF4);
+    }
+  }
+
+  IconData _receiptStatusIcon(String status) {
+    switch (_receiptStatusKey(status)) {
+      case 'failed':
+        return Icons.cancel_rounded;
+      case 'cancelled':
+        return Icons.block_rounded;
+      case 'pending':
+        return Icons.sync_rounded;
+      case 'secured':
+        return Icons.verified_user_rounded;
+      default:
+        return Icons.check_circle_rounded;
+    }
+  }
+
+  Future<Uint8List> _buildReceiptPdfFromPreview(GlobalKey previewKey) async {
+    await WidgetsBinding.instance.endOfFrame;
+    final renderObject = previewKey.currentContext?.findRenderObject();
+    if (renderObject is! RenderRepaintBoundary) {
+      throw StateError('Receipt preview is not ready for capture.');
+    }
+    final image = await renderObject.toImage(pixelRatio: 3);
+    final byteData = await image.toByteData(
+      format: dart_ui.ImageByteFormat.png,
     );
-    final offsetLabel = 'UTC$offsetSign$offsetHours:$offsetMinutes';
-    final printedAtLabel = tzName.isNotEmpty && tzName.toUpperCase() != 'UTC'
-        ? '$printedAt $tzName ($offsetLabel)'
-        : printedAt;
-    final receiptPageFormat = _receiptPdfPageFormat();
-    doc.addPage(
-      pw.MultiPage(
-        pageFormat: receiptPageFormat,
-        margin: pw.EdgeInsets.zero,
-        build: (context) {
-          final bars = _barcodeWidths(barcodeValue);
-          var dark = true;
-          final pdfBars = bars.map((w) {
-            final bar = pw.Container(
-              width: w.toDouble(),
-              color: dark ? receiptInk : PdfColor.fromHex('#FFFFFF'),
-            );
-            dark = !dark;
-            return bar;
-          }).toList();
-          final receiptBody = pw.CustomPaint(
-            foregroundPainter: (canvas, size) {
-              const zigZagHeight = 4.0;
-              const zigZagWidth = 10.0;
-              final width = size.x;
-              final height = size.y;
-              canvas
-                ..setStrokeColor(receiptBorder)
-                ..setLineWidth(0.8);
-              var x = 0.0;
-              canvas.moveTo(0, height - zigZagHeight);
-              while (x < width) {
-                canvas
-                  ..lineTo(x + zigZagWidth / 2, height)
-                  ..lineTo(x + zigZagWidth, height - zigZagHeight);
-                x += zigZagWidth;
-              }
-              canvas.strokePath();
-              x = width;
-              canvas.moveTo(width, zigZagHeight);
-              while (x > 0) {
-                canvas
-                  ..lineTo(x - zigZagWidth / 2, 0)
-                  ..lineTo(x - zigZagWidth, zigZagHeight);
-                x -= zigZagWidth;
-              }
-              canvas.strokePath();
-            },
-            child: pw.Container(
-              width: double.infinity,
-              padding: const pw.EdgeInsets.fromLTRB(18, 18, 18, 16),
-              decoration: pw.BoxDecoration(
-                borderRadius: pw.BorderRadius.circular(4),
-              ),
-              child: pw.DefaultTextStyle(
-                style: pw.TextStyle(color: receiptInk),
-                child: pw.Stack(
-                  children: [
-                    if (watermarkBytes != null)
-                      pw.Positioned.fill(
-                        child: pw.Align(
-                          alignment: const pw.Alignment(0, 0.2),
-                          child: pw.Opacity(
-                            opacity: 0.08,
-                            child: pw.Image(
-                              pw.MemoryImage(watermarkBytes),
-                              width: 220,
-                              height: 220,
-                            ),
-                          ),
-                        ),
-                      ),
-                    pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.start,
-                      children: [
-                        pw.Header(
-                          level: 0,
-                          margin: pw.EdgeInsets.zero,
-                          child: pw.Center(
-                            child: pw.Column(
-                              children: [
-                                if (logoBytes != null) ...[
-                                  pw.Image(
-                                    pw.MemoryImage(logoBytes),
-                                    width: 34,
-                                    height: 34,
-                                  ),
-                                  pw.SizedBox(height: 6),
-                                ],
-                                pw.Container(
-                                  padding: const pw.EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 5,
-                                  ),
-                                  decoration: pw.BoxDecoration(
-                                    color: receiptSoft,
-                                    border: pw.Border.all(color: receiptBorder),
-                                    borderRadius: pw.BorderRadius.circular(999),
-                                  ),
-                                  child: pw.Text(
-                                    'ORBI',
-                                    style: pw.TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: pw.FontWeight.bold,
-                                      letterSpacing: 1.2,
-                                      color: receiptBorder,
-                                      font: brandFont,
-                                    ),
-                                  ),
-                                ),
-                                pw.SizedBox(height: 4),
-                                pw.Text(
-                                  heading,
-                                  textAlign: pw.TextAlign.center,
-                                  style: pw.TextStyle(
-                                    fontSize: 10.5,
-                                    fontWeight: pw.FontWeight.bold,
-                                  ),
-                                ),
-                                pw.SizedBox(height: 3),
-                                pw.Text(
-                                  'Orbi Financial Technologies\n'
-                                  'P.O. BOX 02, Dar es Salaam, Tanzania\n'
-                                  'Main Branch Kariakoo Alikoma-Magila Street, Block No 123 Second Floor\n'
-                                  'Tel +255764258114',
-                                  textAlign: pw.TextAlign.center,
-                                  style: pw.TextStyle(
-                                    fontSize: 8,
-                                    color: receiptMutedInk,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        pw.SizedBox(height: 10),
-                        pw.Table(
-                          columnWidths: {
-                            0: const pw.FlexColumnWidth(2.2),
-                            1: const pw.FixedColumnWidth(14),
-                            2: const pw.FlexColumnWidth(3.8),
-                          },
-                          defaultVerticalAlignment:
-                              pw.TableCellVerticalAlignment.top,
-                          children: rows
-                              .map(
-                                (row) => pw.TableRow(
-                                  children: [
-                                    pw.Padding(
-                                      padding: const pw.EdgeInsets.only(
-                                        bottom: 7,
-                                      ),
-                                      child: pw.Text(
-                                        row.key.toUpperCase(),
-                                        style: pw.TextStyle(
-                                          fontSize: 8.6,
-                                          color: receiptMutedInk,
-                                        ),
-                                      ),
-                                    ),
-                                    pw.Padding(
-                                      padding: const pw.EdgeInsets.only(
-                                        bottom: 7,
-                                      ),
-                                      child: pw.Text(
-                                        ':',
-                                        textAlign: pw.TextAlign.center,
-                                        style: const pw.TextStyle(fontSize: 9),
-                                      ),
-                                    ),
-                                    pw.Padding(
-                                      padding: const pw.EdgeInsets.only(
-                                        bottom: 7,
-                                      ),
-                                      child: pw.Text(
-                                        row.value,
-                                        softWrap: true,
-                                        style: pw.TextStyle(
-                                          fontSize: 9.2,
-                                          fontWeight:
-                                              row.key == 'Amount' ||
-                                                  row.key == 'Base Amount' ||
-                                                  row.key == 'Tax' ||
-                                                  row.key == 'Service Fee' ||
-                                                  row.key == 'Total Charged'
-                                              ? pw.FontWeight.bold
-                                              : pw.FontWeight.normal,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              )
-                              .toList(),
-                        ),
-                        pw.SizedBox(height: 10),
-                        pw.Container(
-                          width: double.infinity,
-                          height: 56,
-                          padding: const pw.EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 8,
-                          ),
-                          decoration: pw.BoxDecoration(
-                            color: receiptSoft,
-                            border: pw.Border.all(color: receiptBorder),
-                            borderRadius: pw.BorderRadius.circular(6),
-                          ),
-                          child: pw.Center(
-                            child: pw.SizedBox(
-                              width: bars.fold<double>(
-                                0,
-                                (sum, width) => sum + width.toDouble(),
-                              ),
-                              height: 40,
-                              child: pw.Row(
-                                mainAxisSize: pw.MainAxisSize.min,
-                                crossAxisAlignment:
-                                    pw.CrossAxisAlignment.stretch,
-                                children: pdfBars,
-                              ),
-                            ),
-                          ),
-                        ),
-                        pw.SizedBox(height: 4),
-                        pw.Center(
-                          child: pw.Text(
-                            barcodeValue,
-                            style: pw.TextStyle(
-                              fontSize: 8.3,
-                              color: receiptMutedInk,
-                            ),
-                          ),
-                        ),
-                        pw.SizedBox(height: 6),
-                        pw.Center(
-                          child: pw.Text(
-                            'Thank you for choosing ORBI. We value your trust.',
-                            textAlign: pw.TextAlign.center,
-                            style: pw.TextStyle(
-                              fontSize: 8.2,
-                              color: receiptBorder,
-                            ),
-                          ),
-                        ),
-                        pw.SizedBox(height: 4),
-                        pw.Center(
-                          child: pw.Text(
-                            'Printed: $printedAtLabel',
-                            style: pw.TextStyle(
-                              fontSize: 8.2,
-                              color: receiptMutedInk,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-          return [
-            pw.Center(
-              child: pw.Container(
-                width: receiptPageFormat.availableWidth,
-                height: receiptPageFormat.availableHeight,
-                alignment: pw.Alignment.center,
-                child: receiptBody,
-              ),
-            ),
-          ];
-        },
-      ),
+    image.dispose();
+    if (byteData == null) {
+      throw StateError('Could not capture receipt preview.');
+    }
+    return OrbiReceiptImagePdfBuilder.build(
+      receiptPngBytes: byteData.buffer.asUint8List(),
     );
-    return doc.save();
   }
 
   Widget _receiptPreviewCard({
     required List<MapEntry<String, String>> rows,
     required String heading,
     required Uint8List? logoBytes,
-    required Uint8List? watermarkBytes,
     required String barcodeValue,
     required OrbiUiTokens ui,
   }) {
     const receiptPaper = Color(0xFFFFFFFF);
-    const receiptInk = Color(0xFF163126);
-    const receiptMutedInk = Color(0xFF5E7268);
-    const receiptBorder = Color(0xFF2E8B57);
-    const receiptSoft = Color(0xFFE7F5EC);
+    const receiptInk = Color(0xFF1A2332);
+    const receiptMutedInk = Color(0xFF64748B);
+    const receiptBorder = Color(0xFF2563EB);
+    const receiptSoft = Color(0xFFEFF6FF);
+    final primaryRow = rows.isNotEmpty
+        ? rows.first
+        : const MapEntry<String, String>('Amount', '-');
+    final detailRows = rows.length > 1
+        ? rows.skip(1).toList()
+        : <MapEntry<String, String>>[];
+    final statusLabel = _receiptStatusLabel(detailRows);
+    final statusColor = _receiptStatusColor(statusLabel);
+    final statusSoft = _receiptStatusSoftColor(statusLabel);
+    final statusIcon = _receiptStatusIcon(statusLabel);
     return Center(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 360),
-        child: ClipPath(
-          clipper: const _ReceiptZigZagClipper(),
-          child: Container(
-            width: double.infinity,
-            decoration: BoxDecoration(
-              color: receiptPaper,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: receiptBorder, width: 1.1),
-            ),
-            padding: const EdgeInsets.fromLTRB(14, 16, 14, 14),
-            child: Stack(
-              children: [
-                if (watermarkBytes != null)
-                  Positioned.fill(
-                    child: Align(
-                      alignment: const Alignment(0, 0.2),
+        constraints: const BoxConstraints(maxWidth: 390),
+        child: Container(
+          width: double.infinity,
+          decoration: BoxDecoration(
+            color: receiptPaper,
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: const Color(0xFFE2E8F0), width: 1.1),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x141A2332),
+                blurRadius: 28,
+                offset: Offset(0, 18),
+              ),
+            ],
+          ),
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              if (logoBytes != null)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: Center(
                       child: Opacity(
-                        opacity: 0.08,
+                        opacity: 0.035,
                         child: Image.memory(
-                          watermarkBytes,
-                          width: 220,
-                          height: 220,
+                          logoBytes,
+                          width: 270,
+                          height: 270,
                           fit: BoxFit.contain,
+                          color: Colors.black,
                         ),
                       ),
                     ),
                   ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Center(
-                      child: Column(
-                        children: [
-                          if (logoBytes != null) ...[
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(999),
-                              child: Image.memory(
-                                logoBytes,
-                                width: 36,
-                                height: 36,
-                                fit: BoxFit.cover,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                          ],
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 5,
-                            ),
-                            decoration: BoxDecoration(
-                              color: receiptSoft,
-                              borderRadius: BorderRadius.circular(999),
-                              border: Border.all(color: receiptBorder),
-                            ),
-                            child: Text(
-                              'ORBI',
-                              style: GoogleFonts.michroma(
-                                color: receiptBorder,
-                                fontSize: 14,
-                                letterSpacing: 1.0,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            heading,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: receiptInk,
-                              fontWeight: FontWeight.w800,
-                              fontSize: 11.5,
-                            ),
-                          ),
-                          const SizedBox(height: 3),
-                          const Text(
-                            'Orbi Financial Technologies\n'
-                            'P.O. BOX 02, Dar es Salaam, Tanzania\n'
-                            'Main Branch, Block No 123, Second Floor\n'
-                            'Tel +255764258114',
-                            textAlign: TextAlign.center,
+                ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: logoBytes != null
+                        ? Image.memory(
+                            logoBytes,
+                            width: 96,
+                            height: 38,
+                            fit: BoxFit.contain,
+                            color: Colors.black,
+                          )
+                        : const Text(
+                            'Orbi',
                             style: TextStyle(
-                              color: receiptMutedInk,
-                              fontSize: 9,
-                              fontWeight: FontWeight.w500,
-                              height: 1.35,
+                              color: Colors.black,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Center(
+                    child: Text(
+                      'SECURE PAYMENT RECEIPT',
+                      style: TextStyle(
+                        color: receiptMutedInk,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1.3,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: statusSoft,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: statusColor),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(statusIcon, size: 15, color: statusColor),
+                          const SizedBox(width: 6),
+                          Text(
+                            statusLabel,
+                            style: TextStyle(
+                              color: statusColor,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
                             ),
                           ),
                         ],
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    const Divider(color: receiptBorder, height: 1),
-                    const SizedBox(height: 9),
-                    ...rows.map(
-                      (row) => Padding(
-                        padding: const EdgeInsets.only(bottom: 7),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            SizedBox(
-                              width: 122,
-                              child: Text(
-                                row.key.toUpperCase(),
-                                textAlign: TextAlign.start,
-                                style: const TextStyle(
+                  ),
+                  const SizedBox(height: 18),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 18,
+                      vertical: 18,
+                    ),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0xFFEFF6FF), Color(0xFFFFFFFF)],
+                      ),
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(color: const Color(0xFFBFDBFE)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Text(
+                          primaryRow.key.toUpperCase(),
+                          style: const TextStyle(
+                            color: receiptMutedInk,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 1.4,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            primaryRow.value,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: receiptInk,
+                              fontSize: 42,
+                              height: 1,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: -1.2,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 7,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: receiptBorder),
+                          ),
+                          child: Text(
+                            heading,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: receiptBorder,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  const Divider(color: Color(0xFFE2E8F0), height: 1),
+                  const SizedBox(height: 14),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(22),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'TRANSACTION DETAILS',
+                          style: TextStyle(
+                            color: receiptMutedInk,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.7,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        ...detailRows.skip(1).toList().asMap().entries.map((
+                          entry,
+                        ) {
+                          final row = entry.value;
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 13),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(
+                                  _receiptDetailIcon(entry.key),
                                   color: receiptMutedInk,
-                                  fontSize: 9.5,
-                                  fontWeight: FontWeight.w700,
+                                  size: 18,
                                 ),
-                              ),
-                            ),
-                            const Padding(
-                              padding: EdgeInsets.symmetric(horizontal: 6),
-                              child: Text(
-                                ':',
-                                style: TextStyle(
-                                  color: receiptInk,
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 10.5,
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    row.key,
+                                    style: const TextStyle(
+                                      color: receiptMutedInk,
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 13,
+                                    ),
+                                  ),
                                 ),
-                              ),
+                                const SizedBox(width: 12),
+                                Flexible(
+                                  flex: 2,
+                                  child: Text(
+                                    row.value,
+                                    textAlign: TextAlign.end,
+                                    style: const TextStyle(
+                                      color: receiptInk,
+                                      fontWeight: FontWeight.w900,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
+                          );
+                        }),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: receiptSoft,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.lock_rounded,
+                              color: receiptBorder,
+                              size: 18,
+                            ),
+                            const SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                row.value,
-                                textAlign: TextAlign.start,
+                                barcodeValue,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                   color: receiptInk,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 10.5,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w900,
                                 ),
                               ),
                             ),
                           ],
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Center(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 280),
-                        child: _barcodeStrip(
+                        const SizedBox(height: 12),
+                        _barcodeStrip(
                           barcodeValue,
                           ui: ui.copyWith(
-                            card: receiptPaper,
+                            card: receiptSoft,
                             borderStrong: receiptBorder,
                             textPrimary: receiptInk,
                           ),
                         ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Center(
+                    child: Text(
+                      'Thank you for choosing ORBI. We value your trust.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: receiptBorder,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Center(
-                      child: Text(
-                        barcodeValue,
-                        style: const TextStyle(
-                          color: receiptMutedInk,
-                          fontSize: 9.5,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    const Center(
-                      child: Text(
-                        'Thank you for choosing ORBI. We value your trust.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: receiptBorder,
-                          fontSize: 9.5,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
       ),
     );
   }
 
+  IconData _receiptDetailIcon(int index) {
+    switch (index) {
+      case 0:
+        return Icons.calendar_month_rounded;
+      case 1:
+        return Icons.confirmation_number_rounded;
+      case 2:
+        return Icons.arrow_outward_rounded;
+      case 3:
+        return Icons.south_west_rounded;
+      default:
+        return Icons.sell_rounded;
+    }
+  }
+
+  Future<void> _showReceiptLoadingOverlay() async {
+    final ui = OrbiTheme.uiOf(context);
+    final sw =
+        Localizations.localeOf(context).languageCode.toLowerCase() == 'sw';
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      barrierColor: Colors.black.withValues(alpha: 0.42),
+      builder: (_) {
+        return PopScope(
+          canPop: false,
+          child: Center(
+            child: Container(
+              width: 260,
+              padding: const EdgeInsets.all(22),
+              decoration: BoxDecoration(
+                color: ui.sheet,
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: ui.border),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.18),
+                    blurRadius: 28,
+                    offset: const Offset(0, 18),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 42,
+                    height: 42,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 3,
+                      color: ui.accent,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    sw ? 'Tunaandaa risiti...' : 'Preparing receipt...',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: ui.textPrimary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    sw ? 'Tafadhali subiri kidogo.' : 'Please wait a moment.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: ui.textMuted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _closeReceiptLoadingOverlay() {
+    final navigator = Navigator.of(context, rootNavigator: true);
+    if (navigator.canPop()) {
+      navigator.pop();
+    }
+  }
+
   Future<void> _openTransactionDetails(Map<String, dynamic> tx) async {
     final ui = OrbiTheme.uiOf(context);
     if (_isOpeningDetails) return;
     _isOpeningDetails = true;
+    var loadingOverlayOpen = false;
     try {
+      unawaited(_showReceiptLoadingOverlay());
+      loadingOverlayOpen = true;
       final txId = _pickString([
         tx['id'],
         tx['transaction_id'],
@@ -1641,12 +1771,15 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       }
       final rows = _receiptRows(receiptPayload);
       final logoBytes = await _loadLogoBytes();
-      final watermarkBytes = await _loadWatermarkBytes();
       const heading = 'TRANSACTION RECEIPT';
       final barcodeValue = txId.isEmpty
           ? 'ORBI-${DateTime.now().millisecondsSinceEpoch}'
           : txId;
       if (!mounted) return;
+      if (loadingOverlayOpen) {
+        _closeReceiptLoadingOverlay();
+        loadingOverlayOpen = false;
+      }
       await showModalBottomSheet<void>(
         context: context,
         isScrollControlled: true,
@@ -1655,127 +1788,225 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
           borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
         ),
         builder: (ctx) {
-          return SafeArea(
-            top: false,
-            child: SizedBox(
-              height: MediaQuery.of(ctx).size.height * 0.86,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Expanded(child: SizedBox.shrink()),
-                        Text(
-                          'TRANSACTION RECEIPT',
-                          style: TextStyle(
-                            color: ui.textPrimary,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: () => Navigator.pop(ctx),
-                          icon: Icon(Icons.close, color: ui.iconMuted),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        child: _receiptPreviewCard(
-                          rows: rows,
-                          heading: heading,
-                          logoBytes: logoBytes,
-                          watermarkBytes: watermarkBytes,
-                          barcodeValue: barcodeValue,
-                          ui: ui,
+          final receiptPreviewKey = GlobalKey();
+          var printBusy = false;
+          var shareBusy = false;
+          return StatefulBuilder(
+            builder: (sheetContext, setSheetState) {
+              Future<void> runReceiptAction({
+                required bool share,
+                required Future<void> Function(Uint8List pdf) action,
+              }) async {
+                if (printBusy || shareBusy) return;
+                setSheetState(() {
+                  if (share) {
+                    shareBusy = true;
+                  } else {
+                    printBusy = true;
+                  }
+                });
+                try {
+                  final pdf = await _buildReceiptPdfFromPreview(
+                    receiptPreviewKey,
+                  );
+                  try {
+                    debugPrint(
+                      'TransactionsScreen.receipt.image.v1: generated receipt PDF size=${pdf.length} bytes',
+                    );
+                  } catch (_) {}
+                  await action(pdf);
+                } catch (e) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        UserFacingError.from(
+                          e,
+                          fallback:
+                              Localizations.localeOf(
+                                    context,
+                                  ).languageCode.toLowerCase() ==
+                                  'sw'
+                              ? 'Imeshindikana kuandaa risiti.'
+                              : 'Could not prepare the receipt.',
                         ),
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    Column(
+                  );
+                } finally {
+                  if (mounted) {
+                    setSheetState(() {
+                      if (share) {
+                        shareBusy = false;
+                      } else {
+                        printBusy = false;
+                      }
+                    });
+                  }
+                }
+              }
+
+              return SafeArea(
+                top: false,
+                child: SizedBox(
+                  height: MediaQuery.of(ctx).size.height * 0.86,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        if (_canReportTransferIssue(tx)) ...[
-                          SizedBox(
-                            width: double.infinity,
-                            child: OutlinedButton.icon(
-                              onPressed: () async {
-                                Navigator.pop(ctx);
-                                await _reportIncorrectTransfer(tx);
-                              },
-                              icon: const Icon(
-                                Icons.report_problem_outlined,
-                                size: 18,
-                              ),
-                              label: Text(
-                                Localizations.localeOf(
-                                          context,
-                                        ).languageCode.toLowerCase() ==
-                                        'sw'
-                                    ? 'Ripoti uhamisho usio sahihi'
-                                    : 'Report incorrect transfer',
+                        Row(
+                          children: [
+                            const Expanded(child: SizedBox.shrink()),
+                            Text(
+                              'TRANSACTION RECEIPT',
+                              style: TextStyle(
+                                color: ui.textPrimary,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800,
                               ),
                             ),
-                          ),
-                          const SizedBox(height: 10),
-                        ],
-                        SizedBox(
-                          width: double.infinity,
-                          child: OutlinedButton.icon(
-                            onPressed: () async {
-                              final pdf = await _buildReceiptPdf(
-                                rows,
+                            IconButton(
+                              onPressed: printBusy || shareBusy
+                                  ? null
+                                  : () => Navigator.pop(ctx),
+                              icon: Icon(Icons.close, color: ui.iconMuted),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Expanded(
+                          child: SingleChildScrollView(
+                            child: RepaintBoundary(
+                              key: receiptPreviewKey,
+                              child: _receiptPreviewCard(
+                                rows: rows,
                                 heading: heading,
                                 logoBytes: logoBytes,
-                                watermarkBytes: watermarkBytes,
                                 barcodeValue: barcodeValue,
-                              );
-                              await Printing.layoutPdf(
-                                onLayout: (_) async => pdf,
-                              );
-                            },
-                            icon: const Icon(Icons.download_rounded, size: 18),
-                            label: Text(
-                              AppLocalizations.of(context)!.actionDownloadPrint,
+                                ui: ui,
+                              ),
                             ),
                           ),
                         ),
                         const SizedBox(height: 10),
-                        SizedBox(
-                          width: double.infinity,
-                          child: FilledButton.icon(
-                            onPressed: () async {
-                              final pdf = await _buildReceiptPdf(
-                                rows,
-                                heading: heading,
-                                logoBytes: logoBytes,
-                                watermarkBytes: watermarkBytes,
-                                barcodeValue: barcodeValue,
-                              );
-                              await Printing.sharePdf(
-                                bytes: pdf,
-                                filename:
-                                    'obi_receipt_${txId.isEmpty ? DateTime.now().millisecondsSinceEpoch : txId}.pdf',
-                              );
-                            },
-                            icon: const Icon(Icons.share_rounded, size: 18),
-                            label: Text(
-                              AppLocalizations.of(context)!.actionShareReceipt,
+                        Column(
+                          children: [
+                            if (_canReportTransferIssue(tx)) ...[
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  onPressed: printBusy || shareBusy
+                                      ? null
+                                      : () async {
+                                          Navigator.pop(ctx);
+                                          await _reportIncorrectTransfer(tx);
+                                        },
+                                  icon: const Icon(
+                                    Icons.report_problem_outlined,
+                                    size: 18,
+                                  ),
+                                  label: Text(
+                                    Localizations.localeOf(
+                                              context,
+                                            ).languageCode.toLowerCase() ==
+                                            'sw'
+                                        ? 'Ripoti uhamisho usio sahihi'
+                                        : 'Report incorrect transfer',
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                            ],
+                            SizedBox(
+                              width: double.infinity,
+                              child: OutlinedButton.icon(
+                                onPressed: printBusy || shareBusy
+                                    ? null
+                                    : () => runReceiptAction(
+                                        share: false,
+                                        action: (pdf) => Printing.layoutPdf(
+                                          onLayout: (_) async => pdf,
+                                        ),
+                                      ),
+                                icon: printBusy
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(
+                                        Icons.download_rounded,
+                                        size: 18,
+                                      ),
+                                label: Text(
+                                  printBusy
+                                      ? (Localizations.localeOf(
+                                                  context,
+                                                ).languageCode.toLowerCase() ==
+                                                'sw'
+                                            ? 'Inaandaa...'
+                                            : 'Preparing...')
+                                      : AppLocalizations.of(
+                                          context,
+                                        )!.actionDownloadPrint,
+                                ),
+                              ),
                             ),
-                          ),
+                            const SizedBox(height: 10),
+                            SizedBox(
+                              width: double.infinity,
+                              child: FilledButton.icon(
+                                onPressed: printBusy || shareBusy
+                                    ? null
+                                    : () => runReceiptAction(
+                                        share: true,
+                                        action: (pdf) => Printing.sharePdf(
+                                          bytes: pdf,
+                                          filename:
+                                              'obi_receipt_${txId.isEmpty ? DateTime.now().millisecondsSinceEpoch : txId}.pdf',
+                                        ),
+                                      ),
+                                icon: shareBusy
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.share_rounded, size: 18),
+                                label: Text(
+                                  shareBusy
+                                      ? (Localizations.localeOf(
+                                                  context,
+                                                ).languageCode.toLowerCase() ==
+                                                'sw'
+                                            ? 'Inaandaa...'
+                                            : 'Preparing...')
+                                      : AppLocalizations.of(
+                                          context,
+                                        )!.actionShareReceipt,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                  ],
+                  ),
                 ),
-              ),
-            ),
+              );
+            },
           );
         },
       );
     } finally {
+      if (mounted && loadingOverlayOpen) {
+        _closeReceiptLoadingOverlay();
+      }
       _isOpeningDetails = false;
     }
   }
@@ -1804,7 +2035,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
               accentColor: ui.danger,
               accentBackground: ui.dangerSoft,
               action: FilledButton(
-                onPressed: _loadTransactions,
+                onPressed: () => _loadTransactions(forceRefresh: true),
                 child: Text(AppLocalizations.of(context)!.actionRetry),
               ),
             ),
@@ -1817,7 +2048,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       return OrbiBackground(
         padding: EdgeInsets.zero,
         child: RefreshIndicator(
-          onRefresh: _loadTransactions,
+          onRefresh: () => _loadTransactions(forceRefresh: true),
           child: ListView(
             padding: EdgeInsets.zero,
             physics: const AlwaysScrollableScrollPhysics(),
@@ -1864,7 +2095,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     return OrbiBackground(
       padding: EdgeInsets.zero,
       child: RefreshIndicator(
-        onRefresh: _loadTransactions,
+        onRefresh: () => _loadTransactions(forceRefresh: true),
         color: ui.success,
         child: ListView(
           padding: EdgeInsets.zero,
@@ -1933,40 +2164,34 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   ) {
     final sw =
         Localizations.localeOf(context).languageCode.toLowerCase() == 'sw';
-    final credits = transactions.where(_isCredit).length;
-    final debits = transactions.isEmpty ? 0 : transactions.length - credits;
     return OrbiBrandHeroCard(
       title: l10n.transactionsHistoryTitle,
       subtitle: sw
           ? 'Chuja, hakiki, na fungua risiti unapohitaji.'
           : 'Filter, verify, and open receipts when needed.',
       icon: Icons.receipt_long_outlined,
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          OrbiHeroMetricChip(
-            icon: Icons.receipt_long_outlined,
-            label: sw ? 'Zinazoonekana' : 'Visible',
-            value: '${transactions.length}',
-          ),
-          OrbiHeroMetricChip(
-            icon: Icons.south_west_rounded,
-            label: sw ? 'Zinazoingia' : 'Credits',
-            value: '$credits',
-          ),
-          OrbiHeroMetricChip(
-            icon: Icons.north_east_rounded,
-            label: sw ? 'Zinazotoka' : 'Debits',
-            value: '$debits',
-          ),
-          OrbiHeroMetricChip(
-            icon: Icons.filter_alt_outlined,
-            label: sw ? 'Muonekano' : 'View',
-            value: _selectedMoneyState.toUpperCase(),
-          ),
-        ],
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: ActionChip(
+          avatar: const Icon(Icons.summarize_outlined, size: 18),
+          label: Text(sw ? 'Ripoti' : 'Report'),
+          onPressed: _showTransactionReportSheet,
+        ),
       ),
+    );
+  }
+
+  Future<void> _showTransactionReportSheet() async {
+    final sw =
+        Localizations.localeOf(context).languageCode.toLowerCase() == 'sw';
+    await OrbiResourceReportPrinter.openReportSheet(
+      context,
+      title: sw ? 'Ripoti ya Miamala' : 'Transaction report',
+      subtitle: sw
+          ? 'Audit ya miamala yako kwa kipindi ulichochagua.'
+          : 'Audit of your transactions for the selected period.',
+      filePrefix: 'orbi_transaction_report',
+      loadReport: (range) => _receiptService.fetchReport(range: range),
     );
   }
 }
@@ -1978,37 +2203,14 @@ class _MoneyStateFilter {
   const _MoneyStateFilter(this.key, this.label);
 }
 
-class _ReceiptZigZagClipper extends CustomClipper<Path> {
-  const _ReceiptZigZagClipper();
+class _TransactionStatusMeta {
+  final String label;
+  final IconData icon;
+  final Color color;
 
-  @override
-  Path getClip(Size size) {
-    const zigZagHeight = 6.0;
-    const zigZagWidth = 12.0;
-    final path = Path();
-    final height = size.height;
-    final width = size.width;
-
-    path.moveTo(0, zigZagHeight);
-    var x = 0.0;
-    while (x < width) {
-      path.lineTo(x + zigZagWidth / 2, 0);
-      path.lineTo(x + zigZagWidth, zigZagHeight);
-      x += zigZagWidth;
-    }
-
-    path.lineTo(width, height - zigZagHeight);
-    x = width;
-    while (x > 0) {
-      path.lineTo(x - zigZagWidth / 2, height);
-      path.lineTo(x - zigZagWidth, height - zigZagHeight);
-      x -= zigZagWidth;
-    }
-
-    path.close();
-    return path;
-  }
-
-  @override
-  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
+  const _TransactionStatusMeta({
+    required this.label,
+    required this.icon,
+    required this.color,
+  });
 }

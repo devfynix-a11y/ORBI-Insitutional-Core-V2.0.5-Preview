@@ -13,7 +13,10 @@ class OrbiSecurityInterceptor extends Interceptor {
       final requestId = data['requestId'];
       final message = data['message'] ?? 'Please enter your OTP.';
       final tempToken = data['tempToken'];
-      final otpCode = await OtpDialogManager.requestOtpFromUser(globalNavigatorKey.currentContext!, message);
+      final otpCode = await OtpDialogManager.requestOtpFromUser(
+        globalNavigatorKey.currentContext!,
+        message,
+      );
       if (otpCode == null || otpCode.isEmpty) {
         return handler.reject(
           DioException(
@@ -24,13 +27,12 @@ class OrbiSecurityInterceptor extends Interceptor {
       }
       try {
         final verifyResponse = await dio.post(
-          '/api/v1/auth/verify',
-          data: {
-            'requestId': requestId,
-            'code': otpCode,
-          },
+          '/auth/verify',
+          data: {'requestId': requestId, 'code': otpCode},
           options: Options(
-            headers: tempToken != null ? {'Authorization': 'Bearer $tempToken'} : null,
+            headers: tempToken != null
+                ? {'Authorization': 'Bearer $tempToken'}
+                : null,
           ),
         );
         if (verifyResponse.data['success'] == true) {
@@ -46,12 +48,18 @@ class OrbiSecurityInterceptor extends Interceptor {
           return handler.resolve(retryResponse);
         } else {
           return handler.reject(
-            DioException(requestOptions: response.requestOptions, error: 'Invalid OTP'),
+            DioException(
+              requestOptions: response.requestOptions,
+              error: 'Invalid OTP',
+            ),
           );
         }
       } catch (e) {
         return handler.reject(
-          DioException(requestOptions: response.requestOptions, error: 'Verification Failed'),
+          DioException(
+            requestOptions: response.requestOptions,
+            error: 'Verification Failed',
+          ),
         );
       }
     }

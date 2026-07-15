@@ -280,11 +280,11 @@ class WealthFoundationSection extends StatelessWidget {
                   _AudienceCard(
                     width: 250,
                     icon: Icons.groups_rounded,
-                    title: sw ? 'Shared Pots' : 'Shared Pots',
+                    title: 'Fungu',
                     message: sw ? 'Changia pamoja.' : 'Save together.',
                     accent: ui.accent,
                     badgeCount: data.sharedPotInvitationCount,
-                    actionLabel: sw ? 'Shared Pot' : 'Shared Pot',
+                    actionLabel: 'Fungu',
                     onTap: onOpenSharedPots,
                   ),
                   _AudienceCard(

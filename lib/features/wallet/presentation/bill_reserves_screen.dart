@@ -9,10 +9,12 @@ import '../../../core/utils/money_format.dart';
 import '../../../core/widgets/orbi_amount_field.dart';
 import '../../../core/widgets/orbi_async_feedback.dart';
 import '../../../core/widgets/orbi_background.dart';
+import '../../../core/widgets/orbi_brand_hero_card.dart';
 import '../../../core/widgets/orbi_section_card.dart';
 import '../../../core/widgets/orbi_state_card.dart';
 import '../../../core/widgets/orbi_activity_card.dart';
 import '../data/wealth_service.dart';
+import 'widgets/wealth_hero_card.dart';
 
 const Color _billReserveAccent = Color(0xFFE85D75);
 
@@ -983,62 +985,36 @@ class _BillReservesScreenState extends State<BillReservesScreen> {
             child: ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                OrbiActivityCard(
-                  accent: _billReserveAccent,
-                  hero: true,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                WealthHeroCard(
+                  icon: Icons.receipt_long_outlined,
+                  title: _l10n.pick(
+                    en: 'Bill Reserves',
+                    swText: 'Bill Reserves',
+                  ),
+                  subtitle: _l10n.pick(
+                    en: 'Track, review, and open reserve details when needed.',
+                    swText:
+                        'Fuatilia, hakiki, na fungua details za reserve ukihitaji.',
+                  ),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
                     children: [
-                      Row(
-                        children: [
-                          Container(
-                            width: 32,
-                            height: 32,
-                            decoration: BoxDecoration(
-                              color: _billReserveAccent.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Icon(
-                              Icons.receipt_long_outlined,
-                              color: _billReserveAccent,
-                              size: 18,
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              _l10n.pick(
-                                en: 'Bill Reserves',
-                                swText: 'Bill Reserves',
-                              ),
-                              style: Theme.of(context).textTheme.titleMedium
-                                  ?.copyWith(
-                                    color: ui.textPrimary,
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                            ),
-                          ),
-                        ],
+                      OrbiHeroMetricChip(
+                        icon: Icons.receipt_long_outlined,
+                        label: _l10n.pick(
+                          en: 'Visible',
+                          swText: 'Zinazoonekana',
+                        ),
+                        value: '${_visibleReserves.length}',
                       ),
-                      const SizedBox(height: 12),
-                      Text(
-                        _l10n.pick(
-                          en: 'Important bills, money ready',
-                          swText: 'Bili muhimu, fedha tayari',
+                      OrbiHeroMetricChip(
+                        icon: Icons.inventory_2_outlined,
+                        label: _l10n.pick(
+                          en: 'Archived',
+                          swText: 'Zilizohifadhiwa',
                         ),
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          color: ui.textPrimary,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        _l10n.pick(
-                          en: 'Keep money ready for bills before the due date. Example: rent, power, water, or internet.',
-                          swText:
-                              'Weka fedha tayari kwa bili kabla ya tarehe ya malipo. Mfano: kodi, umeme, maji, au intaneti.',
-                        ),
-                        style: TextStyle(color: ui.textMuted, height: 1.35),
+                        value: '${_archivedReserves.length}',
                       ),
                     ],
                   ),

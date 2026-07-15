@@ -1,9 +1,13 @@
 import 'package:orbi_mobileapp/core/auth/orbi_auth_client.dart';
+import 'package:orbi_mobileapp/core/auth/keycloak_pkce_auth_service.dart';
+import 'package:orbi_mobileapp/core/config/app_config.dart';
 
 class AuthRepository {
   final OrbiAuthClient _client;
+  final KeycloakPkceAuthService _keycloakPkce;
 
-  AuthRepository(this._client);
+  AuthRepository(this._client, {KeycloakPkceAuthService? keycloakPkce})
+    : _keycloakPkce = keycloakPkce ?? KeycloakPkceAuthService();
 
   Future<Map<String, dynamic>> login(
     String email,
@@ -12,6 +16,9 @@ class AuthRepository {
     String? ip,
     Map<String, dynamic>? device,
   }) async {
+    if (AppConfig.keycloakPkceEnabled) {
+      return _keycloakPkce.signIn();
+    }
     return _client.login(
       email,
       password,
@@ -78,6 +85,9 @@ class AuthRepository {
     String? nationality,
     String? address,
     String? languageCode,
+    String? countryCode,
+    String? countryName,
+    String? dialCode,
     String? fcmToken,
   }) async {
     return _client.signup(
@@ -89,6 +99,9 @@ class AuthRepository {
       address: address,
       currency: currency,
       languageCode: languageCode,
+      countryCode: countryCode,
+      countryName: countryName,
+      dialCode: dialCode,
       fcmToken: fcmToken,
     );
   }

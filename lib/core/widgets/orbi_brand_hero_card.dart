@@ -61,15 +61,39 @@ class OrbiBrandHeroCard extends StatelessWidget {
               ),
             ),
           ] else ...[
-            Positioned(
-              right: -50,
-              top: -58,
-              child: _GlowDisc(size: 150, opacity: 0.13, color: ui.accent),
+            Positioned.fill(
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Colors.white.withValues(alpha: 0.095),
+                        Colors.white.withValues(alpha: 0.018),
+                        Colors.black.withValues(alpha: 0.18),
+                      ],
+                      stops: const [0.0, 0.48, 1.0],
+                    ),
+                  ),
+                  child: const SizedBox.expand(),
+                ),
+              ),
             ),
             Positioned(
-              left: -46,
-              bottom: -58,
-              child: _GlowDisc(size: 132, opacity: 0.07, color: ui.accent),
+              right: -54,
+              top: -64,
+              child: _GlowDisc(size: 168, opacity: 0.18, color: ui.accent),
+            ),
+            Positioned(
+              left: -54,
+              bottom: -68,
+              child: _GlowDisc(size: 150, opacity: 0.10, color: ui.accent),
+            ),
+            Positioned(
+              right: 22,
+              bottom: 16,
+              child: _GlowRing(color: ui.accent.withValues(alpha: 0.12)),
             ),
             Positioned.fill(
               child: IgnorePointer(
@@ -92,12 +116,34 @@ class OrbiBrandHeroCard extends StatelessWidget {
                     width: 42,
                     height: 42,
                     decoration: BoxDecoration(
+                      gradient: isDark
+                          ? LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                Colors.white.withValues(alpha: 0.18),
+                                ui.accent.withValues(alpha: 0.12),
+                                Colors.black.withValues(alpha: 0.10),
+                              ],
+                            )
+                          : null,
                       color: isDark
-                          ? ui.accentSoft
+                          ? null
                           : Colors.white.withValues(alpha: 0.16),
                       borderRadius: BorderRadius.circular(15),
                       border: isDark
-                          ? Border.all(color: ui.border.withValues(alpha: 0.45))
+                          ? Border.all(
+                              color: Colors.white.withValues(alpha: 0.16),
+                            )
+                          : null,
+                      boxShadow: isDark
+                          ? [
+                              BoxShadow(
+                                color: ui.accent.withValues(alpha: 0.20),
+                                blurRadius: 18,
+                                offset: const Offset(0, 8),
+                              ),
+                            ]
                           : null,
                     ),
                     child: Icon(icon, color: textColor, size: 22),
@@ -109,25 +155,25 @@ class OrbiBrandHeroCard extends StatelessWidget {
                       children: [
                         Text(
                           title,
-                          maxLines: 1,
+                          maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: textColor,
-                            fontSize: 19,
+                            fontSize: 18.5,
                             fontWeight: FontWeight.w900,
-                            height: 1.08,
+                            height: 1.05,
                           ),
                         ),
                         const SizedBox(height: 5),
                         Text(
                           subtitle,
-                          maxLines: 2,
+                          maxLines: 3,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: softTextColor,
-                            fontSize: 12.2,
+                            fontSize: 12.0,
                             fontWeight: FontWeight.w600,
-                            height: 1.32,
+                            height: 1.28,
                           ),
                         ),
                       ],
@@ -164,21 +210,34 @@ class OrbiHeroMetricChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final ui = OrbiTheme.uiOf(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final isCompact = MediaQuery.sizeOf(context).width < 390;
     final foreground = isDark ? ui.textPrimary : Colors.white;
     final subdued = isDark
         ? ui.textMuted
         : Colors.white.withValues(alpha: 0.76);
 
     return Container(
-      constraints: const BoxConstraints(minWidth: 86, maxWidth: 190),
+      constraints: BoxConstraints(
+        minWidth: isCompact ? 78 : 86,
+        maxWidth: isCompact ? 162 : 190,
+      ),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
         color: isDark
-            ? ui.card.withValues(alpha: 0.78)
+            ? Colors.white.withValues(alpha: 0.075)
             : Colors.white.withValues(alpha: 0.14),
         borderRadius: BorderRadius.circular(15),
         border: isDark
-            ? Border.all(color: ui.border.withValues(alpha: 0.45))
+            ? Border.all(color: Colors.white.withValues(alpha: 0.12))
+            : null,
+        boxShadow: isDark
+            ? [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.16),
+                  blurRadius: 16,
+                  offset: const Offset(0, 8),
+                ),
+              ]
             : null,
       ),
       child: Row(
@@ -216,6 +275,26 @@ class OrbiHeroMetricChip extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _GlowRing extends StatelessWidget {
+  const _GlowRing({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Container(
+        width: 74,
+        height: 74,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: color, width: 1.2),
+        ),
       ),
     );
   }

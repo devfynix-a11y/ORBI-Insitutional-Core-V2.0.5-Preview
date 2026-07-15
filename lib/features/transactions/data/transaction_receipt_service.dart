@@ -13,8 +13,25 @@ class TransactionReceiptService {
     final template =
         AppConfig.endpoints['transactionReceiptTemplate'] ??
         '/transactions/{id}/receipt';
-    final path = template.replaceFirst('{id}', Uri.encodeComponent(transactionId));
+    final path = template.replaceFirst(
+      '{id}',
+      Uri.encodeComponent(transactionId),
+    );
     final response = await _dio.get(path);
+    final data = response.data is Map<String, dynamic>
+        ? response.data['data'] ?? response.data
+        : response.data;
+    if (data is Map) {
+      return Map<String, dynamic>.from(data);
+    }
+    return const <String, dynamic>{};
+  }
+
+  Future<Map<String, dynamic>> fetchReport({String range = 'month'}) async {
+    final response = await _dio.get(
+      '/transactions/report',
+      queryParameters: {'range': range},
+    );
     final data = response.data is Map<String, dynamic>
         ? response.data['data'] ?? response.data
         : response.data;

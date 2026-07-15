@@ -13,6 +13,7 @@ import '../../../core/utils/backend_status_message.dart';
 import '../../../core/utils/otp_autofill.dart';
 import '../../../core/utils/user_facing_error.dart';
 import '../../../core/widgets/orbi_async_feedback.dart';
+import '../../../core/widgets/orbi_loading_landing.dart';
 import '../../../core/widgets/orbi_responsive.dart';
 import '../../../core/widgets/orbi_logo.dart';
 import '../../../core/widgets/security_otp_dialog.dart';
@@ -46,6 +47,7 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _otpDialogOpen = false;
   bool _pinDialogOpen = false;
   bool _biometricLoginLoading = false;
+  bool _showLoginSuccessBoot = false;
   int _pinFailures = 0;
   int _passwordFailures = 0;
   String _pinEntry = '';
@@ -206,7 +208,9 @@ class _LoginScreenState extends State<LoginScreen> {
       if (auth.biometricSetupRequired) {
         Navigator.pushReplacementNamed(context, '/secure-account-setup');
       } else {
-        _setStatus('Signed in successfully.', OrbiStatusTone.success);
+        setState(() => _showLoginSuccessBoot = true);
+        await Future<void>.delayed(const Duration(milliseconds: 900));
+        if (!mounted) return;
         _returnToAuthRouter();
       }
     } else if (mounted && auth.accountActivationRequired) {
@@ -218,15 +222,22 @@ class _LoginScreenState extends State<LoginScreen> {
       );
     } else if (mounted && (auth.error ?? '').trim().isNotEmpty) {
       _passwordFailures += 1;
-      if (_passwordFailures >= _maxPasswordAttempts) {
+      final errorMessage = auth.error!.trim();
+      if (_passwordFailures >= _maxPasswordAttempts &&
+          !errorMessage.toLowerCase().contains('invalid email or password')) {
         _passwordController.clear();
         _setStatus(
-          'Too many password attempts. Use password.',
+          'Too many password attempts. Wait a moment, then try again.',
           OrbiStatusTone.error,
         );
       } else {
-        _setStatus(auth.error!, OrbiStatusTone.error);
+        _setStatus(errorMessage, OrbiStatusTone.error);
       }
+    } else if (mounted) {
+      _setStatus(
+        'Login did not complete. Please check your details and try again.',
+        OrbiStatusTone.error,
+      );
     }
   }
 
@@ -578,6 +589,13 @@ class _LoginScreenState extends State<LoginScreen> {
     final auth = context.watch<AuthController>();
     final ui = OrbiTheme.uiOf(context);
     final l10n = AppLocalizations.of(context)!;
+    if (_showLoginSuccessBoot) {
+      return OrbiLoadingLanding(
+        subtitle: l10n.shellBootstrapSubtitle,
+        status: l10n.loginAuthenticatingSecurely,
+        detail: l10n.appLoadingDetail,
+      );
+    }
     final warningTone = Theme.of(context).brightness == Brightness.dark
         ? const Color(0xFFF0A34A)
         : const Color(0xFFB86A15);
@@ -592,8 +610,7 @@ class _LoginScreenState extends State<LoginScreen> {
         _hasInstantAccess &&
         !auth.biometricSetupRequired) {
       return _LoginInstantAccessView(
-        loading:
-            auth.isLoading || _biometricLoginLoading || auth.biometricInFlight,
+        loading: auth.isLoading || auth.biometricInFlight,
         statusMessage: _statusMessage,
         statusTone: _statusTone,
         onDismissStatus: () {

@@ -55,6 +55,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isSavingServicePrefs = false;
   bool _languageInitialized = false;
   bool _initializedFromProfile = false;
+  bool _profileHydrationLocked = false;
   bool _isDisposed = false;
 
   static const String _prefLanguageCode = 'settings_app_language_code';
@@ -71,7 +72,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await context.read<ProfileController>().loadProfile();
       if (mounted) {
-        _hydrateFromProfile();
+        setState(_hydrateFromProfile);
       }
     });
   }
@@ -145,18 +146,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return {...user, ...profile};
   }
 
+  String _profileText(Map<String, dynamic> profile, List<String> keys) {
+    for (final key in keys) {
+      final value = profile[key];
+      if (value != null && value.toString().trim().isNotEmpty) {
+        return value.toString().trim();
+      }
+    }
+    final metadata = profile['metadata'];
+    if (metadata is Map) {
+      for (final key in keys) {
+        final value = metadata[key];
+        if (value != null && value.toString().trim().isNotEmpty) {
+          return value.toString().trim();
+        }
+      }
+    }
+    return '';
+  }
+
   void _hydrateFromProfile() {
-    if (_initializedFromProfile) return;
     final merged = _mergedProfile();
-    _nameController.text =
-        (merged['full_name'] ?? merged['fullName'] ?? merged['name'] ?? '')
-            .toString();
-    _phoneController.text = (merged['phone'] ?? '').toString();
-    _addressController.text = (merged['address'] ?? '').toString();
-    _currencyController.text =
-        (merged['currency'] ?? merged['currency_code'] ?? '')
-            .toString()
-            .toUpperCase();
+    if (!_shouldHydrateFromProfile(merged)) return;
+
+    _fillIfAvailable(
+      _nameController,
+      _profileText(merged, const ['full_name', 'fullName', 'name']),
+    );
+    _fillIfAvailable(_phoneController, _profileText(merged, const ['phone']));
+    _fillIfAvailable(
+      _addressController,
+      _profileText(merged, const ['address', 'address_line', 'addressLine']),
+    );
+    _fillIfAvailable(
+      _currencyController,
+      _profileText(merged, const [
+        'currency',
+        'currency_code',
+        'preferred_currency',
+      ]).toUpperCase(),
+    );
+
     if (!_languageInitialized) {
       final lang = (merged['language'] ?? '').toString().toLowerCase();
       if (lang == 'en' || lang == 'sw') {
@@ -187,6 +217,61 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
     _initializedFromProfile = true;
+    _profileHydrationLocked = _hasCompleteHydrationData();
+  }
+
+  void _fillIfAvailable(TextEditingController controller, String value) {
+    final cleaned = value.trim();
+    if (cleaned.isEmpty) return;
+    if (controller.text.trim().isEmpty || !_initializedFromProfile) {
+      controller.text = cleaned;
+    }
+  }
+
+  bool _hasCompleteHydrationData() {
+    return _nameController.text.trim().isNotEmpty &&
+        _phoneController.text.trim().isNotEmpty &&
+        _addressController.text.trim().isNotEmpty &&
+        _currencyController.text.trim().isNotEmpty &&
+        (_languageCode == 'en' || _languageCode == 'sw');
+  }
+
+  bool _shouldHydrateFromProfile(Map<String, dynamic> profile) {
+    if (_profileHydrationLocked) return false;
+    if (profile.isEmpty) return false;
+    if (!_initializedFromProfile) return true;
+    final incomingName = _profileText(profile, const [
+      'full_name',
+      'fullName',
+      'name',
+    ]);
+    if (_nameController.text.trim().isEmpty && incomingName.trim().isNotEmpty) {
+      return true;
+    }
+    final incomingPhone = _profileText(profile, const ['phone']);
+    if (_phoneController.text.trim().isEmpty &&
+        incomingPhone.trim().isNotEmpty) {
+      return true;
+    }
+    final incomingCurrency = _profileText(profile, const [
+      'currency',
+      'currency_code',
+      'preferred_currency',
+    ]);
+    if (_currencyController.text.trim().isEmpty &&
+        incomingCurrency.trim().isNotEmpty) {
+      return true;
+    }
+    final incomingAddress = _profileText(profile, const [
+      'address',
+      'address_line',
+      'addressLine',
+    ]);
+    if (_addressController.text.trim().isEmpty &&
+        incomingAddress.trim().isNotEmpty) {
+      return true;
+    }
+    return false;
   }
 
   Future<void> _applyAppLanguage() async {
@@ -1630,7 +1715,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final profileCtrl = context.watch<ProfileController>();
     final localizations = AppLocalizations.of(context)!;
     final profile = _mergedProfile();
-    if (!_initializedFromProfile && profile.isNotEmpty) {
+    if (!_profileHydrationLocked && profile.isNotEmpty) {
       _hydrateFromProfile();
     }
 
@@ -1659,6 +1744,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
         );
     final customerIdText =
         customerId?.toString() ?? localizations.transactionsNotAvailable;
+    final accountCurrency = _profileText(profile, const [
+      'currency',
+      'currency_code',
+      'preferred_currency',
+    ]).toUpperCase();
+    final accountCurrencyText = accountCurrency.isNotEmpty
+        ? accountCurrency
+        : localizations.transactionsNotAvailable;
     final kyc = _kycStatusText(profile);
     final isKycVerified = _isKycVerified(profile);
     final isKycWaiting = _isKycWaiting(kyc);
@@ -1809,6 +1902,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               trailingIcon: customerId == null
                                   ? null
                                   : Icons.copy_rounded,
+                            ),
+                            _settingsHeroMetric(
+                              ui,
+                              Icons.payments_outlined,
+                              localizations.settingsCurrencyLabel,
+                              accountCurrencyText,
                             ),
                             _settingsHeroMetric(
                               ui,

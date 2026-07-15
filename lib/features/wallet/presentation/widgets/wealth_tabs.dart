@@ -340,9 +340,9 @@ class WealthPlansTab extends StatelessWidget {
             ),
             _FeatureAction(
               icon: Icons.account_tree_outlined,
-              title: sw ? 'Shared Budget' : 'Shared Budget',
+              title: 'Mezani',
               message: sw ? 'Matumizi ya pamoja.' : 'Shared spending.',
-              actionLabel: sw ? 'Shared Budget' : 'Shared Budget',
+              actionLabel: 'Mezani',
               onTap: onOpenSharedBudget,
               badgeCount: budgetInvites,
             ),
@@ -390,9 +390,7 @@ class WealthGrowthTab extends StatelessWidget {
             children: [
               _Header(
                 title: sw ? 'Akiba' : 'Savings',
-                subtitle: sw
-                    ? 'Goals na shared pots.'
-                    : 'Goals and shared pots.',
+                subtitle: sw ? 'Goals na Fungu.' : 'Goals and shared pots.',
               ),
               const SizedBox(height: 14),
               _MiniSummaryRow(
@@ -420,8 +418,8 @@ class WealthGrowthTab extends StatelessWidget {
                   goals > 0
                       ? (sw ? '$goals goals' : '$goals goals')
                       : (sw ? 'Anza' : 'Start'),
-                  sw ? 'Pots' : 'Pots',
-                  sw ? 'Budgets' : 'Budgets',
+                  'Fungu',
+                  'Mezani',
                 ],
               ),
             ],
@@ -439,17 +437,17 @@ class WealthGrowthTab extends StatelessWidget {
             ),
             _FeatureAction(
               icon: Icons.groups_2_outlined,
-              title: sw ? 'Shared Pot' : 'Shared Pot',
+              title: 'Fungu',
               message: sw ? 'Akiba ya pamoja.' : 'Shared saving.',
-              actionLabel: sw ? 'Shared Pot' : 'Shared Pot',
+              actionLabel: 'Fungu',
               onTap: onOpenSharedPot,
               badgeCount: potInvites,
             ),
             _FeatureAction(
               icon: Icons.account_tree_outlined,
-              title: sw ? 'Shared Budget' : 'Shared Budget',
+              title: 'Mezani',
               message: sw ? 'Matumizi ya pamoja.' : 'Shared spending.',
-              actionLabel: sw ? 'Shared Budget' : 'Shared Budget',
+              actionLabel: 'Mezani',
               onTap: onOpenSharedBudget,
               badgeCount: budgetInvites,
             ),

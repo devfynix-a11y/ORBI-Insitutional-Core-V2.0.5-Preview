@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/config/app_config.dart';
 import '../../../core/session/session_manager.dart';
+import '../../../core/state/app_runtime_cache.dart';
 
 class WalletService {
   static const Duration _requestTimeout = Duration(seconds: 15);
@@ -16,7 +17,13 @@ class WalletService {
     return response.data['data'];
   }
 
-  Future<List<Map<String, dynamic>>> getWallets() async {
+  Future<List<Map<String, dynamic>>> getWallets({
+    bool forceRefresh = false,
+  }) async {
+    if (!forceRefresh) {
+      final cached = AppRuntimeCache.freshWallets;
+      if (cached != null && cached.isNotEmpty) return cached;
+    }
     final walletPaths = <String>[
       '${AppConfig.baseUrl}/api/v1${AppConfig.endpoints['wallets'] ?? '/wallets'}',
       '${AppConfig.baseUrl}/v1${AppConfig.endpoints['wallets'] ?? '/wallets'}',
@@ -28,7 +35,10 @@ class WalletService {
           response.data,
           includeEscrow: false,
         );
-        if (apiWallets.isNotEmpty) return apiWallets;
+        if (apiWallets.isNotEmpty) {
+          AppRuntimeCache.rememberWallets(apiWallets);
+          return apiWallets;
+        }
       } on DioException {
         // Try next fallback endpoint.
       }
@@ -41,7 +51,10 @@ class WalletService {
         profile,
         includeEscrow: false,
       );
-      if (cachedWallets.isNotEmpty) return cachedWallets;
+      if (cachedWallets.isNotEmpty) {
+        AppRuntimeCache.rememberWallets(cachedWallets);
+        return cachedWallets;
+      }
     }
 
     return <Map<String, dynamic>>[];
@@ -83,10 +96,7 @@ class WalletService {
   }) async {
     final response = await _dio.post(
       '/wallets/$walletId/lock',
-      data: _compactMap({
-        'pin': pin,
-        'reason': reason,
-      }),
+      data: _compactMap({'pin': pin, 'reason': reason}),
     );
     final data = response.data is Map<String, dynamic>
         ? response.data['data'] ?? response.data
@@ -100,9 +110,7 @@ class WalletService {
   }) async {
     final response = await _dio.post(
       '/wallets/$walletId/unlock',
-      data: _compactMap({
-        'pin': pin,
-      }),
+      data: _compactMap({'pin': pin}),
     );
     final data = response.data is Map<String, dynamic>
         ? response.data['data'] ?? response.data
@@ -120,9 +128,7 @@ class WalletService {
   }) async {
     final response = await _dio.post(
       '/transactions/$transactionId/lock',
-      data: _compactMap({
-        'reason': reason,
-      }),
+      data: _compactMap({'reason': reason}),
     );
     final data = response.data is Map<String, dynamic>
         ? response.data['data'] ?? response.data
@@ -215,8 +221,9 @@ class WalletService {
         normalized['vault_role'] ??
         normalized['management_tier'];
     normalized['type'] ??= normalized['wallet_type'];
-    normalized['management_tier'] ??=
-        normalized['vault_role'] != null ? 'sovereign' : normalized['management_tier'];
+    normalized['management_tier'] ??= normalized['vault_role'] != null
+        ? 'sovereign'
+        : normalized['management_tier'];
     normalized['available_balance'] ??=
         normalized['availableBalance'] ??
         normalized['balance'] ??
@@ -224,6 +231,16 @@ class WalletService {
     normalized['ledger_balance'] ??=
         normalized['balance'] ?? normalized['available_balance'];
     normalized['wallet_name'] ??= normalized['name'];
+    normalized['currency'] ??=
+        normalized['currency_code'] ??
+        normalized['currencyCode'] ??
+        normalized['asset_currency'] ??
+        normalized['assetCurrency'] ??
+        metadataMap['currency'] ??
+        metadataMap['currency_code'] ??
+        metadataMap['currencyCode'] ??
+        metadataMap['asset_currency'];
+    normalized['currency_code'] ??= normalized['currency'];
 
     normalized['accountNumber'] ??=
         normalized['account_number'] ??
@@ -276,9 +293,16 @@ class WalletService {
     String walletId, {
     int limit = 50,
     int offset = 0,
+    bool forceRefresh = false,
   }) async {
     final trimmedWalletId = walletId.trim();
     final hasWalletId = trimmedWalletId.isNotEmpty && trimmedWalletId != '--';
+    if (!forceRefresh && !hasWalletId && offset == 0) {
+      final cached = AppRuntimeCache.freshRecentTransactions;
+      if (cached != null && cached.isNotEmpty) {
+        return cached.take(limit).toList();
+      }
+    }
     final baseUris = <Uri>[
       Uri.parse('${AppConfig.baseUrl}/api/v1/transactions'),
       Uri.parse('${AppConfig.baseUrl}/v1/transactions'),
@@ -325,6 +349,9 @@ class WalletService {
           'status=${response.statusCode} | parsed_count=${txs.length}',
         );
         if (txs.isNotEmpty) {
+          if (!hasWalletId && offset == 0) {
+            AppRuntimeCache.rememberRecentTransactions(txs);
+          }
           return txs;
         }
       } on TimeoutException catch (_) {

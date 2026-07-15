@@ -75,7 +75,7 @@ We have built ORBI to be the platform *we* wanted to use.
 ### 5.2 Key Integration Resources
 *   **Master Manual**: `INTEGRATION_MANUAL.md` - Full API specification.
 *   **Mobile Guide**: `MOBILE_SDK_GUIDE.md` - Flutter/Native integration.
-*   **Deployment**: `DEPLOYMENT_GUIDE.md` - Production setup and servicing.
+*   **Deployment**: Production setup and servicing are maintained in the ORBI Core repository.
 *   **Quick Start**: `INTEGRATION_GUIDE.md` - 5-minute onboarding.
 
 ---

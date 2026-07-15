@@ -35,6 +35,7 @@ android {
 
     defaultConfig {
         applicationId = "com.orbi.mobile"
+        manifestPlaceholders["appAuthRedirectScheme"] = "com.orbi.mobile"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
