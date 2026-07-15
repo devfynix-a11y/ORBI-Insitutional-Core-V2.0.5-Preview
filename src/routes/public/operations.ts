@@ -330,11 +330,35 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
   });
 
   v1.post('/escrow/create', authenticate as any, async (req, res) => {
-    const { recipientCustomerId, amount, description, conditions } = req.body;
+    const {
+      recipientCustomerId,
+      recipient_customer_id,
+      recipientId,
+      recipient_id,
+      recipientUserId,
+      recipient_user_id,
+      identifier,
+      amount,
+      description,
+      conditions,
+    } = req.body;
     const userId = (req as any).session.sub;
     try {
+      const recipientIdentifier = String(
+        recipientCustomerId ||
+        recipient_customer_id ||
+        recipientUserId ||
+        recipient_user_id ||
+        recipientId ||
+        recipient_id ||
+        identifier ||
+        '',
+      ).trim();
+      if (!recipientIdentifier) {
+        return res.status(400).json({ success: false, error: 'RECIPIENT_REQUIRED' });
+      }
       const referenceId = await withPaySafeTimeout(
-        LogicCore.createEscrow(userId, recipientCustomerId, amount, description, conditions),
+        LogicCore.createEscrow(userId, recipientIdentifier, amount, description, conditions),
         'PAYSAFE_ESCROW_CREATE_TIMEOUT',
       );
       res.json({ success: true, referenceId });

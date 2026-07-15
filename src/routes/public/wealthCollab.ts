@@ -7,6 +7,8 @@ const normalizeWealthPhone = (value: string) =>
     .replace(/(?!^)\+/g, '');
 
 const isEmailLikeIdentifier = (value: string) => value.includes('@');
+const isUuidLikeIdentifier = (value: string) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim());
 
 export const resolveSharedPotMembership = async (sb: any, potId: string, userId: string) => {
   const { data: pot, error: potError } = await sb
@@ -59,10 +61,23 @@ export const canContributeToSharedPot = (role: string) =>
   ['OWNER', 'MANAGER', 'CONTRIBUTOR'].includes(role.toUpperCase());
 
 export const resolveUserBySharedPotIdentifier = async (sb: any, identifier: string) => {
+  const rawIdentifier = String(identifier || '').trim();
+  if (!rawIdentifier) return null;
+
+  if (isUuidLikeIdentifier(rawIdentifier)) {
+    const { data, error } = await sb
+      .from('users')
+      .select('id,email,phone,full_name,customer_id')
+      .eq('id', rawIdentifier)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (data) return data;
+  }
+
   if (isEmailLikeIdentifier(identifier)) {
     const { data, error } = await sb
       .from('users')
-      .select('id,email,phone,full_name')
+      .select('id,email,phone,full_name,customer_id')
       .eq('email', normalizeWealthIdentifier(identifier))
       .maybeSingle();
     if (error) throw new Error(error.message);
@@ -70,11 +85,14 @@ export const resolveUserBySharedPotIdentifier = async (sb: any, identifier: stri
   }
 
   const normalizedPhone = normalizeWealthPhone(identifier);
-  const candidates = Array.from(new Set([identifier.trim(), normalizedPhone, normalizedPhone.replace(/\D/g, '')].filter(Boolean)));
+  const candidates = Array.from(new Set([rawIdentifier, normalizedPhone, normalizedPhone.replace(/\D/g, '')].filter(Boolean)));
   const { data, error } = await sb
     .from('users')
-    .select('id,email,phone,full_name')
-    .in('phone', candidates)
+    .select('id,email,phone,full_name,customer_id')
+    .or([
+      ...candidates.map((candidate) => `phone.eq.${candidate}`),
+      ...candidates.map((candidate) => `customer_id.eq.${candidate}`),
+    ].join(','))
     .limit(1)
     .maybeSingle();
   if (error) throw new Error(error.message);
