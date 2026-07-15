@@ -516,10 +516,11 @@ class _ReportPreviewCard extends StatelessWidget {
         columnWidths: const {
           0: FlexColumnWidth(1.15),
           1: FlexColumnWidth(1.2),
-          2: FlexColumnWidth(1.35),
-          3: FlexColumnWidth(2.0),
-          4: FlexColumnWidth(1.05),
-          5: FlexColumnWidth(1.0),
+          2: FlexColumnWidth(1.25),
+          3: FlexColumnWidth(1.85),
+          4: FlexColumnWidth(1.0),
+          5: FlexColumnWidth(1.12),
+          6: FlexColumnWidth(0.95),
         },
         children: [
           _row([
@@ -528,6 +529,7 @@ class _ReportPreviewCard extends StatelessWidget {
             sw ? 'Kwenda' : 'To',
             sw ? 'Kitendo' : 'Activity',
             sw ? 'Kiasi' : 'Amount',
+            sw ? 'Salio baada' : 'Balance after',
             sw ? 'Hali' : 'Status',
           ], header: true),
           ...rows.map((tx) {
@@ -545,6 +547,7 @@ class _ReportPreviewCard extends StatelessWidget {
                 tx['amount'],
                 currency: tx['currency'] ?? currency,
               ),
+              _balanceAfter(tx, currency),
               _status(tx['status']),
             ]);
           }),
@@ -564,7 +567,7 @@ class _ReportPreviewCard extends StatelessWidget {
       children: cells.indexed
           .map(
             (entry) => Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 9),
               child: Text(
                 entry.$2,
                 textAlign: header ? TextAlign.center : TextAlign.left,
@@ -575,13 +578,32 @@ class _ReportPreviewCard extends StatelessWidget {
                   color: header
                       ? const Color(0xFF0F7C86)
                       : const Color(0xFF1A2332),
-                  fontSize: header ? 12 : 11,
+                  fontSize: header ? 11 : 10.5,
                   fontWeight: header ? FontWeight.w900 : FontWeight.w700,
                 ),
               ),
             ),
           )
           .toList(),
+    );
+  }
+
+  String _balanceAfter(Map<String, dynamic> tx, String fallbackCurrency) {
+    final ledger = ReportUtils.from(tx['ledger']);
+    final value = ReportUtils.firstNonNull([
+      tx['balance_after'],
+      tx['balanceAfter'],
+      tx['running_balance'],
+      tx['runningBalance'],
+      tx['available_balance_after'],
+      tx['availableBalanceAfter'],
+      ledger['balance_after'],
+      ledger['balanceAfter'],
+    ]);
+    if (value == null) return '-';
+    return ReportUtils.displayMoney(
+      value,
+      currency: tx['currency'] ?? fallbackCurrency,
     );
   }
 
