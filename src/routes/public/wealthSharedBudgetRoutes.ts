@@ -1,6 +1,7 @@
 import { type RequestHandler, type Router } from 'express';
 import { Messaging } from '../../../backend/features/MessagingService.js';
 import { requireIdempotencyKey, resolveIdempotencyHeader } from '../../middleware/security/idempotency.js';
+import { resolveOperatingWealthWalletStrict } from './wealthShared.js';
 
 type Deps = {
   authenticate: RequestHandler;
@@ -729,8 +730,14 @@ export const registerSharedBudgetRoutes = (v1: Router, deps: Deps) => {
         return res.status(400).json({ success: false, error: 'SHARED_BUDGET_MEMBER_LIMIT_EXCEEDED' });
       }
 
+      const { sourceRecord, sourceTable } = await resolveOperatingWealthWalletStrict(
+        sb,
+        session.sub,
+        payload.source_wallet_id || undefined,
+      );
+
       const result = await LogicCore.getTransactionPreview(session.sub, {
-        sourceWalletId: payload.source_wallet_id,
+        sourceWalletId: sourceRecord.id,
         recipientId: payload.provider,
         amount: payload.amount,
         currency: (payload.currency || budget.currency || 'TZS').toUpperCase(),
@@ -747,6 +754,9 @@ export const registerSharedBudgetRoutes = (v1: Router, deps: Deps) => {
           shared_budget_preview: true,
           spend_origin: 'SHARED_BUDGET',
           spend_type: payload.type || 'EXTERNAL_PAYMENT',
+          source_wallet_id: sourceRecord.id,
+          source_wallet_table: sourceTable,
+          source_wallet_role: sourceRecord.vault_role || sourceRecord.type || null,
         },
       });
       if (!result.success) return res.status(400).json(result);
@@ -795,6 +805,21 @@ export const registerSharedBudgetRoutes = (v1: Router, deps: Deps) => {
       if (membership.member_limit && memberSpent + payload.amount > wealthNumber(membership.member_limit)) {
         return res.status(400).json({ success: false, error: 'SHARED_BUDGET_MEMBER_LIMIT_EXCEEDED' });
       }
+      const { sourceRecord, sourceTable } = await resolveOperatingWealthWalletStrict(
+        sb,
+        session.sub,
+        payload.source_wallet_id || undefined,
+      );
+      const normalizedPayload = {
+        ...payload,
+        source_wallet_id: sourceRecord.id,
+        metadata: {
+          ...(payload.metadata || {}),
+          source_wallet_id: sourceRecord.id,
+          source_wallet_table: sourceTable,
+          source_wallet_role: sourceRecord.vault_role || sourceRecord.type || null,
+        },
+      };
       if (String(budget.approval_mode || 'AUTO').toUpperCase() === 'REVIEW') {
         const { data, error } = await sb
           .from('shared_budget_approvals')
@@ -809,8 +834,8 @@ export const registerSharedBudgetRoutes = (v1: Router, deps: Deps) => {
             note: payload.description || null,
             status: 'PENDING',
             metadata: {
-              ...(payload.metadata || {}),
-              source_wallet_id: payload.source_wallet_id || null,
+              ...(normalizedPayload.metadata || {}),
+              source_wallet_id: sourceRecord.id,
               type: payload.type || 'EXTERNAL_PAYMENT',
               shared_budget_name: budget.name,
               requester_role: membership.role || 'SPENDER',
@@ -832,7 +857,7 @@ export const registerSharedBudgetRoutes = (v1: Router, deps: Deps) => {
         membership,
         actorUserId: session.sub,
         actorUser: session.user,
-        payload,
+        payload: normalizedPayload,
       });
       res.json({ success: true, data });
     } catch (e: any) {

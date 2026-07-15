@@ -154,6 +154,9 @@ const roleCanWithdrawDirectly = (role: string, policy: string) => {
   return false;
 };
 
+const roleCanRequestWithdrawal = (role: string) =>
+  ['OWNER', 'MANAGER', 'CONTRIBUTOR'].includes(normalizeUpper(role, ''));
+
 const withdrawalRequiresApproval = (pot: any, role: string) => {
   const policy = normalizeUpper(pot?.withdrawal_policy, 'OWNER_OR_MANAGER');
   if (policy === 'APPROVAL_REQUIRED') return true;
@@ -1243,11 +1246,12 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
       const sb = getAdminSupabase() || getSupabase();
       if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
       const { pot, membership } = await resolveSharedPotMembership(sb, req.params.id, session.sub);
-      if (!canManageSharedPot(String(membership.role || ''))) {
-        return res.status(403).json({ success: false, error: 'SHARED_POT_WITHDRAW_DENIED' });
-      }
+      const memberRole = String(membership.role || '');
       validateWithdrawalPolicy(pot, payload);
-      if (withdrawalRequiresApproval(pot, String(membership.role || ''))) {
+      if (withdrawalRequiresApproval(pot, memberRole)) {
+        if (!roleCanRequestWithdrawal(memberRole)) {
+          return res.status(403).json({ success: false, error: 'SHARED_POT_WITHDRAW_REQUEST_DENIED' });
+        }
         const data = await createSharedPotWithdrawalRequest({
           sb,
           sessionUserId: session.sub,
@@ -1258,6 +1262,9 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
           resolveWealthSourceWallet,
         });
         return res.json({ success: true, data });
+      }
+      if (!roleCanWithdrawDirectly(memberRole, String(pot.withdrawal_policy || 'OWNER_OR_MANAGER'))) {
+        return res.status(403).json({ success: false, error: 'SHARED_POT_WITHDRAW_DENIED' });
       }
       const data = await withdrawFromSharedPot({
         sb,

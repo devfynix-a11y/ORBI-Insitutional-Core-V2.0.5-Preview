@@ -142,87 +142,20 @@ const isCreditLike = (transaction: any): boolean => {
   return ['CREDIT', 'INCOMING', 'DEPOSIT', 'RECEIVED'].some((marker) => type.includes(marker) || side.includes(marker));
 };
 
-const transactionSearchText = (transaction: any): string => {
-  const metadata = transaction?.metadata && typeof transaction.metadata === 'object' ? transaction.metadata : {};
-  return [
-    transaction?.type,
-    transaction?.direction,
-    transaction?.entry_side,
-    transaction?.entry_type,
-    transaction?.money_state,
-    transaction?.moneyState,
-    transaction?.allocation_source,
-    transaction?.source_wallet_name,
-    transaction?.destination_wallet_name,
-    transaction?.activity_label,
-    transaction?.description,
-    metadata?.settlement_path,
-    metadata?.rail,
-    metadata?.provider,
-    metadata?.provider_name,
-    metadata?.wallet_type,
-    metadata?.money_state,
-  ].map((value) => String(value || '').toLowerCase()).join(' ');
-};
-
-const isExternalMoneyMovement = (transaction: any): boolean => {
-  const family = String(
-    transaction?.movement_family ||
-    transaction?.metadata?.movement_family ||
-    transaction?.metadata?.movement_classification?.movement_family ||
-    '',
-  ).toUpperCase();
-  if (family === 'EXTERNAL') return true;
-  if (family === 'INTERNAL_P2P' || family === 'INTERNAL_SS') return false;
-  const text = transactionSearchText(transaction);
-  return [
-    'external_routing',
-    'external routing',
-    'external_destination',
-    'external destination',
-    'withdraw',
-    'cashout',
-    'cash out',
-    'bank',
-    'mobile_money',
-    'mobile money',
-    'card',
-    'merchant_settlement',
-  ].some((marker) => text.includes(marker));
-};
+const movementFamilyOf = (transaction: any): string => String(
+  transaction?.movement_family ||
+  transaction?.metadata?.movement_family ||
+  transaction?.metadata?.movement_classification?.movement_family ||
+  '',
+).toUpperCase();
 
 const isInternalMoneyMovement = (transaction: any): boolean => {
-  const family = String(
-    transaction?.movement_family ||
-    transaction?.metadata?.movement_family ||
-    transaction?.metadata?.movement_classification?.movement_family ||
-    '',
-  ).toUpperCase();
-  if (family === 'INTERNAL_P2P' || family === 'INTERNAL_SS') return true;
-  if (family === 'EXTERNAL') return false;
-  if (isExternalMoneyMovement(transaction)) return false;
-  if (Array.isArray(transaction?.ledger_legs) && transaction.ledger_legs.length >= 2) return true;
-  const text = transactionSearchText(transaction);
-  return [
-    'internal',
-    'orbi',
-    'wallet',
-    'escrow',
-    'paysafe',
-    'pay safe',
-    'shared_pot',
-    'shared pot',
-    'fungu',
-    'pot',
-    'shared_budget',
-    'shared budget',
-    'mezani',
-    'budget',
-    'goal',
-    'saving',
-    'allocated',
-    'locked',
-  ].some((marker) => text.includes(marker));
+  return movementFamilyOf(transaction) === 'INTERNAL_SS';
+};
+
+const isIncomeSpendingMovement = (transaction: any): boolean => {
+  const family = movementFamilyOf(transaction);
+  return family === 'INTERNAL_P2P' || family === 'EXTERNAL';
 };
 
 const buildTransactionReport = (transactions: any[], range: ReturnType<typeof resolveReportRange>) => {
@@ -240,14 +173,17 @@ const buildTransactionReport = (transactions: any[], range: ReturnType<typeof re
     if (isInternalMoneyMovement(transaction)) {
       acc.internal_movements += amount;
       acc.internal_movement_count += 1;
-    } else if (isCreditLike(transaction)) {
+    } else if (isIncomeSpendingMovement(transaction) && isCreditLike(transaction)) {
       acc.total_in += amount;
       acc.money_in += amount;
       acc.external_in += amount;
-    } else {
+    } else if (isIncomeSpendingMovement(transaction)) {
       acc.total_out += amount;
       acc.money_out += amount;
       acc.external_out += amount;
+    } else {
+      acc.unclassified_movements += amount;
+      acc.unclassified_movement_count += 1;
     }
     acc.net = acc.total_in - acc.total_out;
     acc.gross_movement += amount;
@@ -268,6 +204,8 @@ const buildTransactionReport = (transactions: any[], range: ReturnType<typeof re
     external_out: 0,
     internal_movements: 0,
     internal_movement_count: 0,
+    unclassified_movements: 0,
+    unclassified_movement_count: 0,
     gross_movement: 0,
     net: 0,
     transaction_count: 0,

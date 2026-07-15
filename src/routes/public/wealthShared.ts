@@ -79,6 +79,41 @@ export const resolveWealthSourceWallet = async (
   return { sourceRecord, sourceTable };
 };
 
+export const resolveOperatingWealthWalletStrict = async (
+  sb: any,
+  userId: string,
+  providedWalletId?: string,
+) => {
+  const { data: operatingVault, error: vaultError } = await sb
+    .from('platform_vaults')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('vault_role', 'OPERATING')
+    .maybeSingle();
+  if (vaultError) throw new Error(vaultError.message);
+
+  const { data: operatingWallet, error: walletError } = operatingVault
+    ? { data: null, error: null }
+    : await sb
+      .from('wallets')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('type', 'OPERATING')
+      .maybeSingle();
+  if (walletError) throw new Error(walletError.message);
+
+  const sourceRecord = operatingVault || operatingWallet;
+  const sourceTable = operatingVault ? 'platform_vaults' : 'wallets';
+  if (!sourceRecord?.id) throw new Error('NO_OPERATING_WALLET');
+  if (providedWalletId && String(providedWalletId) !== String(sourceRecord.id)) {
+    throw new Error('SOURCE_WALLET_MUST_BE_OPERATING');
+  }
+  if (sourceRecord.is_locked === true || String(sourceRecord.status || 'active').toLowerCase() !== 'active') {
+    throw new Error('SOURCE_WALLET_UNAVAILABLE');
+  }
+  return { sourceRecord, sourceTable };
+};
+
 const wealthSourceMetadata = (sourceRecord: any): Record<string, any> => {
   const metadata = sourceRecord?.metadata;
   if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {

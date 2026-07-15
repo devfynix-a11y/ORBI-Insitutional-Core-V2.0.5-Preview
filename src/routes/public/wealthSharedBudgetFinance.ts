@@ -1,4 +1,4 @@
-import { wealthNumber } from './wealthShared.js';
+import { resolveOperatingWealthWalletStrict, wealthNumber } from './wealthShared.js';
 
 export const createSharedBudgetSpendExecutor = (LogicCore: any) => async (
   sb: any,
@@ -29,6 +29,12 @@ export const createSharedBudgetSpendExecutor = (LogicCore: any) => async (
     throw new Error('SHARED_BUDGET_MEMBER_LIMIT_EXCEEDED');
   }
 
+  const { sourceRecord, sourceTable } = await resolveOperatingWealthWalletStrict(
+    sb,
+    actorUserId,
+    payload.source_wallet_id || undefined,
+  );
+
   const enrichedMetadata = {
     ...(payload.metadata || {}),
     shared_budget_id: budget.id,
@@ -43,10 +49,13 @@ export const createSharedBudgetSpendExecutor = (LogicCore: any) => async (
     approval_mode: budget.approval_mode || 'AUTO',
     actor_user_id: actorUserId,
     member_user_id: actorUserId,
+    source_wallet_id: sourceRecord.id,
+    source_wallet_table: sourceTable,
+    source_wallet_role: sourceRecord.vault_role || sourceRecord.type || null,
   };
 
   const paymentPayload = {
-    sourceWalletId: payload.source_wallet_id,
+    sourceWalletId: sourceRecord.id,
     recipientId: payload.provider,
     amount: payload.amount,
     currency: (payload.currency || budget.currency || 'TZS').toUpperCase(),
@@ -119,7 +128,7 @@ export const createSharedBudgetSpendExecutor = (LogicCore: any) => async (
     .insert({
       shared_budget_id: budget.id,
       member_user_id: actorUserId,
-      source_wallet_id: payload.source_wallet_id || tx.fromWalletId || null,
+      source_wallet_id: sourceRecord.id,
       transaction_id: transactionId,
       merchant_name: payload.provider || tx.toUserId || null,
       provider: payload.provider || null,
