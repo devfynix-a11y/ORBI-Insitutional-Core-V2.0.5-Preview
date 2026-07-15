@@ -65,6 +65,7 @@ class WalletViewModel extends ChangeNotifier {
   Timer? _provisioningRefreshTimer;
   int _provisioningRefreshAttempts = 0;
   final Map<String, WalletTransactionState> _transactionStates = {};
+  bool _disposed = false;
 
   bool get isLoading => _loading;
   bool get isInitialLoading => _loading && _wallets.isEmpty && _error == null;
@@ -139,13 +140,14 @@ class WalletViewModel extends ChangeNotifier {
     if (shouldShowLoading) {
       _loading = true;
       _error = null;
-      notifyListeners();
+      _notifyIfAlive();
     }
 
     try {
       final wallets = await _walletService.getWallets(
         forceRefresh: forceRefresh || fromAutoRefresh,
       );
+      if (_disposed) return;
       final nextWallets = wallets.map(WalletRecord.fromJson).toList();
       final walletsChanged = !_walletListsEqual(_wallets, nextWallets);
       final previousError = _error;
@@ -155,21 +157,24 @@ class WalletViewModel extends ChangeNotifier {
           previousError != null &&
           _error == null &&
           !walletsChanged) {
-        notifyListeners();
+        _notifyIfAlive();
       } else if (!shouldShowLoading && walletsChanged) {
-        notifyListeners();
+        _notifyIfAlive();
       }
     } catch (error, stackTrace) {
+      if (_disposed) return;
       _error = localizeWalletFetchError(error, languageCode: _languageCode);
       _reportError(error, stackTrace, context: 'wallets_fetch');
       if (!shouldShowLoading) {
-        notifyListeners();
+        _notifyIfAlive();
       }
     } finally {
-      _loading = false;
-      _syncProvisioningAutoRefresh();
-      if (shouldShowLoading) {
-        notifyListeners();
+      if (!_disposed) {
+        _loading = false;
+        _syncProvisioningAutoRefresh();
+        if (shouldShowLoading) {
+          _notifyIfAlive();
+        }
       }
     }
   }
@@ -178,12 +183,12 @@ class WalletViewModel extends ChangeNotifier {
     if (_selectedFilter == filter) return;
     _selectedFilter = filter;
     _recomputeFilteredWallets();
-    notifyListeners();
+    _notifyIfAlive();
   }
 
   void toggleBalances() {
     _hideBalances = !_hideBalances;
-    notifyListeners();
+    _notifyIfAlive();
   }
 
   void handleRealtimeEvent(Map<String, dynamic> event) {
@@ -216,7 +221,7 @@ class WalletViewModel extends ChangeNotifier {
       isLoading: true,
       error: null,
     );
-    notifyListeners();
+    _notifyIfAlive();
 
     try {
       final nextOffset = loadMore ? current.items.length : 0;
@@ -225,6 +230,7 @@ class WalletViewModel extends ChangeNotifier {
         limit: _transactionPageSize,
         offset: nextOffset,
       );
+      if (_disposed) return;
       final fetched = rawItems
           .map(
             (item) => WalletTransactionRecord.fromJson(
@@ -246,6 +252,7 @@ class WalletViewModel extends ChangeNotifier {
         hasMore: fetched.length == _transactionPageSize,
       );
     } catch (error, stackTrace) {
+      if (_disposed) return;
       _transactionStates[wallet.id] = current.copyWith(
         isLoading: false,
         error: localizeWalletTransactionError(
@@ -255,7 +262,7 @@ class WalletViewModel extends ChangeNotifier {
       );
       _reportError(error, stackTrace, context: 'wallet_transactions');
     }
-    notifyListeners();
+    _notifyIfAlive();
   }
 
   bool _applyBalanceUpdate(String walletId, double balance) {
@@ -268,7 +275,7 @@ class WalletViewModel extends ChangeNotifier {
     updated[index] = updated[index].copyWith(balance: balance);
     _wallets = updated;
     _recomputeFilteredWallets();
-    notifyListeners();
+    _notifyIfAlive();
     return true;
   }
 
@@ -347,9 +354,15 @@ class WalletViewModel extends ChangeNotifier {
     }
 
     _provisioningRefreshTimer = Timer(_provisioningRefreshInterval, () async {
+      if (_disposed) return;
       _provisioningRefreshAttempts += 1;
       await refresh(fromAutoRefresh: true);
     });
+  }
+
+  void _notifyIfAlive() {
+    if (_disposed) return;
+    notifyListeners();
   }
 
   void _reportError(
@@ -370,6 +383,7 @@ class WalletViewModel extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _provisioningRefreshTimer?.cancel();
     super.dispose();
   }

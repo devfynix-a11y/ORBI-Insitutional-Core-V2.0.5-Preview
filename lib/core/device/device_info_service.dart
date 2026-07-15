@@ -24,6 +24,7 @@ class DeviceInfoService {
         ? 'unknown'
         : '${physicalSize.width.toInt()}x${physicalSize.height.toInt()}';
     final locale = ui.PlatformDispatcher.instance.locale;
+    final now = DateTime.now();
 
     final payload = <String, dynamic>{
       'model': Platform.operatingSystem,
@@ -31,7 +32,9 @@ class DeviceInfoService {
       'os': Platform.operatingSystemVersion,
       'platform': Platform.isIOS ? 'ios' : 'android',
       'screenResolution': resolution,
-      'timezone': DateTime.now().timeZoneName,
+      'timezone': now.timeZoneName,
+      'timezone_offset_minutes': now.timeZoneOffset.inMinutes,
+      'timezone_offset': _formatOffset(now.timeZoneOffset),
       'language': locale.toLanguageTag(),
       'appVersion': AppConfig.appVersion,
       if (DeviceIntegrityService.deviceState != null)
@@ -81,6 +84,14 @@ class DeviceInfoService {
 
     _cachedPayload = Map<String, dynamic>.from(payload);
     return Map<String, dynamic>.from(payload);
+  }
+
+  static String _formatOffset(Duration offset) {
+    final sign = offset.isNegative ? '-' : '+';
+    final minutes = offset.inMinutes.abs();
+    final hours = (minutes ~/ 60).toString().padLeft(2, '0');
+    final mins = (minutes % 60).toString().padLeft(2, '0');
+    return 'UTC$sign$hours:$mins';
   }
 
   static String _resolveAndroidName(AndroidDeviceInfo info) {

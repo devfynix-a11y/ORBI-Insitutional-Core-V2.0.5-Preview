@@ -20,6 +20,7 @@ class OrbiRequestHeaders {
     bool includeAccept = false,
   }) {
     final resolvedTrace = trace ?? _uuid.v4();
+    final now = DateTime.now();
     final attestation = DeviceIntegrityService.attestationToken;
     final deviceState = DeviceIntegrityService.deviceState;
     final resolvedRegistryType = _resolveRegistryType(
@@ -41,6 +42,10 @@ class OrbiRequestHeaders {
       if (AppConfig.shouldSendAndroidApkHash)
         'x-orbi-apk-hash': AppConfig.androidAppHash,
       'x-orbi-trace': resolvedTrace,
+      'x-orbi-timezone-name': now.timeZoneName,
+      'x-orbi-timezone-offset-minutes': now.timeZoneOffset.inMinutes.toString(),
+      'x-orbi-timezone-offset': _formatOffset(now.timeZoneOffset),
+      'x-orbi-request-timestamp-utc': now.toUtc().toIso8601String(),
       if (fingerprint != null && fingerprint.trim().isNotEmpty)
         'x-orbi-fingerprint': fingerprint.trim(),
       if (attestation != null && attestation.isNotEmpty)
@@ -49,11 +54,21 @@ class OrbiRequestHeaders {
         'x-orbi-device-state': deviceState,
       'x-fynix-app-id': AppConfig.appId,
       'x-fynix-trace': resolvedTrace,
+      'x-fynix-timezone-offset-minutes':
+          now.timeZoneOffset.inMinutes.toString(),
       if (fingerprint != null && fingerprint.trim().isNotEmpty)
         'x-fynix-fingerprint': fingerprint.trim(),
       if (idempotencyKey != null && idempotencyKey.trim().isNotEmpty)
         'x-idempotency-key': idempotencyKey.trim(),
     };
+  }
+
+  static String _formatOffset(Duration offset) {
+    final sign = offset.isNegative ? '-' : '+';
+    final minutes = offset.inMinutes.abs();
+    final hours = (minutes ~/ 60).toString().padLeft(2, '0');
+    final mins = (minutes % 60).toString().padLeft(2, '0');
+    return 'UTC$sign$hours:$mins';
   }
 
   static String? _resolveRegistryType({String? registryType, String? token}) {

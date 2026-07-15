@@ -1957,6 +1957,10 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
       if (!mounted) return;
       setState(() => _isPreviewing = false);
       await _openPreviewSheet(preview);
+    } on TransactionGeoException catch (e) {
+      if (!mounted) return;
+      setState(() => _isPreviewing = false);
+      await _showLocationRequiredDialog(e.message);
     } catch (e) {
       if (!mounted) return;
       setState(() => _isPreviewing = false);
@@ -1991,7 +1995,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
 
   Future<Map<String, dynamic>> _withRequiredTransactionGeo(
     Map<String, dynamic> payload, {
-    bool allowNetworkFallback = true,
+    bool allowNetworkFallback = false,
   }) async {
     final geoMetadata = await TransactionGeoContext.requiredMetadata(
       allowNetworkFallback: allowNetworkFallback,
@@ -2200,16 +2204,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
       transaction['available_balance'],
       transaction['availableBalance'],
     ]);
-    final localWallet = _effectiveInternalWallet();
-    final localAvailableBalance = localWallet == null
-        ? null
-        : _walletBalance(localWallet);
-    final availableBalance =
-        backendAvailableBalance != null && backendAvailableBalance >= 0
-        ? backendAvailableBalance
-        : localAvailableBalance != null && localAvailableBalance >= 0
-        ? localAvailableBalance
-        : backendAvailableBalance;
+    final availableBalance = backendAvailableBalance;
     final requiredBalance = _firstAmountOrNull([
       balance['required'],
       debit['total'],
@@ -2262,6 +2257,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     }
 
     return _TransactionPreviewData(
+      requestPayload: _deepCopyMap(payload),
       quoteId: _pickString([data['quoteId'], data['quote_id']]),
       quoteHash: _pickString([data['quoteHash'], data['quote_hash']]),
       status: _pickString([data['status'], data['state']]),
@@ -2320,17 +2316,6 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
         );
       }
     }
-    for (final rawIssue in issuesRaw) {
-      if (rawIssue is! Map) continue;
-      final issue = Map<String, dynamic>.from(rawIssue);
-      final code = _pickString([issue['code']]);
-      final message = _pickString([issue['message'], issue['detail']]);
-      final text = [
-        code,
-        message,
-      ].where((part) => part.trim().isNotEmpty).join(': ');
-      if (text.isNotEmpty) return _friendlyPreviewIssueMessage(text);
-    }
     return '';
   }
 
@@ -2339,8 +2324,8 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     final normalized = text.toUpperCase();
     if (normalized.contains('UNSAFE_DATABASE_IDENTIFIER')) {
       return _isSw
-          ? 'Chanzo cha wallet hakijathibitishwa vizuri. Tafadhali refresh akaunti yako kisha jaribu tena.'
-          : 'The source wallet could not be verified. Please refresh your account and try again.';
+          ? 'Mfumo haujaweza kuthibitisha taarifa za muamala kwa usalama. Tafadhali jaribu tena au wasiliana na msaada.'
+          : 'The system could not safely verify this transaction. Please try again or contact support.';
     }
     return text;
   }
@@ -2768,24 +2753,18 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
       return false;
     }
 
-    final token = await _requestTransferAccessToken();
-    if (!mounted) return false;
-    if (token == null || token.isEmpty) {
-      return false;
-    }
-
-    final allowNetworkFallback = _allowNetworkLocationForInternalSettle(
-      preview,
-    );
-    final payload = await _withRequiredTransactionGeo(
-      _buildInternalSettlePayload(preview),
-      allowNetworkFallback: allowNetworkFallback,
-    );
-    final attempt = _resolvePendingAttempt(payload, external: false);
     if (mounted) {
       setState(() => _isSubmittingInternal = true);
     }
     try {
+      final token = await _requestTransferAccessToken();
+      if (!mounted) return false;
+      if (token == null || token.isEmpty) {
+        throw StateError('TRANSFER_AUTH_TOKEN_UNAVAILABLE');
+      }
+
+      final payload = _buildInternalSettlePayload(preview);
+      final attempt = _resolvePendingAttempt(payload, external: false);
       final response = await _submitTransactionWith2Fa(
         token,
         payload,
@@ -2796,6 +2775,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
       if (!mounted) return false;
       final settlementStatus = _settlementStatus(verifiedResponse);
       final isPending = !_isFinalSettlementSuccess(settlementStatus);
+      setState(() => _isSubmittingInternal = false);
       await _showSettleResultDialog(
         success: true,
         pending: isPending,
@@ -4427,59 +4407,10 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
   Map<String, dynamic> _buildInternalSettlePayload(
     _TransactionPreviewData preview,
   ) {
-    final amount =
-        AmountInputFormatter.tryParse(_internalAmountController.text) ?? 0.0;
-    final note = _internalNoteController.text.trim();
-    final sourceParts = _buildInternalSourcePayloadParts();
-    final sourceWalletContext = sourceParts['source_wallet_context'];
-    final sourceWalletDetails = sourceParts['source_wallet_details'];
     return {
+      ..._deepCopyMap(preview.requestPayload),
       'quoteId': preview.quoteId,
       'quoteHash': preview.quoteHash,
-      'transfer_mode': 'Internal',
-      'category': 'Transfer',
-      'type': 'INTERNAL_TRANSFER',
-      'amount': amount,
-      'currency': _resolveCurrency(),
-      'description': note,
-      'transaction_type': 'INTERNAL_P2P',
-      'metadata': {
-        'category': 'Transfer',
-        if ((_selectedInternalCategoryId ?? '').isNotEmpty)
-          'category_id': _selectedInternalCategoryId,
-        if (sourceWalletContext is Map)
-          'source_wallet_context': Map<String, dynamic>.from(
-            sourceWalletContext,
-          ),
-        if (sourceWalletDetails is Map)
-          'source_wallet_details': Map<String, dynamic>.from(
-            sourceWalletDetails,
-          ),
-        if (note.isNotEmpty) 'notes': note,
-      },
-      'recipient_customer_id': preview.recipientCustomerId,
-      if ((_recipientPreview?.internalId ?? '').isNotEmpty)
-        'recipient_id': _recipientPreview!.internalId,
-      if ((_selectedInternalCategoryId ?? '').isNotEmpty)
-        'categoryId': _selectedInternalCategoryId,
-      // Backend remains canonical; these are best-effort hints.
-      ...sourceParts,
-      'current_user': _currentUserContext(),
-      'ui_submission': {
-        'flow': 'send_money',
-        'mode': 'internal',
-        'steps': {
-          'recipient_input': _recipientIdController.text.trim(),
-          'recipient_display_identifier': preview.recipientDisplayIdentifier,
-          'recipient_full_name': preview.recipientName,
-          'amount_input': AmountInputFormatter.sanitize(
-            _internalAmountController.text,
-          ),
-          'description_input': note,
-          'source_wallet_input':
-              _selectedInternalSourceWalletId ?? 'OPERATING_WALLET_AUTO',
-        },
-      },
       'preview_snapshot': {
         'quoteId': preview.quoteId,
         'quoteHash': preview.quoteHash,
@@ -4493,6 +4424,10 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
         },
       },
     };
+  }
+
+  Map<String, dynamic> _deepCopyMap(Map<String, dynamic> value) {
+    return Map<String, dynamic>.from(jsonDecode(jsonEncode(value)) as Map);
   }
 
   Map<String, dynamic> _buildExternalSettlePayload() {
@@ -4601,10 +4536,9 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
       if (effectiveWalletId.isNotEmpty) 'sourceWalletId': effectiveWalletId,
       'source_wallet_details': sourceWalletDetails,
       'source_wallet_context': {
-        'wallet_id': effectiveWalletId,
+        if (effectiveWalletId.isNotEmpty) 'wallet_id': effectiveWalletId,
         'wallet_type': externalWalletType,
         'selection': sourceWallet,
-        'auto_resolve': effectiveWalletId.isEmpty,
       },
       ...sourceFields,
       'current_user': _currentUserContext(),
@@ -4626,27 +4560,6 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
         },
       },
     };
-  }
-
-  bool _allowNetworkLocationForInternalSettle(_TransactionPreviewData preview) {
-    final decision = preview.securityDecision.toUpperCase();
-    final state = preview.state.toUpperCase();
-    final status = preview.status.toUpperCase();
-    final blockedOrPendingReview =
-        decision.contains('CHALLENGE') ||
-        decision.contains('BLOCK') ||
-        state.contains('REVIEW') ||
-        status.contains('REVIEW') ||
-        preview.issueMessage.trim().isNotEmpty;
-    if (blockedOrPendingReview) return false;
-    return preview.totalAmount <= _lowRiskIpFallbackSettlementLimit();
-  }
-
-  double _lowRiskIpFallbackSettlementLimit() {
-    final currency = _resolveCurrency().toUpperCase();
-    if (currency == 'TZS') return 10000;
-    if (currency == 'KES' || currency == 'UGX') return 5000;
-    return 5;
   }
 
   Map<String, dynamic> _currentUserContext() {
@@ -4676,10 +4589,13 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     if (_isEscrowWallet(wallet)) return false;
     final type = _walletType(wallet);
     final tier = _walletTier(wallet);
+    final role = _walletRole(wallet);
     final name = _walletName(wallet).toLowerCase();
     return type.contains('operating') ||
         type.contains('internal_main') ||
         tier.contains('operating') ||
+        role.contains('operating') ||
+        name == 'orbi' ||
         name.contains('operating') ||
         name.contains('main default') ||
         name.contains('internal vault') ||
@@ -4810,7 +4726,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
       final selectedId = _walletId(selected);
       return {
         'walletType': walletType,
-        'sourceWalletId': walletId,
+        if (walletId.isNotEmpty) 'sourceWalletId': walletId,
         if (goalId.isNotEmpty) 'sourceGoalId': goalId,
         if (goalId.isNotEmpty) 'source_goal_id': goalId,
         'source_wallet': {
@@ -4836,7 +4752,6 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
           if (walletName.isNotEmpty) 'wallet_name': walletName,
           'wallet_type': walletType,
           if (goalId.isNotEmpty) 'goal_id': goalId,
-          'auto_resolve': walletId.isEmpty,
         },
         ..._buildSourceTopLevelFields(walletId: walletId),
       };
@@ -4854,6 +4769,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     final user = _currentUserContext();
     final safeWalletId = _safeDatabaseIdentifier(walletId);
     return {
+      if (safeWalletId.isNotEmpty) 'sourceWalletId': safeWalletId,
       if (safeWalletId.isNotEmpty) 'source_wallet_id': safeWalletId,
       if (safeWalletId.isNotEmpty) 'wallet_id': safeWalletId,
       if (user['customer_id'] is String)
@@ -4876,30 +4792,6 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
         final id = _walletId(wallet);
         if (id.isNotEmpty) return id;
       }
-    }
-    for (final wallet in internalWallets) {
-      final id = _walletId(wallet);
-      if (id.isNotEmpty) return id;
-    }
-
-    final session = context.read<AuthController>().session;
-    final user = session['user'];
-    if (user is Map) {
-      final fromUser = _pickString([
-        user['operating_wallet_id'],
-        user['operatingWalletId'],
-        user['default_wallet_id'],
-        user['defaultWalletId'],
-        user['wallet_id'],
-        user['walletId'],
-      ]);
-      final safeFromUser = _safeDatabaseIdentifier(fromUser);
-      if (safeFromUser.isNotEmpty) return safeFromUser;
-    }
-
-    for (final wallet in _backendWallets) {
-      final id = _walletId(wallet);
-      if (id.isNotEmpty) return id;
     }
     return '';
   }
@@ -5500,6 +5392,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
       );
       _clearPendingAttempt(external: true);
       if (!mounted) return;
+      setState(() => _isSubmittingExternal = false);
       await _showSettleResultDialog(
         success: true,
         title: AppLocalizations.of(
@@ -6063,19 +5956,69 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
   Widget _buildInternalSourceWalletList() {
     final ui = OrbiTheme.uiOf(context);
     final subWallets = _internalSubWallets();
-    if (subWallets.isEmpty) {
+    final operatingWallet = _effectiveInternalWallet();
+    final operatingWalletId = operatingWallet == null
+        ? _resolveOperatingWalletId()
+        : _walletId(operatingWallet);
+    final operatingTitle = operatingWallet == null
+        ? AppLocalizations.of(context)!.sendMoneyOperatingWalletAutoTitle
+        : (_walletName(operatingWallet).isEmpty
+              ? AppLocalizations.of(context)!.sendMoneyOperatingWalletAutoTitle
+              : _walletName(operatingWallet));
+    final operatingSubtitle = operatingWalletId.isEmpty
+        ? AppLocalizations.of(context)!.sendMoneyOperatingWalletAutoSubtitle
+        : AppLocalizations.of(context)!.sendMoneyWalletIdLabel(
+            operatingWalletId,
+          );
+    final operatingBalance = operatingWallet == null
+        ? ''
+        : _walletBalanceLabel(operatingWallet);
+    Widget operatingCard({required bool wrapped}) {
+      final card = _internalSourceCard(
+        title: operatingTitle,
+        subtitle: operatingSubtitle,
+        balance: operatingBalance,
+        badge: AppLocalizations.of(context)!.sendMoneySourceBadgeOperating,
+        selected: _selectedInternalSourceWalletId == null,
+        isOperating: true,
+        onTap: () {
+          setState(() {
+            _selectedInternalSourceWalletId = null;
+            _internalSourceWalletExpanded = false;
+          });
+        },
+      );
+      if (!wrapped) return card;
       return Container(
         width: double.infinity,
-        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: ui.cardMuted,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: ui.border),
         ),
-        child: Text(
-          AppLocalizations.of(context)!.sendMoneyNoGoalWalletsMessage,
-          style: TextStyle(color: ui.textMuted, fontSize: 12),
-        ),
+        child: card,
+      );
+    }
+
+    if (subWallets.isEmpty) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          operatingCard(wrapped: true),
+          const SizedBox(height: 8),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: ui.cardMuted,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: ui.border),
+            ),
+            child: Text(
+              AppLocalizations.of(context)!.sendMoneyNoGoalWalletsMessage,
+              style: TextStyle(color: ui.textMuted, fontSize: 12),
+            ),
+          ),
+        ],
       );
     }
 
@@ -6094,13 +6037,9 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
             onTap: () => setState(() => _internalSourceWalletExpanded = true),
           )
         : _internalSourceCard(
-            title: AppLocalizations.of(
-              context,
-            )!.sendMoneyOperatingWalletAutoTitle,
-            subtitle: AppLocalizations.of(
-              context,
-            )!.sendMoneyOperatingWalletAutoSubtitle,
-            balance: '',
+            title: operatingTitle,
+            subtitle: operatingSubtitle,
+            balance: operatingBalance,
             badge: AppLocalizations.of(context)!.sendMoneySourceBadgeOperating,
             selected: _selectedInternalSourceWalletId == null,
             onTap: () => setState(() => _internalSourceWalletExpanded = true),
@@ -6146,22 +6085,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     }
 
     final cards = <Widget>[
-      _internalSourceCard(
-        title: AppLocalizations.of(context)!.sendMoneyOperatingWalletAutoTitle,
-        subtitle: AppLocalizations.of(
-          context,
-        )!.sendMoneyOperatingWalletAutoSubtitle,
-        balance: '',
-        badge: AppLocalizations.of(context)!.sendMoneySourceBadgeOperating,
-        selected: _selectedInternalSourceWalletId == null,
-        isOperating: true,
-        onTap: () {
-          setState(() {
-            _selectedInternalSourceWalletId = null;
-            _internalSourceWalletExpanded = false;
-          });
-        },
-      ),
+      operatingCard(wrapped: false),
       ...subWallets.map((wallet) {
         final id = _walletId(wallet);
         return _internalSourceCard(
@@ -8297,6 +8221,7 @@ class _OrbiAgentPreviewCard extends StatelessWidget {
 }
 
 class _TransactionPreviewData {
+  final Map<String, dynamic> requestPayload;
   final String quoteId;
   final String quoteHash;
   final String status;
@@ -8320,6 +8245,7 @@ class _TransactionPreviewData {
   final FxQuote? fxQuote;
 
   const _TransactionPreviewData({
+    required this.requestPayload,
     required this.quoteId,
     required this.quoteHash,
     required this.status,

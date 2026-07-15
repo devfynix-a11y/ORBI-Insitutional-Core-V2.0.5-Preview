@@ -867,7 +867,7 @@ class _NotificationDetailPageState extends State<NotificationDetailPage> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      _formatFullTime(widget.notification.timestamp),
+                      _formatFullTime(widget.notification),
                       style: TextStyle(color: ui.textSoft),
                     ),
                     Divider(height: 32, color: ui.border),
@@ -882,7 +882,15 @@ class _NotificationDetailPageState extends State<NotificationDetailPage> {
     );
   }
 
-  String _formatFullTime(DateTime time) {
+  String _formatFullTime(NotificationItem notification) {
+    final auditTime = notification.metadata['audit_time'];
+    if (auditTime is Map) {
+      final dateTime = auditTime['display_date_time']?.toString().trim();
+      if (dateTime != null && dateTime.isNotEmpty) return dateTime;
+      final display = auditTime['display_timestamp']?.toString().trim();
+      if (display != null && display.isNotEmpty) return display;
+    }
+    final time = notification.timestamp;
     return AppLocalizations.of(context)!.notificationsFullTime(
       '${time.day}/${time.month}/${time.year}',
       '${time.hour}:${time.minute.toString().padLeft(2, '0')}',

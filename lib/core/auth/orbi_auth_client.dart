@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 import 'package:orbi_mobileapp/core/config/app_config.dart';
 import 'package:orbi_mobileapp/core/auth/passkey_response_parser.dart';
 import 'package:orbi_mobileapp/core/device/device_info_service.dart';
+import 'package:orbi_mobileapp/core/security/transaction_geo_context.dart';
 import 'package:orbi_mobileapp/core/network/orbi_request_headers.dart';
 import 'package:orbi_mobileapp/core/security/device_fingerprint.dart';
 
@@ -461,6 +462,8 @@ class OrbiAuthClient {
     }
     final url = Uri.parse('$baseUrl${AppConfig.endpoints['signup']}');
     debugPrint('📤 [SIGNUP] POST $url');
+    final registrationTimeMetadata =
+        TransactionGeoContext.buildRegistrationTimeMetadata();
     final payload = {
       'email': email,
       'password': password,
@@ -476,6 +479,7 @@ class OrbiAuthClient {
       ...?(languageCode == null ? null : {'language': languageCode}),
       ...?(fcmToken == null ? null : {'fcm_token': fcmToken}),
       'metadata': {
+        ...registrationTimeMetadata,
         'app_origin': AppConfig.appOrigin,
         'registry_type': 'CONSUMER',
         'preferred_currency': normalizedCurrency,

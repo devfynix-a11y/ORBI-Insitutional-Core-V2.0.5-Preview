@@ -24,6 +24,7 @@ class NotificationItem {
   final NotificationKind kind;
   final Color color;
   final IconData icon;
+  final Map<String, dynamic> metadata;
 
   NotificationItem({
     required this.id,
@@ -34,6 +35,7 @@ class NotificationItem {
     required this.kind,
     required this.color,
     required this.icon,
+    this.metadata = const <String, dynamic>{},
     this.category,
   });
 
@@ -48,6 +50,7 @@ class NotificationItem {
       kind: kind,
       color: color,
       icon: icon,
+      metadata: metadata,
     );
   }
 
@@ -87,6 +90,9 @@ class NotificationItem {
       kind: kind,
       color: _colorForKind(kind),
       icon: _iconForKind(kind),
+      metadata: json['metadata'] is Map
+          ? Map<String, dynamic>.from(json['metadata'] as Map)
+          : const <String, dynamic>{},
     );
   }
 
@@ -109,6 +115,7 @@ class NotificationItem {
           payload['message'] ??
           _defaultMessageForNotificationToken(token),
       'timestamp': payload['timestamp'] ?? payload['created_at'],
+      'metadata': payload['metadata'],
       'is_read': payload['is_read'],
       'category': category,
       'kind': kind,
@@ -853,6 +860,7 @@ class NotificationController extends ChangeNotifier {
       kind: kind,
       color: _colorForKind(kind),
       icon: _iconForKind(kind),
+      metadata: const <String, dynamic>{},
     );
     _upsert(item);
   }

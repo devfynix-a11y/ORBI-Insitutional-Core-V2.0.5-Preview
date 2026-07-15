@@ -434,7 +434,28 @@ class _ReportPreviewCard extends StatelessWidget {
           _transactionTable(transactions, currency),
           const SizedBox(height: 18),
           _insideOrbiSummary(currency),
+          const SizedBox(height: 18),
+          _declarationFooter(),
         ],
+      ),
+    );
+  }
+
+  Widget _declarationFooter() {
+    final year = DateTime.now().year;
+    return SizedBox(
+      width: double.infinity,
+      child: Text(
+        sw
+            ? 'Kama miamala hii haiendani na taarifa zako au hujaridhika, tafadhali wasiliana nasi kupitia +255764258114 au support@orbifinancial.com.\n© $year Orbi Financial. Haki zote zimehifadhiwa.'
+            : 'If these transactions do not match your records or you are not satisfied, please contact us via +255764258114 or support@orbifinancial.com.\n© $year Orbi Financial. All rights reserved.',
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          color: Color(0xFF64748B),
+          fontSize: 11,
+          height: 1.35,
+          fontWeight: FontWeight.w700,
+        ),
       ),
     );
   }

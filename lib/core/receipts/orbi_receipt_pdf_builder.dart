@@ -97,6 +97,8 @@ class OrbiReceiptPdfBuilder {
                     fontSize: 8.5,
                   ),
                 ),
+                pw.SizedBox(height: 9),
+                _declarationFooter(),
               ],
             ),
           ),
@@ -487,5 +489,22 @@ class OrbiReceiptPdfBuilder {
     final hours = offset.inHours.abs().toString().padLeft(2, '0');
     final minutes = (offset.inMinutes.abs() % 60).toString().padLeft(2, '0');
     return '$printedAt UTC$sign$hours:$minutes';
+  }
+
+  static pw.Widget _declarationFooter() {
+    final year = DateTime.now().year;
+    return pw.SizedBox(
+      width: double.infinity,
+      child: pw.Text(
+        'If these transactions do not match your records or you are not satisfied, please contact us via +255764258114 or support@orbifinancial.com.\n© $year Orbi Financial. All rights reserved.',
+        textAlign: pw.TextAlign.center,
+        style: pw.TextStyle(
+          color: PdfColor.fromHex('#64748B'),
+          fontSize: 8.5,
+          lineSpacing: 1.4,
+          fontWeight: pw.FontWeight.bold,
+        ),
+      ),
+    );
   }
 }

@@ -201,6 +201,8 @@ class ReportPdfBuilder {
                 ),
               ),
           ],
+          pw.SizedBox(height: 18),
+          _buildDeclarationFooter(sw: sw),
         ],
       ),
     );
@@ -568,6 +570,25 @@ class ReportPdfBuilder {
           horizontalInside: pw.BorderSide(color: _slateLine, width: 0.5),
           verticalInside: pw.BorderSide(color: _slateLine, width: 0.45),
           bottom: pw.BorderSide(color: _slateLine, width: 0.7),
+        ),
+      ),
+    );
+  }
+
+  static pw.Widget _buildDeclarationFooter({required bool sw}) {
+    final year = DateTime.now().year;
+    return pw.SizedBox(
+      width: double.infinity,
+      child: pw.Text(
+        sw
+            ? 'Kama miamala hii haiendani na taarifa zako au hujaridhika, tafadhali wasiliana nasi kupitia +255764258114 au support@orbifinancial.com.\n© $year Orbi Financial. Haki zote zimehifadhiwa.'
+            : 'If these transactions do not match your records or you are not satisfied, please contact us via +255764258114 or support@orbifinancial.com.\n© $year Orbi Financial. All rights reserved.',
+        textAlign: pw.TextAlign.center,
+        style: pw.TextStyle(
+          color: _slate,
+          fontSize: 8.5,
+          lineSpacing: 1.4,
+          fontWeight: pw.FontWeight.bold,
         ),
       ),
     );

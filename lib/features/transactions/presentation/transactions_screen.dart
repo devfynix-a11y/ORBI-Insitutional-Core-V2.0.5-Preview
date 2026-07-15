@@ -41,10 +41,13 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   final WalletService _walletService = WalletService();
   final TransactionReceiptService _receiptService = TransactionReceiptService();
   static const String _allMoneyStates = 'all';
+  static const String _sortNewestFirst = 'newest_first';
+  static const String _sortOldestFirst = 'oldest_first';
   bool _loading = false;
   bool _isOpeningDetails = false;
   String? _error;
   String _selectedMoneyState = _allMoneyStates;
+  String _selectedSortOrder = _sortNewestFirst;
   List<Map<String, dynamic>> _transactions = const [];
   Uint8List? _logoBytesCache;
   Timer? _realtimeRefreshDebounce;
@@ -199,15 +202,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
         offset: 0,
         forceRefresh: forceRefresh,
       );
-      txs.sort((a, b) {
-        final at = _asDate(
-          a['created_at'] ?? a['createdAt'] ?? a['timestamp'] ?? a['date'],
-        );
-        final bt = _asDate(
-          b['created_at'] ?? b['createdAt'] ?? b['timestamp'] ?? b['date'],
-        );
-        return at.compareTo(bt);
-      });
+      _sortTransactions(txs, newestFirst: true);
       if (!mounted) return;
       setState(() => _transactions = txs);
     } catch (e) {
@@ -302,17 +297,28 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       updated.add(tx);
     }
 
-    updated.sort((a, b) {
+    _sortTransactions(
+      updated,
+      newestFirst: _selectedSortOrder == _sortNewestFirst,
+    );
+
+    setState(() => _transactions = updated);
+  }
+
+  void _sortTransactions(
+    List<Map<String, dynamic>> transactions, {
+    required bool newestFirst,
+  }) {
+    transactions.sort((a, b) {
       final at = _asDate(
         a['created_at'] ?? a['createdAt'] ?? a['timestamp'] ?? a['date'],
       );
       final bt = _asDate(
         b['created_at'] ?? b['createdAt'] ?? b['timestamp'] ?? b['date'],
       );
-      return at.compareTo(bt);
+      final comparison = at.compareTo(bt);
+      return newestFirst ? -comparison : comparison;
     });
-
-    setState(() => _transactions = updated);
   }
 
   String _cleanUserFacing(String value) {
@@ -852,10 +858,16 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   }
 
   List<Map<String, dynamic>> _filteredTransactions() {
-    if (_selectedMoneyState == _allMoneyStates) return _transactions;
-    return _transactions
-        .where((tx) => _lifecycleStateKey(tx) == _selectedMoneyState)
-        .toList();
+    final filtered = _selectedMoneyState == _allMoneyStates
+        ? List<Map<String, dynamic>>.from(_transactions)
+        : _transactions
+              .where((tx) => _lifecycleStateKey(tx) == _selectedMoneyState)
+              .toList();
+    _sortTransactions(
+      filtered,
+      newestFirst: _selectedSortOrder == _sortNewestFirst,
+    );
+    return filtered;
   }
 
   List<_MoneyStateFilter> _moneyStateFilters(AppLocalizations l10n) {
@@ -918,6 +930,49 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
           }).toList(),
         ),
       ],
+    );
+  }
+
+  Widget _buildSortDropdown(BuildContext context, OrbiUiTokens ui) {
+    final sw =
+        Localizations.localeOf(context).languageCode.toLowerCase() == 'sw';
+    final items = <DropdownMenuItem<String>>[
+      DropdownMenuItem(
+        value: _sortNewestFirst,
+        child: Text(sw ? 'Mipya kwanza' : 'Newest first'),
+      ),
+      DropdownMenuItem(
+        value: _sortOldestFirst,
+        child: Text(sw ? 'Mikongwe kwanza' : 'Oldest first'),
+      ),
+    ];
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: ui.cardMuted,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: ui.border),
+        ),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<String>(
+            value: _selectedSortOrder,
+            icon: Icon(Icons.keyboard_arrow_down_rounded, color: ui.iconMuted),
+            dropdownColor: ui.card,
+            style: TextStyle(
+              color: ui.textPrimary,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+            ),
+            items: items,
+            onChanged: (value) {
+              if (value == null || value == _selectedSortOrder) return;
+              setState(() => _selectedSortOrder = value);
+            },
+          ),
+        ),
+      ),
     );
   }
 
@@ -1662,6 +1717,8 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                       ),
                     ),
                   ),
+                  const SizedBox(height: 10),
+                  _receiptDeclarationFooter(),
                 ],
               ),
             ],
@@ -1684,6 +1741,27 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       default:
         return Icons.sell_rounded;
     }
+  }
+
+  Widget _receiptDeclarationFooter() {
+    final sw =
+        Localizations.localeOf(context).languageCode.toLowerCase() == 'sw';
+    final year = DateTime.now().year;
+    return SizedBox(
+      width: double.infinity,
+      child: Text(
+        sw
+            ? 'Kama miamala hii haiendani na taarifa zako au hujaridhika, tafadhali wasiliana nasi kupitia +255764258114 au support@orbifinancial.com.\n© $year Orbi Financial. Haki zote zimehifadhiwa.'
+            : 'If these transactions do not match your records or you are not satisfied, please contact us via +255764258114 or support@orbifinancial.com.\n© $year Orbi Financial. All rights reserved.',
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          color: Color(0xFF64748B),
+          fontSize: 9.5,
+          height: 1.35,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
   }
 
   Future<void> _showReceiptLoadingOverlay() async {
@@ -2091,6 +2169,8 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                     ),
                     const SizedBox(height: 16),
                     _buildMoneyStateFilters(context, l10n, ui),
+                    const SizedBox(height: 12),
+                    _buildSortDropdown(context, ui),
                     const SizedBox(height: 16),
                     OrbiStateCard(
                       icon: Icons.receipt_long_outlined,
@@ -2150,6 +2230,8 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                     ),
                   ),
                   _buildMoneyStateFilters(context, l10n, ui),
+                  const SizedBox(height: 12),
+                  _buildSortDropdown(context, ui),
                   const SizedBox(height: 12),
                   if (filteredTransactions.isEmpty)
                     OrbiStateCard(
