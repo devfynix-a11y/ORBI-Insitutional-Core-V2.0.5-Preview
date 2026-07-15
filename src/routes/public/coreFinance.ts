@@ -4,6 +4,7 @@ import {
   resolveIdempotencyHeader,
 } from '../../middleware/security/idempotency.js';
 import { GlobalTimeResolver } from '../../../backend/utils/GlobalTimeResolver.js';
+import { TransactionMovementClassifier } from '../../../backend/transactions/movement/TransactionMovementClassifier.js';
 
 type Deps = {
   authenticate: RequestHandler;
@@ -165,6 +166,14 @@ const transactionSearchText = (transaction: any): string => {
 };
 
 const isExternalMoneyMovement = (transaction: any): boolean => {
+  const family = String(
+    transaction?.movement_family ||
+    transaction?.metadata?.movement_family ||
+    transaction?.metadata?.movement_classification?.movement_family ||
+    '',
+  ).toUpperCase();
+  if (family === 'EXTERNAL') return true;
+  if (family === 'INTERNAL_P2P' || family === 'INTERNAL_SS') return false;
   const text = transactionSearchText(transaction);
   return [
     'external_routing',
@@ -183,6 +192,14 @@ const isExternalMoneyMovement = (transaction: any): boolean => {
 };
 
 const isInternalMoneyMovement = (transaction: any): boolean => {
+  const family = String(
+    transaction?.movement_family ||
+    transaction?.metadata?.movement_family ||
+    transaction?.metadata?.movement_classification?.movement_family ||
+    '',
+  ).toUpperCase();
+  if (family === 'INTERNAL_P2P' || family === 'INTERNAL_SS') return true;
+  if (family === 'EXTERNAL') return false;
   if (isExternalMoneyMovement(transaction)) return false;
   if (Array.isArray(transaction?.ledger_legs) && transaction.ledger_legs.length >= 2) return true;
   const text = transactionSearchText(transaction);
@@ -673,6 +690,12 @@ const enrichTransactionsForReport = async (
       const balanceLeg = pickGeneralReportBalanceLeg(legs, userId, walletById, transaction);
       const debitLeg = pickReportSourceLeg(legs, transaction, walletById, userId);
       const creditLeg = pickReportDestinationLeg(legs, transaction, walletById, userId);
+      const movementClassification = TransactionMovementClassifier.classify({
+        transaction,
+        legs,
+        walletMap: walletById,
+        userId,
+      });
       const sourceWallet = walletById.get(String((debitLeg || userLeg)?.wallet_id || ''));
       const destinationWallet = walletById.get(String((creditLeg || userLeg)?.wallet_id || ''));
       const sourceUser = userById.get(String(debitLeg?.user_id || sourceWallet?.user_id || ''));
@@ -736,6 +759,17 @@ const enrichTransactionsForReport = async (
       return {
         ...transaction,
         ledger_entry_id: balanceLeg?.id || userLeg?.id || transaction?.ledger_entry_id,
+        movement_family: movementClassification.movement_family,
+        movement_code: movementClassification.movement_code,
+        movement_group: movementClassification.movement_group,
+        movement_classification: movementClassification,
+        metadata: {
+          ...(transaction?.metadata || {}),
+          movement_family: movementClassification.movement_family,
+          movement_code: movementClassification.movement_code,
+          movement_group: movementClassification.movement_group,
+          movement_classification: movementClassification,
+        },
         balance_after: balanceAfter,
         running_balance: balanceAfter,
         from_display_name: resolvedSourceDisplayName,

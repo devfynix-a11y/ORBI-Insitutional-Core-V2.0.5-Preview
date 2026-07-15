@@ -15,6 +15,7 @@ import {
 import { RiskComplianceEngine } from '../backend/security/RiskComplianceEngine.js';
 import { PerfMonitor } from '../backend/infrastructure/PerfMonitor.js';
 import { logger } from '../backend/infrastructure/logger.js';
+import { TransactionMovementClassifier } from '../backend/transactions/movement/TransactionMovementClassifier.js';
 
 const ledgerLogger = logger.child({ component: 'transaction_service' });
 
@@ -1062,6 +1063,12 @@ export class TransactionService {
                 const txLegs = legsByTransaction[String(tx.id || '')] || [];
                 const debitLeg = this.pickSourceLeg(txLegs, tx, walletMap, userId);
                 const creditLeg = this.pickDestinationLeg(txLegs, tx, walletMap, userId);
+                const movementClassification = TransactionMovementClassifier.classify({
+                    transaction: tx,
+                    legs: txLegs,
+                    walletMap,
+                    userId,
+                });
                 const isSender = tx.user_id === userId;
                 const sourceWallet = walletMap[String((debitLeg?.wallet_id || tx.walletId || ''))];
                 const targetWallet = walletMap[String((creditLeg?.wallet_id || tx.toWalletId || ''))];
@@ -1115,6 +1122,17 @@ export class TransactionService {
                     referenceId: tx.reference_id || tx.id,
                     direction,
                     status: normalizedStatus,
+                    movement_family: movementClassification.movement_family,
+                    movement_code: movementClassification.movement_code,
+                    movement_group: movementClassification.movement_group,
+                    movement_classification: movementClassification,
+                    metadata: {
+                        ...(tx.metadata || {}),
+                        movement_family: movementClassification.movement_family,
+                        movement_code: movementClassification.movement_code,
+                        movement_group: movementClassification.movement_group,
+                        movement_classification: movementClassification,
+                    },
                     balance_after: balanceAfter,
                     balanceAfter,
                     running_balance: balanceAfter,
@@ -1304,6 +1322,12 @@ export class TransactionService {
             if (sharedPotLabel && balanceSide.includes('DEBIT')) receiverName = sharedPotLabel;
             if (sharedPotLabel && balanceSide.includes('CREDIT')) senderName = sharedPotLabel;
         }
+        const movementClassification = TransactionMovementClassifier.classify({
+            transaction,
+            legs: ledgerRows,
+            walletMap,
+            userId,
+        });
 
         return {
             ...transaction,
@@ -1311,6 +1335,17 @@ export class TransactionService {
             internalId: transaction.id,
             referenceId: transaction.reference_id || transaction.id,
             status: String(transaction.status || '').toLowerCase(),
+            movement_family: movementClassification.movement_family,
+            movement_code: movementClassification.movement_code,
+            movement_group: movementClassification.movement_group,
+            movement_classification: movementClassification,
+            metadata: {
+                ...(transaction.metadata || {}),
+                movement_family: movementClassification.movement_family,
+                movement_code: movementClassification.movement_code,
+                movement_group: movementClassification.movement_group,
+                movement_classification: movementClassification,
+            },
             balance_after: balanceAfter,
             balanceAfter,
             running_balance: balanceAfter,
