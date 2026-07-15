@@ -93,6 +93,11 @@ class WealthService {
           invitee?['phone'],
           invitee?['msisdn'],
           invitee?['identifier'],
+          invitee?['id'],
+          invitee?['user_id'],
+          invitee?['userId'],
+          invitee?['profile_id'],
+          invitee?['profileId'],
         ]) ??
         fallback.trim();
   }
