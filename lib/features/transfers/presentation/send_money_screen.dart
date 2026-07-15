@@ -4431,6 +4431,8 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
         AmountInputFormatter.tryParse(_internalAmountController.text) ?? 0.0;
     final note = _internalNoteController.text.trim();
     final sourceParts = _buildInternalSourcePayloadParts();
+    final sourceWalletContext = sourceParts['source_wallet_context'];
+    final sourceWalletDetails = sourceParts['source_wallet_details'];
     return {
       'quoteId': preview.quoteId,
       'quoteHash': preview.quoteHash,
@@ -4445,6 +4447,14 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
         'category': 'Transfer',
         if ((_selectedInternalCategoryId ?? '').isNotEmpty)
           'category_id': _selectedInternalCategoryId,
+        if (sourceWalletContext is Map)
+          'source_wallet_context': Map<String, dynamic>.from(
+            sourceWalletContext,
+          ),
+        if (sourceWalletDetails is Map)
+          'source_wallet_details': Map<String, dynamic>.from(
+            sourceWalletDetails,
+          ),
         if (note.isNotEmpty) 'notes': note,
       },
       'recipient_customer_id': preview.recipientCustomerId,
@@ -4796,6 +4806,8 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
       final walletId = _transferSourceWalletId(selected);
       final walletType = _internalSubWalletType(selected);
       final goalId = _goalIdFromSourceWallet(selected);
+      final walletName = _walletName(selected);
+      final selectedId = _walletId(selected);
       return {
         'walletType': walletType,
         'sourceWalletId': walletId,
@@ -4804,8 +4816,27 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
         'source_wallet': {
           'selection': walletType,
           if (walletId.isNotEmpty) 'wallet_id': walletId,
+          if (selectedId.isNotEmpty) 'selected_wallet_id': selectedId,
+          if (walletName.isNotEmpty) 'wallet_name': walletName,
           'wallet_type': walletType,
           if (goalId.isNotEmpty) 'goal_id': goalId,
+        },
+        'source_wallet_details': {
+          'selection': walletType,
+          if (walletId.isNotEmpty) 'wallet_id': walletId,
+          if (selectedId.isNotEmpty) 'selected_wallet_id': selectedId,
+          if (walletName.isNotEmpty) 'wallet_name': walletName,
+          'wallet_type': walletType,
+          if (goalId.isNotEmpty) 'goal_id': goalId,
+        },
+        'source_wallet_context': {
+          'selection': walletType,
+          if (walletId.isNotEmpty) 'wallet_id': walletId,
+          if (selectedId.isNotEmpty) 'selected_wallet_id': selectedId,
+          if (walletName.isNotEmpty) 'wallet_name': walletName,
+          'wallet_type': walletType,
+          if (goalId.isNotEmpty) 'goal_id': goalId,
+          'auto_resolve': walletId.isEmpty,
         },
         ..._buildSourceTopLevelFields(walletId: walletId),
       };

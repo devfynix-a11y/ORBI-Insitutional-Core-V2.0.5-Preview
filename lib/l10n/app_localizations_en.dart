@@ -2081,7 +2081,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sendMoneyNoGoalWalletsMessage =>
-      'No Goal/Budget source wallets provided by backend. Transfer will use Operating Wallet automatically.';
+      'No goal or budget source wallet is available right now. This transfer will use your Operating Wallet automatically.';
 
   @override
   String get sendMoneyOperatingWalletAutoTitle => 'Operating Wallet (Auto)';

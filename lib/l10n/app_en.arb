@@ -1463,7 +1463,7 @@
   "@sendMoneyPreparingPreviewLabel": {},
   "sendMoneyContinueTransferLabel": "Continue Transfer",
   "@sendMoneyContinueTransferLabel": {},
-  "sendMoneyNoGoalWalletsMessage": "No Goal/Budget source wallets provided by backend. Transfer will use Operating Wallet automatically.",
+  "sendMoneyNoGoalWalletsMessage": "No goal or budget source wallet is available right now. This transfer will use your Operating Wallet automatically.",
   "@sendMoneyNoGoalWalletsMessage": {},
   "sendMoneyOperatingWalletAutoTitle": "Operating Wallet (Auto)",
   "@sendMoneyOperatingWalletAutoTitle": {},

@@ -2097,7 +2097,7 @@ class AppLocalizationsSw extends AppLocalizations {
 
   @override
   String get sendMoneyNoGoalWalletsMessage =>
-      'Hakuna pochi za Goal/Budget zilizotolewa na backend. Uhamisho utatumia Operating Wallet kiotomatiki.';
+      'Hakuna pochi ya lengo au bajeti inayopatikana kwa sasa. Uhamisho huu utatumia Operating Wallet kiotomatiki.';
 
   @override
   String get sendMoneyOperatingWalletAutoTitle => 'Operating Wallet (Auto)';

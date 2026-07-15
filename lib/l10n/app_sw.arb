@@ -1473,7 +1473,7 @@
   "@sendMoneyPreparingPreviewLabel": {},
   "sendMoneyContinueTransferLabel": "Endelea na Uhamisho",
   "@sendMoneyContinueTransferLabel": {},
-  "sendMoneyNoGoalWalletsMessage": "Hakuna pochi za Goal/Budget zilizotolewa na backend. Uhamisho utatumia Operating Wallet kiotomatiki.",
+  "sendMoneyNoGoalWalletsMessage": "Hakuna pochi ya lengo au bajeti inayopatikana kwa sasa. Uhamisho huu utatumia Operating Wallet kiotomatiki.",
   "@sendMoneyNoGoalWalletsMessage": {},
   "sendMoneyOperatingWalletAutoTitle": "Operating Wallet (Auto)",
   "@sendMoneyOperatingWalletAutoTitle": {},
