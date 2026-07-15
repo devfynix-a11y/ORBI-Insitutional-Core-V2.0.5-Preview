@@ -860,6 +860,8 @@ class DashboardController extends ChangeNotifier {
       title: activity.title,
       amount: activity.amount,
       isCredit: activity.isCredit,
+      movementFamily: activity.movementFamily,
+      movementCode: activity.movementCode,
       status: activity.status,
       time: activity.timestamp,
       provider: activity.provider,
@@ -1158,7 +1160,8 @@ class TransactionActivity {
     required this.subtitle,
     required this.amount,
     required this.isCredit,
-    required this.isInternalTransfer,
+    required this.movementFamily,
+    required this.movementCode,
     required this.timestamp,
     required this.status,
     required this.type,
@@ -1172,7 +1175,8 @@ class TransactionActivity {
   final String subtitle;
   final double amount;
   final bool isCredit;
-  final bool isInternalTransfer;
+  final String? movementFamily;
+  final String? movementCode;
   final DateTime timestamp;
   final String status;
   final String type;
@@ -1230,11 +1234,24 @@ class TransactionActivity {
       json['method'],
       json['provider_channel'],
     ]);
-    final isInternal =
-        type.contains('internal') ||
-        type.contains('peer') ||
-        type.contains('p2p') ||
-        type.contains('user_transfer');
+    final metadata = json['metadata'] is Map
+        ? Map<dynamic, dynamic>.from(json['metadata'] as Map)
+        : const <dynamic, dynamic>{};
+    final movementClassification = json['movement_classification'] is Map
+        ? Map<dynamic, dynamic>.from(json['movement_classification'] as Map)
+        : metadata['movement_classification'] is Map
+        ? Map<dynamic, dynamic>.from(metadata['movement_classification'] as Map)
+        : const <dynamic, dynamic>{};
+    final movementFamily = _nullableUpperString([
+      json['movement_family'],
+      metadata['movement_family'],
+      movementClassification['movement_family'],
+    ]);
+    final movementCode = _nullableUpperString([
+      json['movement_code'],
+      metadata['movement_code'],
+      movementClassification['movement_code'],
+    ]);
     final isCredit =
         direction == 'in' ||
         direction == 'credit' ||
@@ -1247,9 +1264,7 @@ class TransactionActivity {
 
     return TransactionActivity(
       id: (json['id'] ?? json['transaction_id'] ?? '').toString(),
-      title: title.isEmpty
-          ? (isInternal ? 'ORBI Transfer' : 'Transaction')
-          : title,
+      title: title.isEmpty ? 'Transaction' : title,
       subtitle: _pickString([
         json['description'],
         json['narration'],
@@ -1258,7 +1273,8 @@ class TransactionActivity {
       ]),
       amount: amount.abs(),
       isCredit: isCredit,
-      isInternalTransfer: isInternal,
+      movementFamily: movementFamily,
+      movementCode: movementCode,
       timestamp: _dateFromDynamic(
         json['created_at'] ??
             json['createdAt'] ??
@@ -1272,6 +1288,14 @@ class TransactionActivity {
       icon: _iconForTransaction(type: type, isCredit: isCredit),
     );
   }
+}
+
+String? _nullableUpperString(List<dynamic> values) {
+  for (final value in values) {
+    final text = value?.toString().trim();
+    if (text != null && text.isNotEmpty) return text.toUpperCase();
+  }
+  return null;
 }
 
 double _numFromDynamic(dynamic value) {

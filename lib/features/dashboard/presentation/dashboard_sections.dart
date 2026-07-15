@@ -3289,8 +3289,25 @@ String _incomeTrendFilterLabel(_IncomeTrendFilter filter, bool sw) {
 }
 
 bool _isCountedIncome(TransactionActivity transaction) {
-  if (!transaction.isCredit || transaction.isInternalTransfer) return false;
+  if (!transaction.isCredit || !_isIncomeSpendingMovement(transaction.movementFamily)) {
+    return false;
+  }
   final status = transaction.status.trim().toLowerCase();
+  return !status.contains('failed') &&
+      !status.contains('cancel') &&
+      !status.contains('reversed') &&
+      !status.contains('declined') &&
+      !status.contains('pending');
+}
+
+bool _isIncomeSpendingMovement(String? movementFamily) {
+  final family = movementFamily?.trim().toUpperCase();
+  return family == 'INTERNAL_P2P' || family == 'EXTERNAL';
+}
+
+bool _isCountedHealthTrendItem(RecentActivityItem item) {
+  if (!_isIncomeSpendingMovement(item.movementFamily)) return false;
+  final status = item.status.trim().toLowerCase();
   return !status.contains('failed') &&
       !status.contains('cancel') &&
       !status.contains('reversed') &&
@@ -3505,6 +3522,7 @@ _TrendSeries _buildHealthTrendSeries(
       final income = List<double>.filled(7, 0);
       final expense = List<double>.filled(7, 0);
       for (final item in items) {
+        if (!_isCountedHealthTrendItem(item)) continue;
         final day = DateUtils.dateOnly(item.time);
         final diff = DateUtils.dateOnly(now).difference(day).inDays;
         if (diff < 0 || diff > 6) continue;
@@ -3527,6 +3545,7 @@ _TrendSeries _buildHealthTrendSeries(
       final weeklyIncome = List<double>.filled(5, 0);
       final weeklyExpense = List<double>.filled(5, 0);
       for (final item in items) {
+        if (!_isCountedHealthTrendItem(item)) continue;
         final ts = item.time;
         if (ts.year != now.year || ts.month != now.month) continue;
         final bucket = math.min(4, ((ts.day - 1) / 7).floor());
@@ -3548,6 +3567,7 @@ _TrendSeries _buildHealthTrendSeries(
       final monthlyIncome = List<double>.filled(12, 0);
       final monthlyExpense = List<double>.filled(12, 0);
       for (final item in items) {
+        if (!_isCountedHealthTrendItem(item)) continue;
         final ts = item.time;
         if (ts.year != now.year) continue;
         final index = ts.month - 1;

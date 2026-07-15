@@ -234,6 +234,8 @@ class RecentActivityItem {
     required this.title,
     required this.amount,
     required this.isCredit,
+    required this.movementFamily,
+    required this.movementCode,
     required this.status,
     required this.time,
     required this.provider,
@@ -244,6 +246,8 @@ class RecentActivityItem {
   final String title;
   final double amount;
   final bool isCredit;
+  final String? movementFamily;
+  final String? movementCode;
   final String status;
   final DateTime time;
   final String provider;
