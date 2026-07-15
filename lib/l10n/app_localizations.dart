@@ -3803,7 +3803,7 @@ abstract class AppLocalizations {
   /// No description provided for @sendMoneyNoGoalWalletsMessage.
   ///
   /// In en, this message translates to:
-  /// **'No Goal/Budget source wallets provided by backend. Transfer will use Operating Wallet automatically.'**
+  /// **'No goal or budget source wallet is available right now. This transfer will use your Operating Wallet automatically.'**
   String get sendMoneyNoGoalWalletsMessage;
 
   /// No description provided for @sendMoneyOperatingWalletAutoTitle.
