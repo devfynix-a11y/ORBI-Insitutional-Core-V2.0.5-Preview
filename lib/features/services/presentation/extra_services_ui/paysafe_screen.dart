@@ -1031,6 +1031,7 @@ class _PaySafeCreateSheetState extends State<_PaySafeCreateSheet> {
 
   @override
   void dispose() {
+    _lookupGeneration++;
     _lookupDebounce?.cancel();
     _recipientController.dispose();
     _amountController.dispose();
@@ -1082,7 +1083,7 @@ class _PaySafeCreateSheetState extends State<_PaySafeCreateSheet> {
   Future<void> _lookupRecipient(String query, int generation) async {
     try {
       final users = await _profileService.lookupUsers(query);
-      if (!_isLookupCurrent(query, generation)) return;
+      if (!mounted || !_isLookupCurrent(query, generation)) return;
       final match = users.isEmpty ? null : users.first;
       if (match == null) {
         setState(() {
@@ -1166,7 +1167,7 @@ class _PaySafeCreateSheetState extends State<_PaySafeCreateSheet> {
         );
       });
     } catch (error) {
-      if (!_isLookupCurrent(query, generation)) return;
+      if (!mounted || !_isLookupCurrent(query, generation)) return;
       setState(() {
         _lookupLoading = false;
         _recipientPreview = null;
@@ -1183,6 +1184,7 @@ class _PaySafeCreateSheetState extends State<_PaySafeCreateSheet> {
   }
 
   bool _isLookupCurrent(String query, int generation) =>
+      mounted &&
       generation == _lookupGeneration &&
       _normalizeLookupQuery(_recipientController.text.trim()) == query;
 

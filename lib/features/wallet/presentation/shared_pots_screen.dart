@@ -47,6 +47,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
   }
 
   Future<void> _load() async {
+    if (!mounted) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -1852,7 +1853,10 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
         message: _busyMessage,
         statusMessage: _statusMessage,
         statusTone: _statusMessage == null ? null : _statusTone,
-        onDismissStatus: () => setState(() => _statusMessage = null),
+        onDismissStatus: () {
+          if (!mounted) return;
+          setState(() => _statusMessage = null);
+        },
         child: OrbiBackground(
           child: RefreshIndicator(
             onRefresh: _load,
