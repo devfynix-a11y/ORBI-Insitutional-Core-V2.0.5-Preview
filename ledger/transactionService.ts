@@ -109,6 +109,25 @@ export class TransactionService {
         return /(operating|main|internal vault|default|dilpesa|spendable|available)/.test(text);
     }
 
+    private async resolveLedgerWalletOwners(walletIds: string[]): Promise<Map<string, string>> {
+        const sb = getAdminSupabase() || getSupabase();
+        const ownerByWalletId = new Map<string, string>();
+        const ids = Array.from(new Set((walletIds || []).map((id) => String(id || '').trim()).filter(Boolean)));
+        if (!sb || ids.length === 0) return ownerByWalletId;
+
+        const [wallets, vaults, goals] = await Promise.all([
+            sb.from('wallets').select('id,user_id').in('id', ids),
+            sb.from('platform_vaults').select('id,user_id').in('id', ids),
+            sb.from('goals').select('id,user_id').in('id', ids),
+        ]);
+        [...(wallets.data || []), ...(vaults.data || []), ...(goals.data || [])].forEach((row: any) => {
+            const walletId = String(row?.id || '').trim();
+            const ownerId = String(row?.user_id || '').trim();
+            if (walletId && ownerId) ownerByWalletId.set(walletId, ownerId);
+        });
+        return ownerByWalletId;
+    }
+
     private pickGeneralBalanceLeg(
         legs: any[],
         userId: string,
@@ -551,6 +570,7 @@ export class TransactionService {
 
         // 2. Prepare legs for SQL-authoritative posting.
         const walletIds = Array.from(new Set((ledgerEntries || []).map(l => l.walletId).filter((id): id is string => !!id)));
+        const ownerByWalletId = await this.resolveLedgerWalletOwners(walletIds);
         const preparedLegs = [];
         const internalWalletIds = new Set<string>();
         if (walletIds.length > 0) {
@@ -577,6 +597,7 @@ export class TransactionService {
 
             preparedLegs.push({
                 wallet_id: walletId,
+                user_id: leg.userId || ownerByWalletId.get(String(walletId)) || t.user_id || null,
                 entry_type: leg.type,
                 amount: eAmt,
                 amount_plain: leg.amount,
@@ -668,6 +689,7 @@ export class TransactionService {
         const preparedLegs = [];
         const internalWalletIds = new Set<string>();
         const walletIds = Array.from(new Set((ledgerEntries || []).map(l => l.walletId).filter((id): id is string => !!id)));
+        const ownerByWalletId = await this.resolveLedgerWalletOwners(walletIds);
         if (walletIds.length > 0) {
             const [wallets, vaults, goals] = await Promise.all([
                 sb.from('wallets').select('id').in('id', walletIds),
@@ -692,6 +714,7 @@ export class TransactionService {
             preparedLegs.push({
                 transaction_id: txId,
                 wallet_id: walletId,
+                user_id: leg.userId || ownerByWalletId.get(String(walletId)) || null,
                 entry_type: leg.type,
                 amount: eAmt,
                 amount_plain: leg.amount,

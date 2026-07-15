@@ -472,6 +472,7 @@ export type AuditEventType = 'SECURITY' | 'IDENTITY' | 'ADMIN' | 'FINANCIAL' | '
 export interface LedgerEntry {
     transactionId: string;
     walletId: string | null;
+    userId?: string | null;
     type: 'CREDIT' | 'DEBIT';
     amount: number;
     currency: string;

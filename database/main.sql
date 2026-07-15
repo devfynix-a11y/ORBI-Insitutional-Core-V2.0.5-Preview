@@ -752,6 +752,55 @@ BEGIN
     END IF;
 END $$;
 
+-- Ledger audit owner guard:
+-- financial_ledger.user_id must represent the owner of wallet_id. The actor
+-- remains on transactions.user_id and audit_trail. This prevents a sender's
+-- ID from appearing on recipient-owned ledger legs in audit/report views.
+CREATE OR REPLACE FUNCTION public.resolve_financial_ledger_wallet_owner(
+    p_wallet_id UUID,
+    p_fallback_user_id UUID DEFAULT NULL
+)
+RETURNS UUID AS $$
+DECLARE
+    v_owner UUID;
+BEGIN
+    IF p_wallet_id IS NULL THEN
+        RETURN p_fallback_user_id;
+    END IF;
+
+    SELECT COALESCE(w.user_id, pv.user_id, g.user_id, p_fallback_user_id)
+      INTO v_owner
+      FROM (SELECT p_wallet_id AS id) x
+      LEFT JOIN public.wallets w ON w.id = x.id
+      LEFT JOIN public.platform_vaults pv ON pv.id = x.id
+      LEFT JOIN public.goals g ON g.id = x.id;
+
+    RETURN COALESCE(v_owner, p_fallback_user_id);
+END;
+$$ LANGUAGE plpgsql STABLE SET search_path = public;
+
+COMMENT ON FUNCTION public.resolve_financial_ledger_wallet_owner(UUID, UUID)
+IS 'Resolves the owner of a financial ledger wallet/vault/goal. Used for audit ownership only; balances remain wallet_id based.';
+
+CREATE OR REPLACE FUNCTION public.set_financial_ledger_wallet_owner()
+RETURNS trigger AS $$
+BEGIN
+    NEW.user_id := public.resolve_financial_ledger_wallet_owner(NEW.wallet_id, NEW.user_id);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SET search_path = public;
+
+DROP TRIGGER IF EXISTS trg_financial_ledger_wallet_owner ON public.financial_ledger;
+CREATE TRIGGER trg_financial_ledger_wallet_owner
+BEFORE INSERT OR UPDATE OF wallet_id, user_id ON public.financial_ledger
+FOR EACH ROW
+EXECUTE FUNCTION public.set_financial_ledger_wallet_owner();
+
+UPDATE public.financial_ledger fl
+   SET user_id = public.resolve_financial_ledger_wallet_owner(fl.wallet_id, fl.user_id)
+ WHERE fl.wallet_id IS NOT NULL
+   AND fl.user_id IS DISTINCT FROM public.resolve_financial_ledger_wallet_owner(fl.wallet_id, fl.user_id);
+
 
 CREATE TABLE IF NOT EXISTS public.ledger_append_markers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -3619,6 +3668,7 @@ DECLARE
     v_balance_map JSONB := '{}'::jsonb;
     v_entity_type_map JSONB := '{}'::jsonb;
     v_effective_reference_id TEXT;
+    v_leg_user_id UUID;
 BEGIN
     IF p_legs IS NULL OR jsonb_typeof(p_legs) <> 'array' OR jsonb_array_length(p_legs) = 0 THEN
         RAISE EXCEPTION 'LEDGER_LEGS_REQUIRED: post_transaction_v2 requires at least one ledger leg';
@@ -3837,7 +3887,7 @@ BEGIN
         ) VALUES (
             gen_random_uuid(),
             p_tx_id,
-            p_user_id,
+            COALESCE(NULLIF(leg->>'user_id', '')::UUID, public.resolve_financial_ledger_wallet_owner(v_leg_wallet_id, p_user_id)),
             v_leg_wallet_id,
             UPPER(leg->>'entry_type'),
             leg->>'amount',
@@ -3948,6 +3998,7 @@ DECLARE
     v_balance_map JSONB := '{}'::jsonb;
     v_entity_type_map JSONB := '{}'::jsonb;
     v_tx_user_id UUID;
+    v_leg_user_id UUID;
 BEGIN
     IF p_legs IS NULL OR jsonb_typeof(p_legs) <> 'array' OR jsonb_array_length(p_legs) = 0 THEN
         RAISE EXCEPTION 'LEDGER_LEGS_REQUIRED: append_ledger_entries_v1 requires at least one ledger leg';
@@ -4113,6 +4164,7 @@ BEGIN
         IF v_leg_amount <= 0 THEN
             RAISE EXCEPTION 'LEG_AMOUNT_INVALID: Leg for % must have a positive amount', v_leg_wallet_id;
         END IF;
+        v_leg_user_id := COALESCE(NULLIF(leg->>'user_id', '')::UUID, public.resolve_financial_ledger_wallet_owner(v_leg_wallet_id, v_tx_user_id));
 
         v_current_balance := COALESCE((v_balance_map->>v_leg_wallet_id::TEXT)::NUMERIC, 0);
 
@@ -4143,7 +4195,7 @@ BEGIN
         ) VALUES (
             gen_random_uuid(),
             p_tx_id,
-            v_tx_user_id,
+            v_leg_user_id,
             v_leg_wallet_id,
             UPPER(leg->>'entry_type'),
             leg->>'amount',
