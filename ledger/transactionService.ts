@@ -132,6 +132,40 @@ export class TransactionService {
         return operatingLegs.sort(this.sortLedgerLegsNewestFirst)[0] || null;
     }
 
+    private pickSourceLeg(legs: any[], transaction: any, walletMap: Record<string, any>, userId: string): any {
+        const debitLegs = (legs || []).filter((leg: any) =>
+            String(leg?.entry_side || leg?.entry_type || '').toUpperCase().includes('DEBIT')
+        );
+        const transactionSourceWalletId = String(transaction?.walletId || transaction?.wallet_id || '').trim();
+        if (transactionSourceWalletId) {
+            const exact = debitLegs.find((leg: any) => String(leg?.wallet_id || '') === transactionSourceWalletId);
+            if (exact) return exact;
+        }
+        return debitLegs.find((leg: any) =>
+            String(leg?.user_id || '') === String(userId) &&
+            this.isOperatingWalletRecord(walletMap[String(leg?.wallet_id || '')])
+        ) || debitLegs[0];
+    }
+
+    private pickDestinationLeg(legs: any[], transaction: any, walletMap: Record<string, any>, userId: string): any {
+        const creditLegs = (legs || []).filter((leg: any) =>
+            String(leg?.entry_side || leg?.entry_type || '').toUpperCase().includes('CREDIT')
+        );
+        const transactionTargetWalletId = String(transaction?.toWalletId || transaction?.to_wallet_id || '').trim();
+        if (transactionTargetWalletId) {
+            const exact = creditLegs.find((leg: any) => String(leg?.wallet_id || '') === transactionTargetWalletId);
+            if (exact) return exact;
+        }
+        return creditLegs.find((leg: any) => {
+            const wallet = walletMap[String(leg?.wallet_id || '')];
+            return String(wallet?.user_id || leg?.user_id || '') !== String(userId) &&
+                this.isOperatingWalletRecord(wallet);
+        }) || creditLegs.find((leg: any) => {
+            const wallet = walletMap[String(leg?.wallet_id || '')];
+            return !String(wallet?.vault_role || wallet?.name || '').toLowerCase().includes('paysafe');
+        }) || creditLegs[0];
+    }
+
     private preferredGeneralBalanceSide(transaction?: any): 'CREDIT' | 'DEBIT' | null {
         const text = [
             transaction?.type,
@@ -936,6 +970,11 @@ export class TransactionService {
                 if (mv.source_wallet_id) allWalletIds.add(String(mv.source_wallet_id));
                 if (mv.target_wallet_id) allWalletIds.add(String(mv.target_wallet_id));
             });
+            const sharedPotIds = Array.from(new Set(
+                translated
+                    .map((tx: any) => String(tx?.metadata?.shared_pot_id || '').trim())
+                    .filter(Boolean)
+            ));
 
             const walletIdList = Array.from(allWalletIds);
             const { data: walletNames } = walletIdList.length
@@ -960,6 +999,11 @@ export class TransactionService {
                 : { data: [] as any[] };
             const userMap: Record<string, any> = {};
             (userDetails || []).forEach(u => userMap[u.id] = u);
+            const { data: sharedPots } = sharedPotIds.length
+                ? await sb.from('shared_pots').select('id,name').in('id', sharedPotIds)
+                : { data: [] as any[] };
+            const sharedPotMap: Record<string, any> = {};
+            (sharedPots || []).forEach((pot: any) => sharedPotMap[String(pot.id)] = pot);
 
             const movementItems = (movementRows || []).map((mv: any) => {
                 const direction = String(mv.direction || '').toUpperCase();
@@ -1016,8 +1060,8 @@ export class TransactionService {
             // 4. MAP TO TWO-SIDED VIEW
             const ledgerItems = translated.map((tx: any) => {
                 const txLegs = legsByTransaction[String(tx.id || '')] || [];
-                const debitLeg = txLegs.find((leg: any) => String(leg.entry_side || leg.entry_type || '').toUpperCase().includes('DEBIT'));
-                const creditLeg = txLegs.find((leg: any) => String(leg.entry_side || leg.entry_type || '').toUpperCase().includes('CREDIT'));
+                const debitLeg = this.pickSourceLeg(txLegs, tx, walletMap, userId);
+                const creditLeg = this.pickDestinationLeg(txLegs, tx, walletMap, userId);
                 const isSender = tx.user_id === userId;
                 const sourceWallet = walletMap[String((debitLeg?.wallet_id || tx.walletId || ''))];
                 const targetWallet = walletMap[String((creditLeg?.wallet_id || tx.toWalletId || ''))];
@@ -1046,12 +1090,22 @@ export class TransactionService {
                 
                 const sourceWalletName = this.walletDisplayName(sourceWallet, tx.sourceWalletName || 'Orbi Vault') || 'Orbi Vault';
                 const targetWalletName = this.walletDisplayName(targetWallet, tx.targetWalletName || 'External Destination') || 'External Destination';
-                const senderName = this.partyDisplayName(senderUser, sourceWallet, sourceWalletName);
-                const receiverName = this.partyDisplayName(
+                let senderName = this.partyDisplayName(senderUser, sourceWallet, sourceWalletName);
+                let receiverName = this.firstDisplayText([
+                    tx.metadata?.recipient_snapshot?.name,
+                    tx.metadata?.recipient_name,
+                    tx.recipient_name,
+                ]) || this.partyDisplayName(
                     receiverUser,
                     targetWallet,
-                    tx.metadata?.recipient_snapshot?.name || targetWalletName,
+                    targetWalletName,
                 );
+                const sharedPot = sharedPotMap[String(tx?.metadata?.shared_pot_id || '')];
+                const sharedPotLabel = sharedPot?.name ? `Fungu: ${sharedPot.name}` : undefined;
+                if (sharedPotLabel) {
+                    if (direction === 'DEBIT') receiverName = sharedPotLabel;
+                    if (direction === 'CREDIT') senderName = sharedPotLabel;
+                }
                 const balanceAfter = balanceLeg?.balance_after ?? tx.balance_after ?? tx.balanceAfter ?? null;
 
                 return {
@@ -1188,8 +1242,6 @@ export class TransactionService {
 
         const [transaction] = await this.decryptTransactionRows([row]);
         if (!transaction) return null;
-        const debitLeg = ledgerRows.find((leg: any) => String(leg.entry_side || leg.entry_type || '').toUpperCase().includes('DEBIT'));
-        const creditLeg = ledgerRows.find((leg: any) => String(leg.entry_side || leg.entry_type || '').toUpperCase().includes('CREDIT'));
         const walletIdList = Array.from(new Set(
             ledgerRows
                 .map((leg: any) => String(leg.wallet_id || '').trim())
@@ -1212,6 +1264,8 @@ export class TransactionService {
             walletMap[String(wallet.id)] = wallet;
             if (wallet.user_id) userIds.add(String(wallet.user_id));
         });
+        const debitLeg = this.pickSourceLeg(ledgerRows, transaction, walletMap, userId);
+        const creditLeg = this.pickDestinationLeg(ledgerRows, transaction, walletMap, userId);
         ledgerRows.forEach((leg: any) => {
             if (leg.user_id) userIds.add(String(leg.user_id));
         });
@@ -1230,14 +1284,26 @@ export class TransactionService {
         const receiverUser = userMap[String(receiverUserId || '')];
         const sourceWalletName = this.walletDisplayName(sourceWallet, transaction.sourceWalletName || 'Orbi Vault') || 'Orbi Vault';
         const targetWalletName = this.walletDisplayName(targetWallet, transaction.targetWalletName || 'External Destination') || 'External Destination';
-        const senderName = this.partyDisplayName(senderUser, sourceWallet, sourceWalletName);
-        const receiverName = this.partyDisplayName(
+        let senderName = this.partyDisplayName(senderUser, sourceWallet, sourceWalletName);
+        let receiverName = this.firstDisplayText([
+            transaction.metadata?.recipient_snapshot?.name,
+            transaction.metadata?.recipient_name,
+            transaction.recipient_name,
+        ]) || this.partyDisplayName(
             receiverUser,
             targetWallet,
-            transaction.metadata?.recipient_snapshot?.name || targetWalletName,
+            targetWalletName,
         );
         const balanceLeg = this.pickGeneralBalanceLeg(ledgerRows, userId, ownedWalletIds, walletMap, transaction);
         const balanceAfter = balanceLeg?.balance_after ?? transaction.balance_after ?? transaction.balanceAfter ?? null;
+        const sharedPotId = String(transaction?.metadata?.shared_pot_id || '').trim();
+        if (sharedPotId) {
+            const { data: sharedPot } = await sb.from('shared_pots').select('name').eq('id', sharedPotId).maybeSingle();
+            const sharedPotLabel = sharedPot?.name ? `Fungu: ${sharedPot.name}` : undefined;
+            const balanceSide = String(balanceLeg?.entry_side || balanceLeg?.entry_type || '').toUpperCase();
+            if (sharedPotLabel && balanceSide.includes('DEBIT')) receiverName = sharedPotLabel;
+            if (sharedPotLabel && balanceSide.includes('CREDIT')) senderName = sharedPotLabel;
+        }
 
         return {
             ...transaction,

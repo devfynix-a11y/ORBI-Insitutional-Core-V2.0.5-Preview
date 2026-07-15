@@ -489,6 +489,50 @@ const pickGeneralReportBalanceLeg = (
   return operatingLegs.sort(sortLedgerLegsNewestFirst)[0] || null;
 };
 
+const pickReportSourceLeg = (
+  legs: any[],
+  transaction: any,
+  walletById: Map<string, any>,
+  userId: string,
+): any => {
+  const debitLegs = (legs || []).filter((leg: any) =>
+    String(leg?.entry_side || leg?.entry_type || '').toUpperCase().includes('DEBIT'),
+  );
+  const sourceWalletId = String(transaction?.walletId || transaction?.wallet_id || transaction?.source_wallet_id || '').trim();
+  if (sourceWalletId) {
+    const exact = debitLegs.find((leg: any) => String(leg?.wallet_id || '') === sourceWalletId);
+    if (exact) return exact;
+  }
+  return debitLegs.find((leg: any) =>
+    String(leg?.user_id || '') === String(userId) &&
+    isOperatingWalletRecord(walletById.get(String(leg?.wallet_id || ''))),
+  ) || debitLegs[0];
+};
+
+const pickReportDestinationLeg = (
+  legs: any[],
+  transaction: any,
+  walletById: Map<string, any>,
+  userId: string,
+): any => {
+  const creditLegs = (legs || []).filter((leg: any) =>
+    String(leg?.entry_side || leg?.entry_type || '').toUpperCase().includes('CREDIT'),
+  );
+  const destinationWalletId = String(transaction?.toWalletId || transaction?.to_wallet_id || transaction?.destination_wallet_id || '').trim();
+  if (destinationWalletId) {
+    const exact = creditLegs.find((leg: any) => String(leg?.wallet_id || '') === destinationWalletId);
+    if (exact) return exact;
+  }
+  return creditLegs.find((leg: any) => {
+    const wallet = walletById.get(String(leg?.wallet_id || ''));
+    return String(wallet?.user_id || leg?.user_id || '') !== String(userId) &&
+      isOperatingWalletRecord(wallet);
+  }) || creditLegs.find((leg: any) => {
+    const wallet = walletById.get(String(leg?.wallet_id || ''));
+    return !String(wallet?.vault_role || wallet?.name || '').toLowerCase().includes('paysafe');
+  }) || creditLegs[0];
+};
+
 const preferredGeneralReportBalanceSide = (transaction?: any): 'CREDIT' | 'DEBIT' | null => {
   const text = [
     transaction?.type,
@@ -590,6 +634,11 @@ const enrichTransactionsForReport = async (
       ...ledgerRows.map((row: any) => String(row?.user_id || '').trim()),
       ...Array.from(walletById.values()).map((wallet: any) => String(wallet?.user_id || '').trim()),
     ].filter(Boolean)));
+    const sharedPotIds = Array.from(new Set(
+      transactions
+        .map((transaction: any) => String(transaction?.metadata?.shared_pot_id || '').trim())
+        .filter(Boolean),
+    ));
     const userById = new Map<string, any>();
     if (userIds.length) {
       const { data: users, error: userError } = await sb
@@ -602,6 +651,18 @@ const enrichTransactionsForReport = async (
         console.warn('[Transactions Report] user enrichment skipped:', userError.message);
       }
     }
+    const sharedPotById = new Map<string, any>();
+    if (sharedPotIds.length) {
+      const { data: sharedPots, error: sharedPotError } = await sb
+        .from('shared_pots')
+        .select('id,name')
+        .in('id', sharedPotIds);
+      if (!sharedPotError && Array.isArray(sharedPots)) {
+        sharedPots.forEach((pot: any) => sharedPotById.set(String(pot.id), pot));
+      } else if (sharedPotError) {
+        console.warn('[Transactions Report] shared pot enrichment skipped:', sharedPotError.message);
+      }
+    }
 
     return transactions.map((transaction: any) => {
       const txId = transactionIdentity(transaction);
@@ -610,8 +671,8 @@ const enrichTransactionsForReport = async (
 
       const userLeg = legs.find((leg: any) => String(leg?.user_id || '') === String(userId)) || legs[0];
       const balanceLeg = pickGeneralReportBalanceLeg(legs, userId, walletById, transaction);
-      const debitLeg = legs.find((leg: any) => String(leg?.entry_side || leg?.entry_type || '').toUpperCase().includes('DEBIT'));
-      const creditLeg = legs.find((leg: any) => String(leg?.entry_side || leg?.entry_type || '').toUpperCase().includes('CREDIT'));
+      const debitLeg = pickReportSourceLeg(legs, transaction, walletById, userId);
+      const creditLeg = pickReportDestinationLeg(legs, transaction, walletById, userId);
       const sourceWallet = walletById.get(String((debitLeg || userLeg)?.wallet_id || ''));
       const destinationWallet = walletById.get(String((creditLeg || userLeg)?.wallet_id || ''));
       const sourceUser = userById.get(String(debitLeg?.user_id || sourceWallet?.user_id || ''));
@@ -641,20 +702,31 @@ const enrichTransactionsForReport = async (
         ]),
       );
       const sourceDisplayName = firstText([
-        sourceWalletName,
         transaction?.source_display_name,
         transaction?.from_display_name,
         sourceUser?.full_name,
+        sourceWalletName,
         'Orbi',
       ]);
       const destinationDisplayName = firstText([
-        destinationWalletName,
         transaction?.metadata?.recipient_snapshot?.name,
+        transaction?.metadata?.recipient_name,
+        transaction?.recipient_name,
         transaction?.destination_display_name,
         transaction?.to_display_name,
         destinationUser?.full_name,
+        destinationWalletName,
         'External Destination',
       ]);
+      const sharedPot = sharedPotById.get(String(transaction?.metadata?.shared_pot_id || ''));
+      const sharedPotLabel = sharedPot?.name ? `Fungu: ${sharedPot.name}` : undefined;
+      const balanceSide = String(balanceLeg?.entry_side || balanceLeg?.entry_type || '').toUpperCase();
+      const resolvedSourceDisplayName = sharedPotLabel && balanceSide.includes('CREDIT')
+        ? sharedPotLabel
+        : sourceDisplayName;
+      const resolvedDestinationDisplayName = sharedPotLabel && balanceSide.includes('DEBIT')
+        ? sharedPotLabel
+        : destinationDisplayName;
       const balanceAfter = firstText([
         balanceLeg?.balance_after,
         transaction?.balance_after,
@@ -666,10 +738,10 @@ const enrichTransactionsForReport = async (
         ledger_entry_id: balanceLeg?.id || userLeg?.id || transaction?.ledger_entry_id,
         balance_after: balanceAfter,
         running_balance: balanceAfter,
-        from_display_name: sourceDisplayName,
-        to_display_name: destinationDisplayName,
-        source_display_name: sourceDisplayName,
-        destination_display_name: destinationDisplayName,
+        from_display_name: resolvedSourceDisplayName,
+        to_display_name: resolvedDestinationDisplayName,
+        source_display_name: resolvedSourceDisplayName,
+        destination_display_name: resolvedDestinationDisplayName,
         source_wallet_id: (debitLeg || userLeg)?.wallet_id || transaction?.source_wallet_id,
         destination_wallet_id: (creditLeg || userLeg)?.wallet_id || transaction?.destination_wallet_id,
         source_wallet_name: sourceWalletName,
