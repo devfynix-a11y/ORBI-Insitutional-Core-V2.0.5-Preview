@@ -670,16 +670,25 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
 
   v1.post('/wealth/shared-pots/:id/invitations', authenticate as any, async (req, res) => {
     const session = (req as any).session;
+    const failInvite = (status: number, error: string, extra: Record<string, any> = {}) => {
+      console.warn('[Wealth][SharedPot] Invitation failed', {
+        potId: req.params.id,
+        actorId: session?.sub || null,
+        error,
+        ...extra,
+      });
+      return res.status(status).json({ success: false, error });
+    };
     try {
       const payload = SharedPotMemberAddSchema.parse(req.body);
       const sb = getAdminSupabase() || getSupabase();
-      if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+      if (!sb) return failInvite(503, 'DB_OFFLINE');
       const { pot, membership } = await resolveSharedPotMembership(sb, req.params.id, session.sub);
       if (!canManageSharedPot(String(membership.role || ''))) {
-        return res.status(403).json({ success: false, error: 'SHARED_POT_ACCESS_DENIED' });
+        return failInvite(403, 'SHARED_POT_ACCESS_DENIED', { role: membership.role || null });
       }
       if (normalizeUpper(pot.access_model, 'INVITE') === 'PRIVATE') {
-        return res.status(400).json({ success: false, error: 'SHARED_POT_PRIVATE_INVITES_DISABLED' });
+        return failInvite(400, 'SHARED_POT_PRIVATE_INVITES_DISABLED');
       }
       const verifiedInviteeUserId = String(
         payload.invitee_user_id ||
@@ -692,16 +701,19 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
         ? await resolveUserBySharedPotIdentifier(sb, verifiedInviteeUserId)
         : await resolveUserBySharedPotIdentifier(sb, payload.identifier);
       if (!memberUser?.id) {
-        return res.status(404).json({ success: false, error: 'USER_NOT_FOUND' });
+        return failInvite(404, 'USER_NOT_FOUND', {
+          hasVerifiedInviteeUserId: Boolean(verifiedInviteeUserId),
+          identifierLength: String(payload.identifier || '').length,
+        });
       }
       if (normalizeUpper(pot.access_model, 'INVITE') === 'ORG') {
         const inviteeOrg = await resolveActorOrganization(sb, String(memberUser.id));
         if (!pot.organization_id || String(inviteeOrg?.organization_id || '') !== String(pot.organization_id)) {
-          return res.status(403).json({ success: false, error: 'SHARED_POT_ORG_MEMBER_REQUIRED' });
+          return failInvite(403, 'SHARED_POT_ORG_MEMBER_REQUIRED', { inviteeUserId: memberUser.id });
         }
       }
       if (String(memberUser.id) === String(pot.owner_user_id)) {
-        return res.status(400).json({ success: false, error: 'OWNER_ALREADY_MEMBER' });
+        return failInvite(400, 'OWNER_ALREADY_MEMBER', { inviteeUserId: memberUser.id });
       }
       const { data: existingMember, error: existingMemberError } = await sb
         .from('shared_pot_members')
@@ -710,10 +722,10 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
         .eq('user_id', memberUser.id)
         .maybeSingle();
       if (existingMemberError) {
-        return res.status(400).json({ success: false, error: existingMemberError.message });
+        return failInvite(400, existingMemberError.message, { phase: 'existing_member_lookup' });
       }
       if (existingMember) {
-        return res.status(400).json({ success: false, error: 'SHARED_POT_MEMBER_ALREADY_EXISTS' });
+        return failInvite(400, 'SHARED_POT_MEMBER_ALREADY_EXISTS', { inviteeUserId: memberUser.id });
       }
 
       const { data: pendingInvite, error: pendingInviteError } = await sb
@@ -726,10 +738,13 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
         .limit(1)
         .single();
       if (pendingInviteError && pendingInviteError.code !== 'PGRST116') {
-        return res.status(400).json({ success: false, error: pendingInviteError.message });
+        return failInvite(400, pendingInviteError.message, {
+          phase: 'pending_invite_lookup',
+          code: pendingInviteError.code || null,
+        });
       }
       if (pendingInvite) {
-        return res.status(400).json({ success: false, error: 'SHARED_POT_INVITE_ALREADY_PENDING' });
+        return failInvite(400, 'SHARED_POT_INVITE_ALREADY_PENDING', { inviteeUserId: memberUser.id });
       }
 
       const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -751,7 +766,7 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
         })
         .select('id,pot_id,inviter_user_id,invitee_user_id,invitee_identifier,role,status,message,responded_at,expires_at,metadata,created_at')
         .single();
-      if (error) return res.status(400).json({ success: false, error: error.message });
+      if (error) return failInvite(400, error.message, { phase: 'insert_invitation', code: error.code || null });
 
       try {
         await Messaging.dispatch(

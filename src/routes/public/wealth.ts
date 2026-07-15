@@ -114,7 +114,10 @@ const SharedPotMemberAddSchema = z.object({
     inviteeUserId: z.string().uuid().optional(),
     recipient_id: z.string().uuid().optional(),
     recipientId: z.string().uuid().optional(),
-    role: z.enum(['MANAGER', 'CONTRIBUTOR', 'VIEWER']).optional(),
+    role: z.preprocess(
+        (value) => typeof value === 'string' ? value.trim().toUpperCase() : value,
+        z.enum(['MANAGER', 'CONTRIBUTOR', 'VIEWER']).optional(),
+    ),
     message: z.string().max(240).optional(),
 });
 
@@ -149,7 +152,10 @@ const SharedBudgetMemberAddSchema = z.object({
     inviteeUserId: z.string().uuid().optional(),
     recipient_id: z.string().uuid().optional(),
     recipientId: z.string().uuid().optional(),
-    role: z.enum(['MANAGER', 'SPENDER', 'VIEWER']).optional(),
+    role: z.preprocess(
+        (value) => typeof value === 'string' ? value.trim().toUpperCase() : value,
+        z.enum(['MANAGER', 'SPENDER', 'VIEWER']).optional(),
+    ),
     member_limit: z.coerce.number().positive().optional(),
     message: z.string().max(240).optional(),
 });
