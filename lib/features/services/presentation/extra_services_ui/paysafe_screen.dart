@@ -93,6 +93,12 @@ class _PaySafeScreenState extends State<PaySafeScreen>
       success: _t('PaySafe created.', 'PaySafe imeundwa.'),
       action: () => _escrowService.createEscrow({
         'recipientCustomerId': result.recipientId,
+        if (result.recipientUserId.isNotEmpty)
+          'recipientUserId': result.recipientUserId,
+        if (result.recipientCustomerId.isNotEmpty)
+          'recipient_customer_id': result.recipientCustomerId,
+        if (result.recipientIdentifier.isNotEmpty)
+          'identifier': result.recipientIdentifier,
         'amount': result.amount,
         'description': result.description,
         'conditions': {
@@ -960,6 +966,9 @@ class _PaySafeDraft {
   const _PaySafeDraft({
     required this.recipientId,
     required this.recipientName,
+    required this.recipientUserId,
+    required this.recipientCustomerId,
+    required this.recipientIdentifier,
     required this.amount,
     required this.description,
     required this.terms,
@@ -968,6 +977,9 @@ class _PaySafeDraft {
 
   final String recipientId;
   final String recipientName;
+  final String recipientUserId;
+  final String recipientCustomerId;
+  final String recipientIdentifier;
   final double amount;
   final String description;
   final String terms;
@@ -979,12 +991,18 @@ class _PaySafeRecipientPreview {
     required this.recipientId,
     required this.name,
     required this.displayIdentifier,
+    required this.userId,
+    required this.customerId,
+    required this.identifier,
     this.avatarUrl,
   });
 
   final String recipientId;
   final String name;
   final String displayIdentifier;
+  final String userId;
+  final String customerId;
+  final String identifier;
   final String? avatarUrl;
 }
 
@@ -1085,6 +1103,28 @@ class _PaySafeCreateSheetState extends State<_PaySafeCreateSheet> {
         match['recipientId'],
         match['id'],
       ]);
+      final userId = _pickString([
+        match['id'],
+        match['user_id'],
+        match['userId'],
+        match['profile_id'],
+        match['profileId'],
+      ]);
+      final customerId = _pickString([
+        match['customer_id'],
+        match['customerId'],
+        match['recipient_customer_id'],
+        match['recipientCustomerId'],
+        match['orbi_id'],
+        match['orbiId'],
+      ]);
+      final phone = _pickString([
+        match['phone'],
+        match['phone_number'],
+        match['phoneNumber'],
+        match['msisdn'],
+      ]);
+      final email = _pickString([match['email']]);
       final name = _pickString([
         match['full_name'],
         match['fullName'],
@@ -1110,12 +1150,14 @@ class _PaySafeCreateSheetState extends State<_PaySafeCreateSheet> {
           recipientId: recipientId,
           name: name,
           displayIdentifier: _pickString([
-            match['customer_id'],
-            match['customerId'],
-            match['phone'],
-            match['email'],
+            customerId,
+            phone,
+            email,
             query,
           ]),
+          userId: userId,
+          customerId: customerId,
+          identifier: _pickString([customerId, phone, email, userId, query]),
           avatarUrl: _pickString([
             match['avatar_url'],
             match['avatarUrl'],
@@ -1362,6 +1404,9 @@ class _PaySafeCreateSheetState extends State<_PaySafeCreateSheet> {
                             _PaySafeDraft(
                               recipientId: recipient.recipientId,
                               recipientName: recipient.name,
+                              recipientUserId: recipient.userId,
+                              recipientCustomerId: recipient.customerId,
+                              recipientIdentifier: recipient.identifier,
                               amount: amount,
                               description: _descriptionController.text.trim(),
                               terms: _termsController.text.trim(),
