@@ -110,6 +110,10 @@ const SharedPotContributionSchema = z.object({
 
 const SharedPotMemberAddSchema = z.object({
     identifier: z.string().min(3),
+    invitee_user_id: z.string().uuid().optional(),
+    inviteeUserId: z.string().uuid().optional(),
+    recipient_id: z.string().uuid().optional(),
+    recipientId: z.string().uuid().optional(),
     role: z.enum(['MANAGER', 'CONTRIBUTOR', 'VIEWER']).optional(),
     message: z.string().max(240).optional(),
 });
@@ -141,6 +145,10 @@ const SharedBudgetUpdateSchema = SharedBudgetCreateSchema.partial().extend({
 
 const SharedBudgetMemberAddSchema = z.object({
     identifier: z.string().min(3),
+    invitee_user_id: z.string().uuid().optional(),
+    inviteeUserId: z.string().uuid().optional(),
+    recipient_id: z.string().uuid().optional(),
+    recipientId: z.string().uuid().optional(),
     role: z.enum(['MANAGER', 'SPENDER', 'VIEWER']).optional(),
     member_limit: z.coerce.number().positive().optional(),
     message: z.string().max(240).optional(),

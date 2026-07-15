@@ -681,7 +681,16 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
       if (normalizeUpper(pot.access_model, 'INVITE') === 'PRIVATE') {
         return res.status(400).json({ success: false, error: 'SHARED_POT_PRIVATE_INVITES_DISABLED' });
       }
-      const memberUser = await resolveUserBySharedPotIdentifier(sb, payload.identifier);
+      const verifiedInviteeUserId = String(
+        payload.invitee_user_id ||
+        payload.inviteeUserId ||
+        payload.recipient_id ||
+        payload.recipientId ||
+        '',
+      ).trim();
+      const memberUser = verifiedInviteeUserId
+        ? await resolveUserBySharedPotIdentifier(sb, verifiedInviteeUserId)
+        : await resolveUserBySharedPotIdentifier(sb, payload.identifier);
       if (!memberUser?.id) {
         return res.status(404).json({ success: false, error: 'USER_NOT_FOUND' });
       }

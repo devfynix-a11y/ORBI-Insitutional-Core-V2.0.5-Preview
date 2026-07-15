@@ -407,7 +407,16 @@ export const registerSharedBudgetRoutes = (v1: Router, deps: Deps) => {
       if (!canManageSharedBudget(String(membership.role || ''))) {
         return res.status(403).json({ success: false, error: 'SHARED_BUDGET_ACCESS_DENIED' });
       }
-      const memberUser = await resolveUserBySharedBudgetIdentifier(sb, payload.identifier);
+      const verifiedInviteeUserId = String(
+        payload.invitee_user_id ||
+        payload.inviteeUserId ||
+        payload.recipient_id ||
+        payload.recipientId ||
+        '',
+      ).trim();
+      const memberUser = verifiedInviteeUserId
+        ? await resolveUserBySharedBudgetIdentifier(sb, verifiedInviteeUserId)
+        : await resolveUserBySharedBudgetIdentifier(sb, payload.identifier);
       if (!memberUser?.id) {
         return res.status(404).json({ success: false, error: 'USER_NOT_FOUND' });
       }

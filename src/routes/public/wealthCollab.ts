@@ -1,3 +1,5 @@
+import { buildPostgrestOrFilter } from '../../../backend/security/postgrest.js';
+
 const normalizeWealthIdentifier = (value: string) => value.trim().toLowerCase();
 
 const normalizeWealthPhone = (value: string) =>
@@ -89,10 +91,10 @@ export const resolveUserBySharedPotIdentifier = async (sb: any, identifier: stri
   const { data, error } = await sb
     .from('users')
     .select('id,email,phone,full_name,customer_id')
-    .or([
-      ...candidates.map((candidate) => `phone.eq.${candidate}`),
-      ...candidates.map((candidate) => `customer_id.eq.${candidate}`),
-    ].join(','))
+    .or(buildPostgrestOrFilter([
+      ...candidates.map((candidate) => ({ column: 'phone', operator: 'eq' as const, value: candidate })),
+      ...candidates.map((candidate) => ({ column: 'customer_id', operator: 'eq' as const, value: candidate })),
+    ]))
     .limit(1)
     .maybeSingle();
   if (error) throw new Error(error.message);
