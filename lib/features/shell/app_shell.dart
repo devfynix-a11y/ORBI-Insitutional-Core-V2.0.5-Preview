@@ -153,13 +153,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       final goalsController = context.read<GoalsController>();
       final walletService = WalletService();
 
-      await Future.wait<void>([
-        dashboardController.fetchDashboardData(token),
-        profileController.loadProfile(),
-        walletService.getWallets(forceRefresh: true).then((_) {}),
-      ]);
-      if (!mounted) return;
-
       setState(() {
         _bootstrapInProgress = false;
         _bootstrapDone = true;
@@ -172,6 +165,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       Future<void>(() async {
         try {
           await Future.wait<void>([
+            dashboardController.fetchDashboardData(token),
+            profileController.loadProfile(),
+            walletService.getWallets(forceRefresh: true).then((_) {}),
             notificationController.fetch(token),
             goalsController.loadAll(token, notify: false),
             walletService
@@ -186,6 +182,18 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           await _auth?.refreshCurrentProfile();
         } catch (e) {
           debugPrint('⚠️ Deferred shell bootstrap sync failed: $e');
+          if (!mounted) return;
+          final raw = e.toString().toLowerCase();
+          final sessionExpired =
+              raw.contains('401') ||
+              raw.contains('unauthorized') ||
+              raw.contains('token expired') ||
+              raw.contains('jwt') ||
+              raw.contains('session expired') ||
+              raw.contains('forbidden');
+          if (sessionExpired) {
+            _routeToPrimaryLogin(message: l10n.shellSessionExpiredMessage);
+          }
         }
       });
     } catch (e) {

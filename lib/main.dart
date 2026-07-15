@@ -101,11 +101,13 @@ Future<void> main() async {
   );
   TlsPinningInstaller.install();
 
-  // Initialize Firebase
-  await _safeStartupStep(
-    'FirebaseService.initialize',
-    () => FirebaseService().initialize(),
-    timeout: const Duration(seconds: 10),
+  // Keep visual startup fast; notification infrastructure can warm in the background.
+  unawaited(
+    _safeStartupStep(
+      'FirebaseService.initialize',
+      () => FirebaseService().initialize(),
+      timeout: const Duration(seconds: 10),
+    ),
   );
   unawaited(
     _safeStartupStep(
@@ -117,22 +119,26 @@ Future<void> main() async {
 
   // Log the Android SMS Retriever hash once at startup so backend setup is easy.
   if (defaultTargetPlatform == TargetPlatform.android) {
-    await _safeStartupStep('OtpAutoFillService.getAndroidHash', () async {
-      try {
-        final hash = await OtpAutoFillService().getAndroidHash();
-        debugPrint('[OTP] Android SMS Retriever hash (startup) result: $hash');
-        if (hash == null) {
-          debugPrint('[OTP][ERROR] getAndroidHash returned null');
-        } else if (hash.isEmpty) {
-          debugPrint('[OTP][ERROR] getAndroidHash returned empty string');
-        } else {
-          debugPrint('[OTP] Android SMS Retriever hash (startup): $hash');
+    unawaited(
+      _safeStartupStep('OtpAutoFillService.getAndroidHash', () async {
+        try {
+          final hash = await OtpAutoFillService().getAndroidHash();
+          debugPrint(
+            '[OTP] Android SMS Retriever hash (startup) result: $hash',
+          );
+          if (hash == null) {
+            debugPrint('[OTP][ERROR] getAndroidHash returned null');
+          } else if (hash.isEmpty) {
+            debugPrint('[OTP][ERROR] getAndroidHash returned empty string');
+          } else {
+            debugPrint('[OTP] Android SMS Retriever hash (startup): $hash');
+          }
+        } catch (e, st) {
+          debugPrint('[OTP][ERROR] Exception during getAndroidHash: $e');
+          debugPrint('[OTP][ERROR] Stack trace: $st');
         }
-      } catch (e, st) {
-        debugPrint('[OTP][ERROR] Exception during getAndroidHash: $e');
-        debugPrint('[OTP][ERROR] Stack trace: $st');
-      }
-    }, timeout: const Duration(seconds: 3));
+      }, timeout: const Duration(seconds: 3)),
+    );
   }
 
   debugPrint(

@@ -673,7 +673,21 @@ class _ReportPreviewCard extends StatelessWidget {
     List<Map<String, dynamic>> transactions,
     String currency,
   ) {
-    final rows = transactions.take(30).toList();
+    final rows = transactions.toList()
+      ..sort((a, b) {
+        final at =
+            DateTime.tryParse(
+              (a['created_at'] ?? a['createdAt'] ?? a['date'] ?? '').toString(),
+            ) ??
+            DateTime.fromMillisecondsSinceEpoch(0);
+        final bt =
+            DateTime.tryParse(
+              (b['created_at'] ?? b['createdAt'] ?? b['date'] ?? '').toString(),
+            ) ??
+            DateTime.fromMillisecondsSinceEpoch(0);
+        return at.compareTo(bt);
+      });
+    final visibleRows = rows.take(30).toList();
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -681,6 +695,10 @@ class _ReportPreviewCard extends StatelessWidget {
         border: Border.all(color: const Color(0xFFE2E8F0)),
       ),
       child: Table(
+        border: const TableBorder(
+          horizontalInside: BorderSide(color: Color(0xFFE2E8F0), width: 0.7),
+          verticalInside: BorderSide(color: Color(0xFFE2E8F0), width: 0.7),
+        ),
         columnWidths: const {
           0: FlexColumnWidth(1.15),
           1: FlexColumnWidth(1.2),
@@ -700,7 +718,7 @@ class _ReportPreviewCard extends StatelessWidget {
             sw ? 'Salio baada' : 'Balance after',
             sw ? 'Hali' : 'Status',
           ], header: true),
-          ...rows.map((tx) {
+          ...visibleRows.map((tx) {
             return _row([
               ReportUtils.formatDateTime(tx['created_at'] ?? tx['date']),
               _cleanName(
@@ -711,10 +729,7 @@ class _ReportPreviewCard extends StatelessWidget {
               ),
               _destinationName(tx),
               _activity(tx),
-              ReportUtils.displayMoney(
-                tx['amount'],
-                currency: tx['currency'] ?? currency,
-              ),
+              _signedAmount(tx, currency),
               _balanceAfter(tx, currency),
               _status(tx['status']),
             ]);
@@ -773,6 +788,56 @@ class _ReportPreviewCard extends StatelessWidget {
       value,
       currency: tx['currency'] ?? fallbackCurrency,
     );
+  }
+
+  String _signedAmount(Map<String, dynamic> tx, String fallbackCurrency) {
+    final amount = ReportUtils.firstNonNull([
+      tx['amount'],
+      tx['value'],
+      tx['total'],
+      tx['total_amount'],
+      tx['net_amount'],
+    ]);
+    final text = ReportUtils.displayMoney(
+      amount,
+      currency: tx['currency'] ?? fallbackCurrency,
+    );
+    if (text == '-') return text;
+    return '${_isCredit(tx) ? '+' : '-'}$text';
+  }
+
+  bool _isCredit(Map<String, dynamic> tx) {
+    final ledger = ReportUtils.from(tx['ledger']);
+    final direction = ReportUtils.firstText([
+      tx['entry_side'],
+      tx['entry_type'],
+      ledger['entry_side'],
+      ledger['entry_type'],
+      tx['direction'],
+      tx['flow'],
+    ]).toLowerCase();
+    if (direction.contains('credit') ||
+        direction == 'in' ||
+        direction == 'incoming') {
+      return true;
+    }
+    if (direction.contains('debit') ||
+        direction == 'out' ||
+        direction == 'outgoing') {
+      return false;
+    }
+    final type = ReportUtils.firstText([
+      tx['type'],
+      tx['transaction_type'],
+      tx['kind'],
+      tx['category'],
+      tx['description'],
+    ]).toLowerCase();
+    return type.contains('deposit') ||
+        type.contains('refund') ||
+        type.contains('salary') ||
+        type.contains('income') ||
+        type.contains('received');
   }
 
   Widget _pill(String label) {

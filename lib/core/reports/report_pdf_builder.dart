@@ -43,7 +43,20 @@ class ReportPdfBuilder {
     );
     final summary = ReportUtils.from(report['summary']);
     final members = ReportUtils.asList(report['members']);
-    final transactions = ReportUtils.asList(report['transactions']);
+    final transactions = ReportUtils.asList(report['transactions'])
+      ..sort((a, b) {
+        final at =
+            DateTime.tryParse(
+              (a['created_at'] ?? a['createdAt'] ?? a['date'] ?? '').toString(),
+            ) ??
+            DateTime.fromMillisecondsSinceEpoch(0);
+        final bt =
+            DateTime.tryParse(
+              (b['created_at'] ?? b['createdAt'] ?? b['date'] ?? '').toString(),
+            ) ??
+            DateTime.fromMillisecondsSinceEpoch(0);
+        return at.compareTo(bt);
+      });
     final reportType = _friendlyReportType(report['report_type'], sw: sw);
     final resource = _extractResource(report, fallbackTitle: title, sw: sw);
     final summaryRows = _buildSummaryRows(report, summary, sw: sw);
@@ -171,10 +184,7 @@ class ReportPdfBuilder {
                   _senderLabel(transaction),
                   _recipientLabel(transaction),
                   _friendlyActivity(transaction, sw: sw),
-                  ReportUtils.displayMoney(
-                    transaction['amount'],
-                    currency: transaction['currency'] ?? resource.currency,
-                  ),
+                  _signedAmount(transaction, currency: resource.currency),
                   _balanceAfter(transaction, currency: resource.currency),
                   _friendlyStatus(transaction['status'], sw: sw),
                 ];
@@ -556,6 +566,7 @@ class ReportPdfBuilder {
         cellPadding: const pw.EdgeInsets.symmetric(horizontal: 7, vertical: 7),
         border: pw.TableBorder(
           horizontalInside: pw.BorderSide(color: _slateLine, width: 0.5),
+          verticalInside: pw.BorderSide(color: _slateLine, width: 0.45),
           bottom: pw.BorderSide(color: _slateLine, width: 0.7),
         ),
       ),
@@ -631,6 +642,19 @@ class ReportPdfBuilder {
       ]);
     }
 
+    void addFirst(
+      List<String> keys,
+      String en,
+      String swText, {
+      bool money = false,
+    }) {
+      for (final key in keys) {
+        if (!summary.containsKey(key)) continue;
+        add(key, en, swText, money: money);
+        return;
+      }
+    }
+
     if (type.contains('SHARED_POT')) {
       add(
         'current_amount',
@@ -672,8 +696,24 @@ class ReportPdfBuilder {
       return entries;
     }
 
-    add('total_in', 'Money in', 'Pesa zilizoingia', money: true);
-    add('total_out', 'Money out', 'Pesa zilizotoka', money: true);
+    addFirst(
+      ['money_in', 'external_in', 'total_in'],
+      'Money in',
+      'Pesa zilizoingia',
+      money: true,
+    );
+    addFirst(
+      ['money_out', 'external_out', 'total_out'],
+      'Money out',
+      'Pesa zilizotoka nje',
+      money: true,
+    );
+    addFirst(
+      ['internal_movements', 'internal_movement_total', 'internal_total'],
+      'Internal movements',
+      'Mizunguko ya ndani',
+      money: true,
+    );
     add('net', 'Net movement', 'Mabadiliko halisi', money: true);
     add('transaction_count', 'Transactions', 'Miamala');
     return entries.isEmpty
@@ -920,6 +960,59 @@ class ReportPdfBuilder {
     ]);
     if (balance == null) return '-';
     return ReportUtils.displayMoney(balance, currency: currency);
+  }
+
+  static String _signedAmount(
+    Map<String, dynamic> transaction, {
+    required String currency,
+  }) {
+    final value = ReportUtils.firstNonNull([
+      transaction['amount'],
+      transaction['value'],
+      transaction['total'],
+      transaction['total_amount'],
+      transaction['net_amount'],
+    ]);
+    final money = ReportUtils.displayMoney(
+      value,
+      currency: transaction['currency'] ?? currency,
+    );
+    if (money == '-') return money;
+    return '${_isCredit(transaction) ? '+' : '-'}$money';
+  }
+
+  static bool _isCredit(Map<String, dynamic> transaction) {
+    final ledger = ReportUtils.from(transaction['ledger']);
+    final direction = ReportUtils.firstText([
+      transaction['entry_side'],
+      transaction['entry_type'],
+      ledger['entry_side'],
+      ledger['entry_type'],
+      transaction['direction'],
+      transaction['flow'],
+    ]).toLowerCase();
+    if (direction.contains('credit') ||
+        direction == 'in' ||
+        direction == 'incoming') {
+      return true;
+    }
+    if (direction.contains('debit') ||
+        direction == 'out' ||
+        direction == 'outgoing') {
+      return false;
+    }
+    final type = ReportUtils.firstText([
+      transaction['type'],
+      transaction['transaction_type'],
+      transaction['kind'],
+      transaction['category'],
+      transaction['description'],
+    ]).toLowerCase();
+    return type.contains('deposit') ||
+        type.contains('refund') ||
+        type.contains('salary') ||
+        type.contains('income') ||
+        type.contains('received');
   }
 
   static String _hideRawUuid(String value) {

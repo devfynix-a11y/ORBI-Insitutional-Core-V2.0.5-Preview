@@ -206,7 +206,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
         final bt = _asDate(
           b['created_at'] ?? b['createdAt'] ?? b['timestamp'] ?? b['date'],
         );
-        return bt.compareTo(at);
+        return at.compareTo(bt);
       });
       if (!mounted) return;
       setState(() => _transactions = txs);
@@ -299,7 +299,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     if (existingIndex != -1) {
       updated[existingIndex] = tx;
     } else {
-      updated.insert(0, tx);
+      updated.add(tx);
     }
 
     updated.sort((a, b) {
@@ -309,7 +309,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       final bt = _asDate(
         b['created_at'] ?? b['createdAt'] ?? b['timestamp'] ?? b['date'],
       );
-      return bt.compareTo(at);
+      return at.compareTo(bt);
     });
 
     setState(() => _transactions = updated);
@@ -372,15 +372,32 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   }
 
   bool _isCredit(Map<String, dynamic> tx) {
-    final direction = _pickString([tx['direction'], tx['flow']]).toLowerCase();
+    final ledger = tx['ledger'] is Map
+        ? Map<String, dynamic>.from(tx['ledger'] as Map)
+        : <String, dynamic>{};
+    final direction = _pickString([
+      tx['entry_side'],
+      tx['entry_type'],
+      ledger['entry_side'],
+      ledger['entry_type'],
+      tx['direction'],
+      tx['flow'],
+    ]).toLowerCase();
     final type = _pickString([
       tx['type'],
       tx['transaction_type'],
       tx['kind'],
       tx['category'],
     ]).toLowerCase();
-    if (direction == 'in' || direction == 'incoming' || direction == 'credit') {
+    if (direction.contains('credit') ||
+        direction == 'in' ||
+        direction == 'incoming') {
       return true;
+    }
+    if (direction.contains('debit') ||
+        direction == 'out' ||
+        direction == 'outgoing') {
+      return false;
     }
     return type.contains('deposit') ||
         type.contains('refund') ||
