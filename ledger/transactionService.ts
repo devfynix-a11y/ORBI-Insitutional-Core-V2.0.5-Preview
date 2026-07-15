@@ -113,15 +113,53 @@ export class TransactionService {
         userId: string,
         ownedWalletIds: Set<string>,
         walletMap: Record<string, any>,
+        transaction?: any,
     ): any {
         const ownedLegs = (legs || []).filter((leg: any) =>
             String(leg?.user_id || '') === String(userId) ||
             ownedWalletIds.has(String(leg?.wallet_id || ''))
         );
-        const operatingLeg = ownedLegs.find((leg: any) =>
+        const operatingLegs = ownedLegs.filter((leg: any) =>
             this.isOperatingWalletRecord(walletMap[String(leg?.wallet_id || '')])
         );
-        return operatingLeg || ownedLegs[0] || legs?.[0];
+        const preferredSide = this.preferredGeneralBalanceSide(transaction);
+        if (preferredSide) {
+            const preferredOperating = operatingLegs
+                .filter((leg: any) => String(leg?.entry_side || leg?.entry_type || '').toUpperCase().includes(preferredSide))
+                .sort(this.sortLedgerLegsNewestFirst)[0];
+            if (preferredOperating) return preferredOperating;
+        }
+        return operatingLegs.sort(this.sortLedgerLegsNewestFirst)[0] ||
+            ownedLegs.sort(this.sortLedgerLegsNewestFirst)[0] ||
+            (legs || []).sort(this.sortLedgerLegsNewestFirst)[0];
+    }
+
+    private preferredGeneralBalanceSide(transaction?: any): 'CREDIT' | 'DEBIT' | null {
+        const text = [
+            transaction?.type,
+            transaction?.transaction_type,
+            transaction?.status,
+            transaction?.description,
+            transaction?.note,
+            transaction?.metadata?.source_wallet_role,
+            transaction?.metadata?.target_wallet_role,
+            transaction?.metadata?.source_vault_id,
+            transaction?.metadata?.target_vault_id,
+            transaction?.metadata?.escrow_status,
+        ].map((value) => String(value || '').toLowerCase()).join(' ');
+        if (/(refund|refunded|reverse|reversed|deposit|withdrawal|withdraw|target_wallet_role.*operating|target vault|target_vault)/.test(text)) {
+            return 'CREDIT';
+        }
+        if (/(contribution|hold|escrow|paysafe|source_wallet_role.*operating|source vault|source_vault)/.test(text)) {
+            return 'DEBIT';
+        }
+        return null;
+    }
+
+    private sortLedgerLegsNewestFirst(a: any, b: any): number {
+        const at = new Date(a?.created_at || 0).getTime();
+        const bt = new Date(b?.created_at || 0).getTime();
+        return bt - at;
     }
 
     private partyDisplayName(user: any, wallet: any, fallback?: string): string {
@@ -914,10 +952,10 @@ export class TransactionService {
 
             const walletIdList = Array.from(allWalletIds);
             const { data: walletNames } = walletIdList.length
-                ? await sb.from('wallets').select('id, name, wallet_name, type, wallet_type, bucket_type, management_tier, role, user_id').in('id', walletIdList)
+                ? await sb.from('wallets').select('id, name, type, management_tier, is_primary, user_id').in('id', walletIdList)
                 : { data: [] as any[] };
             const { data: vaultNames } = walletIdList.length
-                ? await sb.from('platform_vaults').select('id, name, vault_name, vault_role, type, user_id').in('id', walletIdList)
+                ? await sb.from('platform_vaults').select('id, name, vault_role, user_id').in('id', walletIdList)
                 : { data: [] as any[] };
             const { data: goalNames } = walletIdList.length
                 ? await sb.from('goals').select('id, name, user_id').in('id', walletIdList)
@@ -1002,7 +1040,7 @@ export class TransactionService {
                 const senderUser = userMap[senderUserId];
                 const receiverUser = userMap[receiverUserId];
 
-                const balanceLeg = this.pickGeneralBalanceLeg(txLegs, userId, ownedWalletIdSet, walletMap);
+                const balanceLeg = this.pickGeneralBalanceLeg(txLegs, userId, ownedWalletIdSet, walletMap, tx);
                 const balanceSide = String(balanceLeg?.entry_side || balanceLeg?.entry_type || '').toUpperCase();
                 const direction = balanceSide.includes('CREDIT')
                     ? 'CREDIT'
@@ -1172,10 +1210,10 @@ export class TransactionService {
         ));
         const [{ data: walletNames }, { data: vaultNames }, { data: goalNames }] = await Promise.all([
             walletIdList.length
-                ? sb.from('wallets').select('id, name, wallet_name, type, wallet_type, bucket_type, management_tier, role, user_id').in('id', walletIdList)
+                ? sb.from('wallets').select('id, name, type, management_tier, is_primary, user_id').in('id', walletIdList)
                 : Promise.resolve({ data: [] as any[] }),
             walletIdList.length
-                ? sb.from('platform_vaults').select('id, name, vault_name, vault_role, type, user_id').in('id', walletIdList)
+                ? sb.from('platform_vaults').select('id, name, vault_role, user_id').in('id', walletIdList)
                 : Promise.resolve({ data: [] as any[] }),
             walletIdList.length
                 ? sb.from('goals').select('id, name, user_id').in('id', walletIdList)
@@ -1211,7 +1249,7 @@ export class TransactionService {
             targetWallet,
             transaction.metadata?.recipient_snapshot?.name || targetWalletName,
         );
-        const balanceLeg = this.pickGeneralBalanceLeg(ledgerRows, userId, ownedWalletIds, walletMap);
+        const balanceLeg = this.pickGeneralBalanceLeg(ledgerRows, userId, ownedWalletIds, walletMap, transaction);
         const balanceAfter = balanceLeg?.balance_after ?? transaction.balance_after ?? transaction.balanceAfter ?? null;
 
         return {

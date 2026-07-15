@@ -458,16 +458,52 @@ const pickGeneralReportBalanceLeg = (
   legs: any[],
   userId: string,
   walletById: Map<string, any>,
+  transaction?: any,
 ): any => {
   const ownedLegs = (legs || []).filter((leg: any) => {
     const wallet = walletById.get(String(leg?.wallet_id || ''));
     return String(leg?.user_id || '') === String(userId) ||
       String(wallet?.user_id || '') === String(userId);
   });
-  const operatingLeg = ownedLegs.find((leg: any) =>
+  const operatingLegs = ownedLegs.filter((leg: any) =>
     isOperatingWalletRecord(walletById.get(String(leg?.wallet_id || ''))),
   );
-  return operatingLeg || ownedLegs[0] || legs?.[0];
+  const preferredSide = preferredGeneralReportBalanceSide(transaction);
+  if (preferredSide) {
+    const preferredOperating = operatingLegs
+      .filter((leg: any) => String(leg?.entry_side || leg?.entry_type || '').toUpperCase().includes(preferredSide))
+      .sort(sortLedgerLegsNewestFirst)[0];
+    if (preferredOperating) return preferredOperating;
+  }
+  return operatingLegs.sort(sortLedgerLegsNewestFirst)[0] ||
+    ownedLegs.sort(sortLedgerLegsNewestFirst)[0] ||
+    (legs || []).sort(sortLedgerLegsNewestFirst)[0];
+};
+
+const preferredGeneralReportBalanceSide = (transaction?: any): 'CREDIT' | 'DEBIT' | null => {
+  const text = [
+    transaction?.type,
+    transaction?.transaction_type,
+    transaction?.status,
+    transaction?.description,
+    transaction?.note,
+    transaction?.metadata?.source_wallet_role,
+    transaction?.metadata?.target_wallet_role,
+    transaction?.metadata?.escrow_status,
+  ].map((value) => String(value || '').toLowerCase()).join(' ');
+  if (/(refund|refunded|reverse|reversed|deposit|withdrawal|withdraw|target_wallet_role.*operating)/.test(text)) {
+    return 'CREDIT';
+  }
+  if (/(contribution|hold|escrow|paysafe|source_wallet_role.*operating)/.test(text)) {
+    return 'DEBIT';
+  }
+  return null;
+};
+
+const sortLedgerLegsNewestFirst = (a: any, b: any): number => {
+  const at = new Date(a?.created_at || 0).getTime();
+  const bt = new Date(b?.created_at || 0).getTime();
+  return bt - at;
 };
 
 const enrichTransactionsForReport = async (
@@ -503,7 +539,7 @@ const enrichTransactionsForReport = async (
     if (walletIds.length) {
       const { data: wallets, error: walletError } = await sb
         .from('wallets')
-        .select('id,name,wallet_name,type,wallet_type,bucket_type,management_tier,role,user_id')
+        .select('id,name,type,management_tier,is_primary,user_id')
         .in('id', walletIds);
       if (!walletError && Array.isArray(wallets)) {
         wallets.forEach((wallet: any) => walletById.set(String(wallet.id), wallet));
@@ -513,7 +549,7 @@ const enrichTransactionsForReport = async (
 
       const { data: vaults, error: vaultError } = await sb
         .from('platform_vaults')
-        .select('id,name,vault_name,vault_role,type,user_id')
+        .select('id,name,vault_role,user_id')
         .in('id', walletIds);
       if (!vaultError && Array.isArray(vaults)) {
         vaults.forEach((vault: any) => walletById.set(String(vault.id), vault));
@@ -564,7 +600,7 @@ const enrichTransactionsForReport = async (
       if (!legs.length) return transaction;
 
       const userLeg = legs.find((leg: any) => String(leg?.user_id || '') === String(userId)) || legs[0];
-      const balanceLeg = pickGeneralReportBalanceLeg(legs, userId, walletById);
+      const balanceLeg = pickGeneralReportBalanceLeg(legs, userId, walletById, transaction);
       const debitLeg = legs.find((leg: any) => String(leg?.entry_side || leg?.entry_type || '').toUpperCase().includes('DEBIT'));
       const creditLeg = legs.find((leg: any) => String(leg?.entry_side || leg?.entry_type || '').toUpperCase().includes('CREDIT'));
       const sourceWallet = walletById.get(String((debitLeg || userLeg)?.wallet_id || ''));
