@@ -736,8 +736,8 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
         .eq('status', 'PENDING')
         .order('created_at', { ascending: false })
         .limit(1)
-        .single();
-      if (pendingInviteError && pendingInviteError.code !== 'PGRST116') {
+        .maybeSingle();
+      if (pendingInviteError) {
         return failInvite(400, pendingInviteError.message, {
           phase: 'pending_invite_lookup',
           code: pendingInviteError.code || null,
