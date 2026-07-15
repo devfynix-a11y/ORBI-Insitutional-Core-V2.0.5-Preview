@@ -116,10 +116,15 @@ export class TransactionService {
         walletMap: Record<string, any>,
         transaction?: any,
     ): any {
-        const ownedLegs = (legs || []).filter((leg: any) =>
-            String(leg?.user_id || '') === String(userId) ||
-            ownedWalletIds.has(String(leg?.wallet_id || ''))
-        );
+        const ownedLegs = (legs || []).filter((leg: any) => {
+            const walletId = String(leg?.wallet_id || '');
+            const wallet = walletMap[walletId];
+            if (wallet?.user_id) {
+                return String(wallet.user_id) === String(userId);
+            }
+            return String(leg?.user_id || '') === String(userId) ||
+                ownedWalletIds.has(walletId);
+        });
         const operatingLegs = ownedLegs.filter((leg: any) =>
             this.isOperatingWalletRecord(walletMap[String(leg?.wallet_id || '')])
         );
@@ -143,7 +148,7 @@ export class TransactionService {
             if (exact) return exact;
         }
         return debitLegs.find((leg: any) =>
-            String(leg?.user_id || '') === String(userId) &&
+            String(walletMap[String(leg?.wallet_id || '')]?.user_id || leg?.user_id || '') === String(userId) &&
             this.isOperatingWalletRecord(walletMap[String(leg?.wallet_id || '')])
         ) || debitLegs[0];
     }

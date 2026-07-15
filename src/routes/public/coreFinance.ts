@@ -490,8 +490,10 @@ const pickGeneralReportBalanceLeg = (
 ): any => {
   const ownedLegs = (legs || []).filter((leg: any) => {
     const wallet = walletById.get(String(leg?.wallet_id || ''));
-    return String(leg?.user_id || '') === String(userId) ||
-      String(wallet?.user_id || '') === String(userId);
+    if (wallet?.user_id) {
+      return String(wallet.user_id) === String(userId);
+    }
+    return String(leg?.user_id || '') === String(userId);
   });
   const operatingLegs = ownedLegs.filter((leg: any) =>
     isOperatingWalletRecord(walletById.get(String(leg?.wallet_id || ''))),
@@ -521,7 +523,7 @@ const pickReportSourceLeg = (
     if (exact) return exact;
   }
   return debitLegs.find((leg: any) =>
-    String(leg?.user_id || '') === String(userId) &&
+    String(walletById.get(String(leg?.wallet_id || ''))?.user_id || leg?.user_id || '') === String(userId) &&
     isOperatingWalletRecord(walletById.get(String(leg?.wallet_id || ''))),
   ) || debitLegs[0];
 };
