@@ -14,12 +14,12 @@ class OrbiReportImagePdfBuilder {
       throw StateError('Could not decode report preview image.');
     }
 
-    const pageFormat = PdfPageFormat.a4;
-    const margin = pw.EdgeInsets.symmetric(horizontal: 10, vertical: 12);
+    const basePageFormat = PdfPageFormat.a4;
+    const margin = pw.EdgeInsets.symmetric(horizontal: 6, vertical: 8);
     const footerHeight = 14.0;
-    final drawableWidth = pageFormat.availableWidth - margin.horizontal;
-    final drawableHeight = pageFormat.availableHeight - margin.vertical;
-    final imageHeightOnPage = drawableHeight - footerHeight;
+    final drawableWidth = basePageFormat.availableWidth - margin.horizontal;
+    final maxDrawableHeight = basePageFormat.availableHeight - margin.vertical;
+    final imageHeightOnPage = maxDrawableHeight - footerHeight;
     final sliceHeight = (source.width * imageHeightOnPage / drawableWidth)
         .floor()
         .clamp(1, source.height);
@@ -46,20 +46,26 @@ class OrbiReportImagePdfBuilder {
 
     for (var index = 0; index < slices.length; index += 1) {
       final pageImage = pw.MemoryImage(slices[index]);
+      final slice = img.decodeImage(slices[index]);
+      final sliceAspectHeight = slice == null
+          ? imageHeightOnPage
+          : (slice.height * drawableWidth / slice.width);
+      final pageHeight = (sliceAspectHeight + margin.vertical + footerHeight + 6)
+          .clamp(160.0, basePageFormat.height);
+      final pageFormat = PdfPageFormat(basePageFormat.width, pageHeight);
       doc.addPage(
         pw.Page(
-          pageTheme: const pw.PageTheme(pageFormat: pageFormat, margin: margin),
+          pageTheme: pw.PageTheme(pageFormat: pageFormat, margin: margin),
           build: (context) {
             return pw.Column(
+              mainAxisSize: pw.MainAxisSize.min,
               children: [
-                pw.Expanded(
-                  child: pw.Align(
-                    alignment: pw.Alignment.topCenter,
-                    child: pw.Image(
-                      pageImage,
-                      width: drawableWidth,
-                      fit: pw.BoxFit.fitWidth,
-                    ),
+                pw.Align(
+                  alignment: pw.Alignment.topCenter,
+                  child: pw.Image(
+                    pageImage,
+                    width: drawableWidth,
+                    fit: pw.BoxFit.fitWidth,
                   ),
                 ),
                 pw.SizedBox(height: 4),
