@@ -21,6 +21,7 @@ This index defines the canonical ORBI Institutional Core documentation set. Olde
 | Provider adapters | [Provider Adapter Architecture](./PROVIDER_ADAPTER_ARCHITECTURE.md) | Provider execution, adapter contracts, retry/failover hooks, and compatibility boundaries. |
 | Financial core | [Core Banking Architecture](./CORE_BANKING_ARCHITECTURE.md) | Core ledger, tenants, security, escrow, treasury, messaging, and FX model. |
 | Banking engine | [Banking Engine V2](./BANKING_ENGINE_V2.md) | Atomic ledger and TrustBridge architecture details. |
+| Transaction movement classification | [Transaction Movement Classification](./TRANSACTION_MOVEMENT_CLASSIFICATION.md) | Canonical movement families/codes for history, reports, receipts, and audit read models without mutating ledger truth. |
 | Reconciliation | [Reconciliation Engine](./RECONCILIATION_ENGINE.md) | Financial integrity, reports, admin controls, and reconciliation layers. |
 | Disaster recovery | [Disaster Recovery Runbook](./DISASTER_RECOVERY_RUNBOOK.md) | Incident response, severe failure scenarios, recovery objectives, and evidence. |
 | Backup restore drill | [Backup Restore Drill Procedure](./BACKUP_RESTORE_DRILL_PROCEDURE.md) | Executable backup restore drill procedure and evidence capture. |

@@ -5,6 +5,8 @@ This document describes the enterprise-standard settlement path for internal tra
 ## Design goals
 
 - ledger remains the financial source of truth
+- movement classification stays outside ledger posting and is documented in
+  `TRANSACTION_MOVEMENT_CLASSIFICATION.md`
 - settlement is idempotent
 - settlement does not depend on ledger description text matching
 - settlement verifies transaction state under lock before append
