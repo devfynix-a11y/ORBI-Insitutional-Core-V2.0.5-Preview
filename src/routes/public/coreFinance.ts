@@ -486,9 +486,7 @@ const pickGeneralReportBalanceLeg = (
       .sort(sortLedgerLegsNewestFirst)[0];
     if (preferredOperating) return preferredOperating;
   }
-  return operatingLegs.sort(sortLedgerLegsNewestFirst)[0] ||
-    ownedLegs.sort(sortLedgerLegsNewestFirst)[0] ||
-    (legs || []).sort(sortLedgerLegsNewestFirst)[0];
+  return operatingLegs.sort(sortLedgerLegsNewestFirst)[0] || null;
 };
 
 const preferredGeneralReportBalanceSide = (transaction?: any): 'CREDIT' | 'DEBIT' | null => {

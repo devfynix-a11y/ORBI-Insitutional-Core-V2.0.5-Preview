@@ -129,9 +129,7 @@ export class TransactionService {
                 .sort(this.sortLedgerLegsNewestFirst)[0];
             if (preferredOperating) return preferredOperating;
         }
-        return operatingLegs.sort(this.sortLedgerLegsNewestFirst)[0] ||
-            ownedLegs.sort(this.sortLedgerLegsNewestFirst)[0] ||
-            (legs || []).sort(this.sortLedgerLegsNewestFirst)[0];
+        return operatingLegs.sort(this.sortLedgerLegsNewestFirst)[0] || null;
     }
 
     private preferredGeneralBalanceSide(transaction?: any): 'CREDIT' | 'DEBIT' | null {
