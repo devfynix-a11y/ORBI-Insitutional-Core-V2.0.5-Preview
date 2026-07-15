@@ -512,21 +512,43 @@ const enrichTransactionsForReport = async (
       const destinationWallet = walletById.get(String((creditLeg || userLeg)?.wallet_id || ''));
       const sourceUser = userById.get(String(debitLeg?.user_id || sourceWallet?.user_id || ''));
       const destinationUser = userById.get(String(creditLeg?.user_id || destinationWallet?.user_id || ''));
-      const sourceWalletName = normalizeWalletName(sourceWallet, transaction?.source_wallet_name || transaction?.sourceWalletName);
-      const destinationWalletName = normalizeWalletName(destinationWallet, transaction?.destination_wallet_name || transaction?.targetWalletName);
+      const sourceContext = transaction?.source_wallet_context || transaction?.source_wallet_details || transaction?.source_wallet || {};
+      const destinationContext = transaction?.destination_wallet_context || transaction?.destination_wallet_details || transaction?.destination_wallet || {};
+      const sourceWalletName = normalizeWalletName(
+        sourceWallet,
+        firstText([
+          transaction?.source_wallet_name,
+          transaction?.sourceWalletName,
+          transaction?.metadata?.source_wallet_name,
+          transaction?.metadata?.source_wallet_context?.wallet_name,
+          sourceContext?.wallet_name,
+          sourceContext?.name,
+        ]),
+      );
+      const destinationWalletName = normalizeWalletName(
+        destinationWallet,
+        firstText([
+          transaction?.destination_wallet_name,
+          transaction?.targetWalletName,
+          transaction?.metadata?.destination_wallet_name,
+          transaction?.metadata?.destination_wallet_context?.wallet_name,
+          destinationContext?.wallet_name,
+          destinationContext?.name,
+        ]),
+      );
       const sourceDisplayName = firstText([
-        sourceUser?.full_name,
-        transaction?.from_display_name,
-        transaction?.source_display_name,
         sourceWalletName,
+        transaction?.source_display_name,
+        transaction?.from_display_name,
+        sourceUser?.full_name,
         'Orbi',
       ]);
       const destinationDisplayName = firstText([
-        destinationUser?.full_name,
-        transaction?.to_display_name,
-        transaction?.destination_display_name,
-        transaction?.metadata?.recipient_snapshot?.name,
         destinationWalletName,
+        transaction?.metadata?.recipient_snapshot?.name,
+        transaction?.destination_display_name,
+        transaction?.to_display_name,
+        destinationUser?.full_name,
         'External Destination',
       ]);
       const balanceAfter = firstText([
