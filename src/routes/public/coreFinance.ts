@@ -130,6 +130,73 @@ const isCreditLike = (transaction: any): boolean => {
   return ['CREDIT', 'INCOMING', 'DEPOSIT', 'RECEIVED'].some((marker) => type.includes(marker) || side.includes(marker));
 };
 
+const transactionSearchText = (transaction: any): string => {
+  const metadata = transaction?.metadata && typeof transaction.metadata === 'object' ? transaction.metadata : {};
+  return [
+    transaction?.type,
+    transaction?.direction,
+    transaction?.entry_side,
+    transaction?.entry_type,
+    transaction?.money_state,
+    transaction?.moneyState,
+    transaction?.allocation_source,
+    transaction?.source_wallet_name,
+    transaction?.destination_wallet_name,
+    transaction?.activity_label,
+    transaction?.description,
+    metadata?.settlement_path,
+    metadata?.rail,
+    metadata?.provider,
+    metadata?.provider_name,
+    metadata?.wallet_type,
+    metadata?.money_state,
+  ].map((value) => String(value || '').toLowerCase()).join(' ');
+};
+
+const isExternalMoneyMovement = (transaction: any): boolean => {
+  const text = transactionSearchText(transaction);
+  return [
+    'external_routing',
+    'external routing',
+    'external_destination',
+    'external destination',
+    'withdraw',
+    'cashout',
+    'cash out',
+    'bank',
+    'mobile_money',
+    'mobile money',
+    'card',
+    'merchant_settlement',
+  ].some((marker) => text.includes(marker));
+};
+
+const isInternalMoneyMovement = (transaction: any): boolean => {
+  if (isExternalMoneyMovement(transaction)) return false;
+  if (Array.isArray(transaction?.ledger_legs) && transaction.ledger_legs.length >= 2) return true;
+  const text = transactionSearchText(transaction);
+  return [
+    'internal',
+    'orbi',
+    'wallet',
+    'escrow',
+    'paysafe',
+    'pay safe',
+    'shared_pot',
+    'shared pot',
+    'fungu',
+    'pot',
+    'shared_budget',
+    'shared budget',
+    'mezani',
+    'budget',
+    'goal',
+    'saving',
+    'allocated',
+    'locked',
+  ].some((marker) => text.includes(marker));
+};
+
 const buildTransactionReport = (transactions: any[], range: ReturnType<typeof resolveReportRange>) => {
   const scoped = (transactions || []).filter((transaction: any) => {
     const timestamp = transactionTimestamp(transaction);
@@ -138,21 +205,38 @@ const buildTransactionReport = (transactions: any[], range: ReturnType<typeof re
 
   const summary = scoped.reduce((acc: any, transaction: any) => {
     const amount = toMoneyNumber(transaction?.amount);
-    if (isCreditLike(transaction)) {
+    if (isInternalMoneyMovement(transaction)) {
+      acc.internal_movements += amount;
+      acc.internal_movement_count += 1;
+    } else if (isCreditLike(transaction)) {
       acc.total_in += amount;
+      acc.money_in += amount;
+      acc.external_in += amount;
     } else {
       acc.total_out += amount;
+      acc.money_out += amount;
+      acc.external_out += amount;
     }
     acc.net = acc.total_in - acc.total_out;
+    acc.gross_movement += amount;
     acc.transaction_count += 1;
     const currency = String(transaction?.currency || 'TZS').toUpperCase();
+    acc.currency = acc.currency || currency;
     acc.currencies[currency] = (acc.currencies[currency] || 0) + amount;
     const status = String(transaction?.status || 'UNKNOWN').toUpperCase();
     acc.statuses[status] = (acc.statuses[status] || 0) + 1;
     return acc;
   }, {
+    currency: 'TZS',
     total_in: 0,
     total_out: 0,
+    money_in: 0,
+    money_out: 0,
+    external_in: 0,
+    external_out: 0,
+    internal_movements: 0,
+    internal_movement_count: 0,
+    gross_movement: 0,
     net: 0,
     transaction_count: 0,
     currencies: {},
@@ -170,6 +254,153 @@ const buildTransactionReport = (transactions: any[], range: ReturnType<typeof re
     transactions: scoped,
     generatedAt: new Date().toISOString(),
     issuer: 'ORBI FINANCIAL TECHNOLOGIES',
+  };
+};
+
+const sumRows = (rows: any[], fields: string[], currency?: string): number => rows.reduce((total, row) => {
+  if (currency && String(row?.currency || currency).toUpperCase() !== currency.toUpperCase()) return total;
+  const value = fields.map((field) => row?.[field]).find((item) => item !== undefined && item !== null);
+  return total + toMoneyNumber(value);
+}, 0);
+
+const safeRows = async (label: string, query: any): Promise<any[]> => {
+  try {
+    const { data, error } = await query;
+    if (error) {
+      console.warn(`[Transactions Report] ${label} snapshot skipped:`, error.message);
+      return [];
+    }
+    return Array.isArray(data) ? data : [];
+  } catch (error: any) {
+    console.warn(`[Transactions Report] ${label} snapshot failed:`, error?.message || error);
+    return [];
+  }
+};
+
+const activeEscrowStatuses = new Set([
+  'PENDING',
+  'ACCEPTED',
+  'HELD',
+  'FUNDS_HELD',
+  'IN_PROGRESS',
+  'DISPUTED',
+]);
+
+const buildBalanceSnapshot = async (sb: any, userId: string, currency = 'TZS') => {
+  const safeCurrency = String(currency || 'TZS').toUpperCase();
+  const wallets = await safeRows(
+    'wallets',
+    sb.from('wallets')
+      .select('id,name,wallet_name,type,wallet_type,bucket_type,balance,available_balance,currency,user_id')
+      .eq('user_id', userId),
+  );
+  const vaults = await safeRows(
+    'platform_vaults',
+    sb.from('platform_vaults')
+      .select('id,name,vault_name,vault_role,balance,available_balance,currency,user_id')
+      .eq('user_id', userId),
+  );
+  const goals = await safeRows(
+    'goals',
+    sb.from('goals')
+      .select('id,name,current,current_amount,balance,currency,status,user_id')
+      .eq('user_id', userId),
+  );
+  const escrows = await safeRows(
+    'escrow_agreements',
+    sb.from('escrow_agreements')
+      .select('id,amount,currency,status,sender_id,receiver_id')
+      .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`),
+  );
+  const potMembers = await safeRows(
+    'shared_pot_members',
+    sb.from('shared_pot_members').select('pot_id').eq('user_id', userId),
+  );
+  const potIds = potMembers.map((row) => String(row?.pot_id || '').trim()).filter(Boolean);
+  const potsQuery = potIds.length
+    ? sb.from('shared_pots')
+      .select('id,name,current_amount,balance,currency,status,owner_user_id')
+      .or(`owner_user_id.eq.${userId},id.in.(${potIds.join(',')})`)
+    : sb.from('shared_pots')
+      .select('id,name,current_amount,balance,currency,status,owner_user_id')
+      .eq('owner_user_id', userId);
+  const pots = await safeRows('shared_pots', potsQuery);
+  const budgetMembers = await safeRows(
+    'shared_budget_members',
+    sb.from('shared_budget_members').select('budget_id').eq('user_id', userId),
+  );
+  const budgetIds = budgetMembers.map((row) => String(row?.budget_id || '').trim()).filter(Boolean);
+  const budgetsQuery = budgetIds.length
+    ? sb.from('shared_budgets')
+      .select('id,name,budget_limit,spent_amount,current_amount,balance,currency,status,owner_user_id')
+      .or(`owner_user_id.eq.${userId},id.in.(${budgetIds.join(',')})`)
+    : sb.from('shared_budgets')
+      .select('id,name,budget_limit,spent_amount,current_amount,balance,currency,status,owner_user_id')
+      .eq('owner_user_id', userId);
+  const budgets = await safeRows('shared_budgets', budgetsQuery);
+
+  const allWalletLike = [...wallets, ...vaults];
+  const restrictedMarker = /(escrow|paysafe|pay safe|budget|goal|pot|fungu|reserve|bill)/i;
+  const availableRows = allWalletLike.filter((row) => !restrictedMarker.test([
+    row?.name,
+    row?.wallet_name,
+    row?.vault_name,
+    row?.vault_role,
+    row?.type,
+    row?.wallet_type,
+    row?.bucket_type,
+  ].join(' ')));
+  const availableBalance = sumRows(availableRows, ['available_balance', 'balance'], safeCurrency);
+  const walletRestrictedBalance = sumRows(
+    allWalletLike.filter((row) => restrictedMarker.test([
+      row?.name,
+      row?.wallet_name,
+      row?.vault_name,
+      row?.vault_role,
+      row?.type,
+      row?.wallet_type,
+      row?.bucket_type,
+    ].join(' '))),
+    ['available_balance', 'balance'],
+    safeCurrency,
+  );
+  const paysafeBalance = sumRows(
+    escrows.filter((row) => activeEscrowStatuses.has(String(row?.status || '').toUpperCase())),
+    ['amount'],
+    safeCurrency,
+  );
+  const goalsBalance = sumRows(goals, ['current_amount', 'current', 'balance'], safeCurrency);
+  const potsBalance = sumRows(pots, ['current_amount', 'balance'], safeCurrency);
+  const budgetsBalance = budgets.reduce((total, row) => {
+    if (String(row?.currency || safeCurrency).toUpperCase() !== safeCurrency) return total;
+    const current = toMoneyNumber(row?.current_amount ?? row?.balance);
+    if (current > 0) return total + current;
+    const limit = toMoneyNumber(row?.budget_limit);
+    const spent = toMoneyNumber(row?.spent_amount);
+    return total + Math.max(limit - spent, 0);
+  }, 0);
+  const insideOrbiTotal = availableBalance + walletRestrictedBalance + paysafeBalance + goalsBalance + potsBalance + budgetsBalance;
+
+  return {
+    captured_at: new Date().toISOString(),
+    currency: safeCurrency,
+    main_balance: insideOrbiTotal,
+    available_balance: availableBalance,
+    inside_orbi_total: insideOrbiTotal,
+    paysafe_balance: paysafeBalance,
+    escrow_balance: paysafeBalance,
+    goals_balance: goalsBalance,
+    shared_pots_balance: potsBalance,
+    shared_budgets_balance: budgetsBalance,
+    other_internal_balance: walletRestrictedBalance,
+    breakdown: [
+      { key: 'available_balance', label_en: 'Available balance', label_sw: 'Salio linalotumika', amount: availableBalance, currency: safeCurrency },
+      { key: 'paysafe_balance', label_en: 'PaySafe / escrow', label_sw: 'PaySafe / escrow', amount: paysafeBalance, currency: safeCurrency },
+      { key: 'shared_pots_balance', label_en: 'Fungu pots', label_sw: 'Vifungu', amount: potsBalance, currency: safeCurrency },
+      { key: 'shared_budgets_balance', label_en: 'Mezani budgets', label_sw: 'Mezani', amount: budgetsBalance, currency: safeCurrency },
+      { key: 'goals_balance', label_en: 'Goals', label_sw: 'Malengo', amount: goalsBalance, currency: safeCurrency },
+      { key: 'other_internal_balance', label_en: 'Other internal holds', label_sw: 'Mizania mingine ya ndani', amount: walletRestrictedBalance, currency: safeCurrency },
+    ],
   };
 };
 
@@ -702,7 +933,20 @@ export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
         session.sub,
         transactions,
       );
-      res.json({ success: true, data: buildTransactionReport(enrichedTransactions, range) });
+      const report = buildTransactionReport(enrichedTransactions, range);
+      const balances = await buildBalanceSnapshot(
+        getSupabase(),
+        session.sub,
+        report.summary?.currency || 'TZS',
+      );
+      res.json({
+        success: true,
+        data: {
+          ...report,
+          balances,
+          balance_snapshot: balances,
+        },
+      });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });
     }
