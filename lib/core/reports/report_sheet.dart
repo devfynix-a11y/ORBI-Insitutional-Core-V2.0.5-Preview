@@ -432,6 +432,8 @@ class _ReportPreviewCard extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           _transactionTable(transactions, currency),
+          const SizedBox(height: 18),
+          _insideOrbiSummary(currency),
         ],
       ),
     );
@@ -439,6 +441,21 @@ class _ReportPreviewCard extends StatelessWidget {
 
   Widget _summaryStrip(String currency) {
     final summary = ReportUtils.from(report['summary']);
+    final moneyIn = ReportUtils.firstNonNull([
+      summary['money_in'],
+      summary['external_in'],
+      summary['total_in'],
+    ]);
+    final moneyOut = ReportUtils.firstNonNull([
+      summary['money_out'],
+      summary['external_out'],
+      summary['total_out'],
+    ]);
+    final internalMovements = ReportUtils.firstNonNull([
+      summary['internal_movements'],
+      summary['internal_movement_total'],
+      summary['internal_total'],
+    ]);
     final items = <MapEntry<String, String>>[
       MapEntry(
         sw ? 'Miamala' : 'Transactions',
@@ -448,19 +465,25 @@ class _ReportPreviewCard extends StatelessWidget {
       ),
       MapEntry(
         sw ? 'Pesa zilizoingia' : 'Money in',
-        ReportUtils.displayMoney(summary['total_in'], currency: currency),
+        ReportUtils.displayMoney(moneyIn, currency: currency),
       ),
       MapEntry(
-        sw ? 'Pesa zilizotoka' : 'Money out',
-        ReportUtils.displayMoney(summary['total_out'], currency: currency),
+        sw ? 'Pesa zilizotoka nje' : 'Money out',
+        ReportUtils.displayMoney(moneyOut, currency: currency),
+      ),
+      MapEntry(
+        sw ? 'Mizunguko ya ndani' : 'Internal movements',
+        ReportUtils.displayMoney(internalMovements, currency: currency),
       ),
     ];
     return Row(
-      children: items
+      children: items.indexed
           .map(
             (item) => Expanded(
               child: Container(
-                margin: const EdgeInsets.only(right: 8),
+                margin: EdgeInsets.only(
+                  right: item.$1 == items.length - 1 ? 0 : 8,
+                ),
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: const Color(0xFFF8FAFC),
@@ -471,7 +494,7 @@ class _ReportPreviewCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      item.key,
+                      item.$2.key,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -485,7 +508,7 @@ class _ReportPreviewCard extends StatelessWidget {
                       fit: BoxFit.scaleDown,
                       alignment: Alignment.centerLeft,
                       child: Text(
-                        item.value,
+                        item.$2.value,
                         style: const TextStyle(
                           color: Color(0xFF1A2332),
                           fontWeight: FontWeight.w900,
@@ -499,6 +522,151 @@ class _ReportPreviewCard extends StatelessWidget {
           )
           .toList(),
     );
+  }
+
+  Widget _insideOrbiSummary(String currency) {
+    final entries = _insideOrbiEntries(currency);
+    if (entries.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            sw ? 'Pesa zilipo ndani ya Orbi' : 'Money inside Orbi',
+            style: const TextStyle(
+              color: Color(0xFF1A2332),
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            sw
+                ? 'Snapshot ya salio wakati report imetengenezwa.'
+                : 'Balance snapshot captured when this report was generated.',
+            style: const TextStyle(
+              color: Color(0xFF64748B),
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: entries
+                .map(
+                  (entry) => SizedBox(
+                    width: 160,
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(15),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            entry.key,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFF64748B),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              entry.value,
+                              style: const TextStyle(
+                                color: Color(0xFF1A2332),
+                                fontSize: 14,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                )
+                .toList(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<MapEntry<String, String>> _insideOrbiEntries(String currency) {
+    final balances = ReportUtils.from(
+      report['balance_snapshot'] ??
+          report['balances'] ??
+          report['wallet_summary'] ??
+          report['balanceSummary'],
+    );
+    if (balances.isEmpty) return const [];
+
+    final balanceCurrency = ReportUtils.firstText([
+      balances['currency'],
+      currency,
+    ]);
+    final entries = <MapEntry<String, String>>[];
+    void add(String labelEn, String labelSw, dynamic value) {
+      if (value == null) return;
+      entries.add(
+        MapEntry(
+          sw ? labelSw : labelEn,
+          ReportUtils.displayMoney(value, currency: balanceCurrency),
+        ),
+      );
+    }
+
+    add(
+      'Inside Orbi total',
+      'Jumla ndani ya Orbi',
+      ReportUtils.firstNonNull([
+        balances['inside_orbi_total'],
+        balances['total_inside_orbi'],
+        balances['main_balance'],
+      ]),
+    );
+    add(
+      'Available balance',
+      'Salio linalotumika',
+      balances['available_balance'],
+    );
+    add(
+      'PaySafe / escrow',
+      'PaySafe / escrow',
+      ReportUtils.firstNonNull([
+        balances['paysafe_balance'],
+        balances['escrow_balance'],
+      ]),
+    );
+    add('Fungu pots', 'Vifungu', balances['shared_pots_balance']);
+    add('Mezani budgets', 'Mezani', balances['shared_budgets_balance']);
+    add('Goals', 'Malengo', balances['goals_balance']);
+    add(
+      'Other internal holds',
+      'Mizania mingine',
+      balances['other_internal_balance'],
+    );
+
+    return entries.where((entry) => entry.value != '-').toList();
   }
 
   Widget _transactionTable(
