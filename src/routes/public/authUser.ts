@@ -6,6 +6,7 @@ import { getAdminSupabase, getSupabase } from '../../../backend/supabaseClient.j
 import { isInstitutionalAppIdentity } from '../../../backend/config/appIdentity.js';
 import { extractBearerToken } from '../../middleware/auth/authorization.js';
 import { buildRequestLogContext, logger } from '../../../backend/infrastructure/logger.js';
+import { GlobalTimeResolver } from '../../../backend/utils/GlobalTimeResolver.js';
 
 const authRouteLogger = logger.child({ component: 'auth_public_routes' });
 const bootstrapAdminSecretHeader = 'x-orbi-bootstrap-secret';
@@ -119,6 +120,7 @@ async function ensurePublicUserRow(userId: string, sessionUser: any, fallbackMet
     role: String(metadata.role || 'USER').toUpperCase(),
     registry_type: String(metadata.registry_type || 'CONSUMER').toUpperCase(),
     app_origin: metadata.app_origin || null,
+    metadata,
   };
 
   const { error: upsertError } = await sb.from('users').upsert(profilePayload, { onConflict: 'id' });
@@ -572,7 +574,10 @@ export const registerAuthUserRoutes = (v1: Router, deps: Deps) => {
       delete (profileFields as any).email;
       delete (profileFields as any).password;
 
-      const fullMetadata = { ...metadata, ...profileFields };
+      const fullMetadata = GlobalTimeResolver.attachMetadata(
+        { ...metadata, ...profileFields },
+        GlobalTimeResolver.buildClientContextFromRequest(req.body, req.headers),
+      );
       const result = await LogicCore.signUp(email, password, fullMetadata, appId);
 
       if (result.error) {

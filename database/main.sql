@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS public.users (
     security_biometric_enabled BOOLEAN DEFAULT FALSE,
     metadata JSONB DEFAULT '{}'::jsonb
 );
+COMMENT ON COLUMN public.users.metadata IS 'User profile metadata. clientTimeContext stores the explicit registration/request timezone or UTC offset used only for user-facing display resolution; canonical financial audit timestamps remain stored in UTC columns.';
 
 -- Enforce unique phone numbers among users (NULL allowed multiple times)
 CREATE UNIQUE INDEX IF NOT EXISTS users_phone_unique
@@ -1474,8 +1475,12 @@ CREATE TABLE IF NOT EXISTS public.user_messages (
     body TEXT NOT NULL, 
     category TEXT NOT NULL, 
     is_read BOOLEAN DEFAULT FALSE, 
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb
 );
+
+COMMENT ON COLUMN public.user_messages.created_at IS 'Canonical UTC audit timestamp. User-facing displays must use metadata.audit_time/clientTimeContext timezone context when present.';
+COMMENT ON COLUMN public.user_messages.metadata IS 'Notification audit metadata, including canonical UTC, explicit user/request timezone or UTC offset, and display timestamp context.';
 
 CREATE TABLE IF NOT EXISTS public.staff_messages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(), 
@@ -4866,7 +4871,7 @@ BEGIN
         role = COALESCE(EXCLUDED.role, public.users.role),
         app_origin = COALESCE(EXCLUDED.app_origin, public.users.app_origin),
         fcm_token = COALESCE(EXCLUDED.fcm_token, public.users.fcm_token),
-        metadata = public.users.metadata || EXCLUDED.metadata;
+        metadata = COALESCE(public.users.metadata, '{}'::jsonb) || EXCLUDED.metadata;
 
     INSERT INTO public.platform_vaults (
         id, user_id, vault_role, name, balance, encrypted_balance, currency, color, icon, metadata

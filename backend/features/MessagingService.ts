@@ -19,6 +19,7 @@ import {
     NotificationBrandContext,
     resolveNotificationBrand,
 } from '../infrastructure/NotificationBrandResolver.js';
+import { GlobalTimeResolver } from '../utils/GlobalTimeResolver.js';
 
 /**
  * NEXUS MESSAGING & NOTIFICATION NODE (V5.1)
@@ -75,19 +76,20 @@ class MessagingService {
         const sb = getAdminSupabase();
         if (sb) {
             let { data: profile } = await sb.from('users')
-                .select('full_name, name, language, notif_push, notif_email, notif_security, notif_financial, notif_budget, notif_marketing, phone, nationality, email, fcm_token, id_type')
+                .select('full_name, name, language, notif_push, notif_email, notif_security, notif_financial, notif_budget, notif_marketing, phone, nationality, email, fcm_token, id_type, metadata')
                 .eq('id', userId)
                 .maybeSingle();
+            let resolvedProfile: any = profile;
                 
-            if (!profile) {
+            if (!resolvedProfile) {
                 const { data: staffProfile } = await sb.from('staff')
                     .select('full_name, name, language, notif_push, notif_email, notif_security, notif_financial, notif_budget, notif_marketing, phone, nationality, email, fcm_token, id_type')
                     .eq('id', userId)
                     .maybeSingle();
-                profile = staffProfile;
+                resolvedProfile = staffProfile;
             }
 
-            const profileData: any = profile || {};
+            const profileData: any = resolvedProfile || {};
             const { data: recentDevice } = await sb
                 .from('user_devices')
                 .select('device_name')
@@ -140,6 +142,7 @@ class MessagingService {
                 email,
                 fcm_token: profileData.fcm_token,
                 id_type: profileData.id_type,
+                metadata: profileData.metadata || {},
                 device_name: recentDevice?.device_name || 'ORBI Mobile',
             };
         }
@@ -154,8 +157,74 @@ class MessagingService {
             notif_budget: true,
             notif_marketing: false,
             nationality: 'Tanzania',
+            metadata: {},
             device_name: 'ORBI Mobile',
         };
+    }
+
+    private resolveTimeZone(profile: any, variables: Record<string, any> = {}): string {
+        const metadata = profile?.metadata && typeof profile.metadata === 'object' ? profile.metadata : {};
+        const explicit = [
+            variables.timezone,
+            variables.timeZone,
+            variables.display_timezone,
+            variables.sender_timezone,
+            metadata.timezone,
+            metadata.timeZone,
+            metadata.preferred_timezone,
+            metadata.preferredTimeZone,
+        ]
+            .map((value) => String(value || '').trim())
+            .find(Boolean);
+
+        if (explicit && this.isValidTimeZone(explicit)) return explicit;
+
+        // Financial audit rule: never infer a user's timezone from country/phone.
+        // If no explicit timezone was captured, preserve canonical UTC display.
+        return 'UTC';
+    }
+
+    private isValidTimeZone(timeZone: string): boolean {
+        try {
+            new Intl.DateTimeFormat('en-US', { timeZone }).format(new Date());
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    private buildTimeContext(profile: any, variables: Record<string, any> = {}, occurredAtUtc = new Date().toISOString()) {
+        const resolved = GlobalTimeResolver.resolve({
+            occurredAtUtc,
+            profile,
+            metadata: { clientTimeContext: variables.clientTimeContext || variables.client_time_context },
+            language: profile?.language || variables.language,
+        });
+        return {
+            canonical_utc: resolved.canonicalUtc,
+            display_timezone: resolved.timeZone,
+            display_timezone_label: resolved.timeZoneLabel,
+            display_clock: resolved.displayClock,
+            display_date_time: resolved.displayDateTime,
+            display_timestamp: resolved.displayTimestamp,
+            message_time: resolved.displayTimestamp,
+            source: resolved.source,
+        };
+    }
+
+    private timeZoneLabel(date: Date, timeZone: string): string {
+        if (timeZone === 'UTC') return 'UTC';
+        if (timeZone === 'Africa/Dar_es_Salaam' || timeZone === 'Africa/Nairobi' || timeZone === 'Africa/Kampala') return 'EAT';
+        if (timeZone === 'Africa/Johannesburg') return 'SAST';
+        try {
+            const parts = new Intl.DateTimeFormat('en-US', {
+                timeZone,
+                timeZoneName: 'short',
+            }).formatToParts(date);
+            return parts.find((part) => part.type === 'timeZoneName')?.value || timeZone;
+        } catch {
+            return timeZone;
+        }
     }
 
     private normalizeTemplateVariables(
@@ -305,6 +374,7 @@ CEO, ORBI`
             variables?: Record<string, any>,
             brand?: NotificationBrandContext | NotificationBrand,
             systemCustomBypass?: boolean,
+            metadata?: Record<string, any>,
         } = {}
     ): Promise<UserMessage | null> {
         const sb = getAdminSupabase();
@@ -345,6 +415,8 @@ CEO, ORBI`
 
         let displaySubject = subject;
         let displayBody = body;
+        const createdAtUtc = new Date().toISOString();
+        const timeContext = this.buildTimeContext(profile, options.variables, createdAtUtc);
 
         if (isTransactional && !body.includes('Ref:') && !body.includes('Kumb:')) {
             displayBody = `Ref: ${refId}. ${body}`;
@@ -363,7 +435,11 @@ CEO, ORBI`
             body: encBody as any, 
             category, 
             is_read: false, 
-            created_at: new Date().toISOString()
+            created_at: createdAtUtc,
+            metadata: {
+                ...(options.metadata || {}),
+                audit_time: timeContext,
+            },
         };
 
         // 0. Real-Time Nexus Push (Decrypted for immediate display)
@@ -378,7 +454,8 @@ CEO, ORBI`
                 event_code: options.eventCode,
                 subject: displaySubject, // Send plain text for display
                 body: displayBody,       // Send plain text for display
-                timestamp: msg.created_at
+                timestamp: msg.created_at,
+                metadata: msg.metadata,
             }
         });
         console.log(`[Messaging] Socket notification sent result: ${socketSent} for user ${userId}`);
@@ -909,7 +986,7 @@ CEO, ORBI`
         const sb = getAdminSupabase();
         if (sb) {
             const { data } = await sb.from('user_messages')
-                .select('id,user_id,subject,body,category,is_read,created_at')
+                .select('id,user_id,subject,body,category,is_read,created_at,metadata')
                 .eq('user_id', userId)
                 .order('created_at', { ascending: false })
                 .range(offset, offset + limit - 1);

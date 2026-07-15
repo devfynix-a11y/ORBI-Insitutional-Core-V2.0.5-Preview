@@ -71,27 +71,58 @@ export class WalletService {
 
             const vaults = (vaultsRes.data || [])
                 .filter(v => v.vault_role !== 'INTERNAL_TRANSFER')
-                .map(v => ({
-                ...v,
-                management_tier: 'sovereign' as const,
-                type: 'operating' as const,
-                actualBalance: Number(v.balance),
-                availableBalance: Number(v.balance),
-                balance: Number(v.balance),
-                initialBalance: 0,
-                metadata: v.metadata,
-                accountNumber: v.metadata?.account_number || v.metadata?.linked_customer_id
-            }));
+                .map(v => {
+                    const role = String(v.vault_role || '').toUpperCase();
+                    const type = role === 'OPERATING' ? 'operating' : role.toLowerCase();
+                    const metadata = {
+                        ...(v.metadata || {}),
+                        source_table: 'platform_vaults',
+                        vault_role: role,
+                    };
+                    const balance = Number(v.balance || 0);
+                    return {
+                        ...v,
+                        wallet_id: v.id,
+                        wallet_name: v.name,
+                        wallet_type: type,
+                        type,
+                        role,
+                        management_tier: 'sovereign' as const,
+                        is_primary: role === 'OPERATING',
+                        actualBalance: balance,
+                        actual_balance: balance,
+                        availableBalance: balance,
+                        available_balance: balance,
+                        ledger_balance: balance,
+                        balance,
+                        initialBalance: 0,
+                        metadata,
+                        accountNumber: v.account_number || metadata.account_number || metadata.linked_customer_id,
+                        account_number: v.account_number || metadata.account_number || metadata.linked_customer_id,
+                        source_table: 'platform_vaults',
+                    };
+                });
 
             const linked = (linkedRes.data || []).map(l => ({
                 ...l,
+                wallet_id: l.id,
+                wallet_name: l.name,
+                wallet_type: l.type,
                 management_tier: 'linked' as const,
                 actualBalance: Number(l.balance),
+                actual_balance: Number(l.balance),
                 availableBalance: Number(l.balance),
+                available_balance: Number(l.balance),
+                ledger_balance: Number(l.balance),
                 balance: Number(l.balance),
                 initialBalance: 0,
-                metadata: l.metadata,
-                accountNumber: l.account_number || l.metadata?.account_number
+                metadata: {
+                    ...(l.metadata || {}),
+                    source_table: 'wallets',
+                },
+                accountNumber: l.account_number || l.metadata?.account_number,
+                account_number: l.account_number || l.metadata?.account_number,
+                source_table: 'wallets',
             }));
 
             return [...vaults, ...linked];

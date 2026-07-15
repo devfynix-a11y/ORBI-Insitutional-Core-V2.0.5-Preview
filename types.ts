@@ -200,6 +200,7 @@ export interface UserMessage {
     category: 'security' | 'update' | 'promo' | 'info';
     is_read: boolean;
     created_at: string;
+    metadata?: any;
 }
 
 export interface StaffMessage {

@@ -3,6 +3,7 @@ import {
   requireIdempotencyKey,
   resolveIdempotencyHeader,
 } from '../../middleware/security/idempotency.js';
+import { GlobalTimeResolver } from '../../../backend/utils/GlobalTimeResolver.js';
 
 type Deps = {
   authenticate: RequestHandler;
@@ -86,6 +87,16 @@ const enrichTransactionGeoMetadata = (req: any) => {
     },
   };
   return req.body;
+};
+
+const enrichTransactionTimeMetadata = (req: any) => {
+  req.body = {
+    ...req.body,
+    metadata: GlobalTimeResolver.attachMetadata(
+      req.body?.metadata || {},
+      GlobalTimeResolver.buildClientContextFromRequest(req.body || {}, req.headers || {}),
+    ),
+  };
 };
 
 type ReportRangeKey = 'week' | 'month' | 'year';
@@ -940,6 +951,7 @@ export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
     const idempotencyKey = resolveIdempotencyHeader(req);
 
     try {
+      enrichTransactionTimeMetadata(req);
       enrichTransactionGeoMetadata(req);
       const binding = await LogicCore.bindSettlementQuote(
         session.sub,
@@ -1002,6 +1014,7 @@ export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
   v1.post('/transactions/preview', authenticate as any, validate(PaymentIntentSchema), async (req, res) => {
     const session = (req as any).session;
     try {
+      enrichTransactionTimeMetadata(req);
       enrichTransactionGeoMetadata(req);
       const result = await LogicCore.getTransactionPreview(session.sub, req.body);
       if (!result.success) {

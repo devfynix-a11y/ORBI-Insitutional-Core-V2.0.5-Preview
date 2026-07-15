@@ -7,6 +7,7 @@ import { platformFeeService } from './PlatformFeeService.js';
 import { providerRoutingService } from './ProviderRoutingService.js';
 import { FXEngine } from '../ledger/FXEngine.js';
 import { transactionFeeClassifier } from './TransactionFeeClassifier.js';
+import { logger } from '../infrastructure/logger.js';
 import { createHash, createHmac } from 'crypto';
 
 type QuoteInput = {
@@ -51,6 +52,8 @@ type TransactionGeoSignal = {
   consented: boolean | null;
   capturedAt: string | null;
 };
+
+const quoteLogger = logger.child({ component: 'transaction_quote_service' });
 
 type QuoteBindingResult = {
   quoteId: string;
@@ -249,6 +252,25 @@ export class TransactionQuoteService {
       warnings: this.buildWarnings(type, balance, totalDebit, risk.decision, issues),
     };
 
+    quoteLogger.info('transaction.preview_result', {
+      actor_id: userId,
+      quote_id: quoteId,
+      can_submit: canSubmit,
+      state,
+      status: quote.status,
+      risk_decision: risk.decision,
+      type,
+      amount,
+      currency,
+      source_wallet_resolved: Boolean(sourceWallet?.id),
+      target_wallet_resolved: Boolean(targetWallet?.id),
+      issue_summary: issues.map((issue) => ({
+        code: issue.code,
+        severity: issue.severity,
+        subject: issue.subject,
+      })),
+    });
+
     const quoteHash = this.hashCanonicalIntent(this.buildCanonicalIntent(payload, quote));
     const quoteSignature = this.signQuote(quoteId, quoteHash, expiresAt, userId);
     await this.persistQuote({
@@ -324,7 +346,8 @@ export class TransactionQuoteService {
     }
 
     const storedSignature = String(quoteRow.quote_signature || '');
-    const expectedSignature = this.signQuote(quoteId, expectedHash, String(quoteRow.expires_at || ''), args.userId);
+    const canonicalExpiresAt = String(quote.expiresAt || quoteRow.expires_at || '');
+    const expectedSignature = this.signQuote(quoteId, expectedHash, canonicalExpiresAt, args.userId);
     if (storedSignature && storedSignature !== expectedSignature) {
       throw new Error('QUOTE_SIGNATURE_INVALID: Transaction preview integrity check failed.');
     }
@@ -1127,23 +1150,27 @@ export class TransactionQuoteService {
   ): PreflightIssue[] {
     const current = this.extractTransactionGeo(metadata);
     const issues: PreflightIssue[] = [];
+    const networkFallback = this.isNetworkGeoFallback(current, metadata);
 
     if (!this.hasSufficientGeo(current)) {
       issues.push({
         code: 'TRANSACTION_GEO_REQUIRED',
         severity: 'blocking',
         subject: 'geo_compliance',
-        message: 'Transaction location is required before this preview can continue.',
+        message: networkFallback
+          ? 'Device GPS location is required. Network/IP location is not enough to complete this transaction.'
+          : 'Transaction location is required before this preview can continue.',
         metadata: {
           required: ['metadata.geo.countryCode', 'metadata.geo.region or rounded coordinates'],
           source: current.source,
           consented: current.consented,
+          fallback: networkFallback,
         },
       });
       return issues;
     }
 
-    if (current.consented === false) {
+    if (current.consented === false && !networkFallback) {
       issues.push({
         code: 'TRANSACTION_GEO_CONSENT_REQUIRED',
         severity: 'blocking',
@@ -1323,6 +1350,17 @@ export class TransactionQuoteService {
     return geo.latitude !== null && geo.longitude !== null;
   }
 
+  private isNetworkGeoFallback(geo: TransactionGeoSignal, metadata: Record<string, any>) {
+    const riskContext = this.objectValue(metadata.riskContext);
+    const source = String(geo.source || '').toLowerCase();
+    return (
+      riskContext.locationFallback === true ||
+      source.includes('network_ip') ||
+      source.includes('ip_geo') ||
+      source.includes('request_ip')
+    );
+  }
+
   private geoTimestampMs(geo: TransactionGeoSignal) {
     if (!geo.capturedAt) return null;
     const time = new Date(geo.capturedAt).getTime();
@@ -1469,6 +1507,12 @@ export class TransactionQuoteService {
         return 'No active platform fee configuration matches this transaction model and category.';
       case 'DB_OFFLINE':
         return 'Database is not reachable for transaction preview.';
+      case 'LEDGER_BALANCE_UNAVAILABLE':
+        return 'Ledger balance is temporarily unavailable for the selected source wallet.';
+      case 'LEDGER_BALANCE_INVALID':
+        return 'Ledger balance could not be verified for the selected source wallet.';
+      case 'SOURCE_WALLET_REQUIRED_FOR_BALANCE':
+        return 'A verified source wallet is required before this transaction can continue.';
       default:
         return detail || code;
     }

@@ -64,9 +64,38 @@ export class PlatformFeeService {
       }
     }
 
+    const feeConfigColumns = [
+      'id',
+      'name',
+      'flow_code',
+      'transaction_model',
+      'category_code',
+      'category_id',
+      'transaction_type',
+      'operation_type',
+      'direction',
+      'rail',
+      'channel',
+      'provider_id',
+      'currency',
+      'country_code',
+      'percentage_rate',
+      'fixed_amount',
+      'minimum_fee',
+      'maximum_fee',
+      'tax_rate',
+      'gov_fee_rate',
+      'stamp_duty_fixed',
+      'priority',
+      'status',
+      'metadata',
+      'created_at',
+      'updated_at',
+    ].join(', ');
+
     let query = sb
       .from('platform_fee_configs')
-      .select('*, financial_partners(id, name, type, provider_metadata)')
+      .select(feeConfigColumns)
       .order('flow_code', { ascending: true })
       .order('priority', { ascending: true })
       .order('updated_at', { ascending: false });
@@ -77,7 +106,7 @@ export class PlatformFeeService {
     // wildcard rows with NULL fields remain eligible as production fallbacks.
     const { data, error } = await query;
     if (error) throw new Error(error.message);
-    const rows = data || [];
+    const rows = (data || []) as unknown as PlatformFeeConfig[];
     this.cache.set(cacheKey, { expiresAt: Date.now() + this.cacheTtlMs, data: rows });
     if (redis && process.env.ORBI_DISABLE_REDIS_CACHE !== 'true') {
       try {

@@ -212,7 +212,7 @@ export class TransactionService {
         try {
             const { data: legs, error } = await sb
                 .from('financial_ledger')
-                .select('amount, entry_type')
+                .select('amount, entry_side, entry_type')
                 .eq('wallet_id', walletId);
 
             if (error) throw error;
@@ -221,44 +221,33 @@ export class TransactionService {
             let balance = 0;
             for (const leg of legs) {
                 const amount = await DataProtection.decryptAmount(leg.amount);
-                if (leg.entry_type === 'CREDIT') {
+                const side = String(leg.entry_side || leg.entry_type || '').toUpperCase();
+                if (side === 'CREDIT' || side === 'DEPOSIT' || side === 'REFUND') {
                     balance += amount;
-                } else {
+                } else if (side === 'DEBIT' || side === 'WITHDRAWAL' || side === 'PAYMENT') {
                     balance -= amount;
+                } else {
+                    ledgerLogger.warn('ledger.unknown_entry_side_ignored', { wallet_id: walletId, entry_side: leg.entry_side, entry_type: leg.entry_type });
                 }
             }
 
             return Math.round(balance * 10000) / 10000;
         } catch (e: any) {
             ledgerLogger.error('ledger.balance_calculation_failed', { wallet_id: walletId }, e);
-            return 0;
+            throw new Error(`LEDGER_BALANCE_UNAVAILABLE:${walletId}`);
         }
     }
 
     public async getLatestBalance(userId: string, walletId: string | null): Promise<number> {
-        if (!walletId) return 0;
-
-        try {
-            const ledgerBalance = await this.calculateBalanceFromLedger(walletId);
-            const cachedBalance = await this.getCachedBalanceSnapshot(walletId);
-            if (cachedBalance !== null && Math.abs(cachedBalance - ledgerBalance) > 0.01) {
-                ledgerLogger.warn('ledger.balance_drift_detected', { wallet_id: walletId, actor_id: userId, cached_balance: cachedBalance, ledger_balance: ledgerBalance });
-            }
-
-            return ledgerBalance;
-        } catch (e) {
-            ledgerLogger.error('ledger.latest_balance_failed', { wallet_id: walletId, actor_id: userId }, e);
-        }
-
-        const cachedBalance = await this.getCachedBalanceSnapshot(walletId);
-        if (cachedBalance !== null) {
-            return cachedBalance;
-        }
-
+        if (!walletId) throw new Error('SOURCE_WALLET_REQUIRED_FOR_BALANCE');
         const ledgerBalance = await this.calculateBalanceFromLedger(walletId);
+        const cachedBalance = await this.getCachedBalanceSnapshot(walletId);
+        if (cachedBalance !== null && Math.abs(cachedBalance - ledgerBalance) > 0.01) {
+            ledgerLogger.warn('ledger.balance_drift_detected', { wallet_id: walletId, actor_id: userId, cached_balance: cachedBalance, ledger_balance: ledgerBalance });
+        }
         if (ledgerBalance === null || ledgerBalance === undefined || isNaN(ledgerBalance)) {
             ledgerLogger.error('ledger.invalid_balance_result', { wallet_id: walletId, actor_id: userId, ledger_balance: ledgerBalance });
-            return 0;
+            throw new Error(`LEDGER_BALANCE_INVALID:${walletId}`);
         }
         return ledgerBalance;
     }

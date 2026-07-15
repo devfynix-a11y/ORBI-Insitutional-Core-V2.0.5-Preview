@@ -21,6 +21,7 @@ import { MonitoringService } from '../infrastructure/MonitoringService.js';
 
 import { Messaging } from '../features/MessagingService.js';
 import { SocketRegistry } from '../infrastructure/SocketRegistry.js';
+import { GlobalTimeResolver } from '../utils/GlobalTimeResolver.js';
 
 /**
  * ORBI ATOMIC BANKING ENGINE (V12.0 Titanium)
@@ -29,6 +30,94 @@ import { SocketRegistry } from '../infrastructure/SocketRegistry.js';
  * in a distributed cloud environment.
  */
 const bankingLogger = logger.child({ component: 'banking_engine' });
+
+function isValidTimeZone(timeZone: string): boolean {
+    try {
+        new Intl.DateTimeFormat('en-US', { timeZone }).format(new Date());
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function resolveProfileTimeZone(profile: any, authUser?: any): string {
+    const metadata = profile?.metadata && typeof profile.metadata === 'object' ? profile.metadata : {};
+    const authMetadata = authUser?.user_metadata && typeof authUser.user_metadata === 'object' ? authUser.user_metadata : {};
+    const explicit = [
+        metadata.timezone,
+        metadata.timeZone,
+        metadata.preferred_timezone,
+        metadata.preferredTimeZone,
+        authMetadata.timezone,
+        authMetadata.timeZone,
+        authMetadata.preferred_timezone,
+        authMetadata.preferredTimeZone,
+    ]
+        .map((value) => String(value || '').trim())
+        .find(Boolean);
+
+    if (explicit && isValidTimeZone(explicit)) return explicit;
+
+    // Financial audit rule: do not infer timezone from country, phone, or IP.
+    // If the client/profile did not explicitly provide timezone, display UTC.
+    return 'UTC';
+}
+
+function timeZoneLabel(date: Date, timeZone: string): string {
+    if (timeZone === 'UTC') return 'UTC';
+    if (['Africa/Dar_es_Salaam', 'Africa/Nairobi', 'Africa/Kampala'].includes(timeZone)) return 'EAT';
+    if (timeZone === 'Africa/Johannesburg') return 'SAST';
+    try {
+        const parts = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'short' }).formatToParts(date);
+        return parts.find((part) => part.type === 'timeZoneName')?.value || timeZone;
+    } catch {
+        return timeZone;
+    }
+}
+
+function formatOffsetLabel(offsetMinutes: number): string {
+    if (!Number.isFinite(offsetMinutes) || offsetMinutes === 0) return 'UTC';
+    const sign = offsetMinutes < 0 ? '-' : '+';
+    const absolute = Math.abs(Math.trunc(offsetMinutes));
+    const hours = String(Math.floor(absolute / 60)).padStart(2, '0');
+    const minutes = String(absolute % 60).padStart(2, '0');
+    return `UTC${sign}${hours}:${minutes}`;
+}
+
+function formatClockWithOffset(date: Date, offsetMinutes: number): string {
+    const shifted = new Date(date.getTime() + offsetMinutes * 60_000);
+    const hours = String(shifted.getUTCHours()).padStart(2, '0');
+    const minutes = String(shifted.getUTCMinutes()).padStart(2, '0');
+    return `${hours}:${minutes}`;
+}
+
+function explicitOffsetMinutes(metadata: any): number | null {
+    const ctx = metadata?.clientTimeContext || metadata?.client_time_context || {};
+    const raw = ctx.timezone_offset_minutes ?? ctx.timeZoneOffsetMinutes ?? metadata?.timezone_offset_minutes;
+    const parsed = typeof raw === 'number' ? raw : Number(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function explicitTimeZone(metadata: any): string | null {
+    const ctx = metadata?.clientTimeContext || metadata?.client_time_context || {};
+    const value = String(ctx.timezone || ctx.timeZone || metadata?.timezone || metadata?.timeZone || '').trim();
+    return value && isValidTimeZone(value) ? value : null;
+}
+
+function formatMessageTime(occurredAtUtc: string, profile: any, authUser: any, language: string, metadata: any = {}): { display: string; timezone: string; canonicalUtc: string } {
+    const resolved = GlobalTimeResolver.resolve({
+        occurredAtUtc,
+        profile,
+        authUser,
+        language,
+        metadata,
+    });
+    return {
+        display: resolved.displayTimestamp,
+        timezone: resolved.timeZone,
+        canonicalUtc: resolved.canonicalUtc,
+    };
+}
 
 export class BankingEngineService {
     
@@ -412,16 +501,18 @@ export class BankingEngineService {
                     });
 
                     // 4. Credit Fee Collector (FX Fee in Target Currency)
-                    const feeCollectorId = await RegulatoryService.resolveSystemNode('FEE_COLLECTOR');
-                    legs.push({
-                        transactionId: txId,
-                        walletId: feeCollectorId,
-                        type: 'CREDIT',
-                        amount: fxDetails.fee,
-                        currency: fxDetails.feeCurrency || targetCurrency,
-                        description: `FX Fee Collection: ${txId}`,
-                        timestamp: new Date().toISOString()
-                    });
+                    if (this.isPositiveAmount(fxDetails.fee)) {
+                        const feeCollectorId = await RegulatoryService.resolveSystemNode('FEE_COLLECTOR');
+                        legs.push({
+                            transactionId: txId,
+                            walletId: feeCollectorId,
+                            type: 'CREDIT',
+                            amount: fxDetails.fee,
+                            currency: fxDetails.feeCurrency || targetCurrency,
+                            description: `FX Fee Collection: ${txId}`,
+                            timestamp: new Date().toISOString()
+                        });
+                    }
                 } else {
                     // Standard single-currency PaySafe lock
                     legs.push({
@@ -436,16 +527,18 @@ export class BankingEngineService {
                 }
 
                 // 5. Credit Fee Collector (Regulatory Fees in Source Currency)
-                const feeCollectorId = await RegulatoryService.resolveSystemNode('FEE_COLLECTOR');
-                legs.push({
-                    transactionId: txId,
-                    walletId: feeCollectorId,
-                    type: 'CREDIT',
-                    amount: fees.total,
-                    currency: sourceCurrency,
-                    description: `PaySafe Fee Collection: ${txId}`,
-                    timestamp: new Date().toISOString()
-                });
+                if (this.isPositiveAmount(fees.total)) {
+                    const feeCollectorId = await RegulatoryService.resolveSystemNode('FEE_COLLECTOR');
+                    legs.push({
+                        transactionId: txId,
+                        walletId: feeCollectorId,
+                        type: 'CREDIT',
+                        amount: fees.total,
+                        currency: sourceCurrency,
+                        description: `PaySafe Fee Collection: ${txId}`,
+                        timestamp: new Date().toISOString()
+                    });
+                }
 
                 return { legs, balanceHint };
             } else {
@@ -504,16 +597,18 @@ export class BankingEngineService {
                 });
 
                 // Credit Fee Collector (FX Fee in Target Currency)
-                const feeCollectorId = await RegulatoryService.resolveSystemNode('FEE_COLLECTOR');
-                legs.push({
-                    transactionId: txId,
-                    walletId: feeCollectorId,
-                    type: 'CREDIT',
-                    amount: fxDetails.fee,
-                    currency: fxDetails.feeCurrency || targetCurrency,
-                    description: `FX Fee Collection: ${txId}`,
-                    timestamp: new Date().toISOString()
-                });
+                if (this.isPositiveAmount(fxDetails.fee)) {
+                    const feeCollectorId = await RegulatoryService.resolveSystemNode('FEE_COLLECTOR');
+                    legs.push({
+                        transactionId: txId,
+                        walletId: feeCollectorId,
+                        type: 'CREDIT',
+                        amount: fxDetails.fee,
+                        currency: fxDetails.feeCurrency || targetCurrency,
+                        description: `FX Fee Collection: ${txId}`,
+                        timestamp: new Date().toISOString()
+                    });
+                }
             } else {
                 legs.push({
                     transactionId: txId,
@@ -528,18 +623,25 @@ export class BankingEngineService {
         }
 
         // Credit Fees for external transactions too (Regulatory Fees in Source Currency)
-        const feeCollectorId = await RegulatoryService.resolveSystemNode('FEE_COLLECTOR');
-        legs.push({
-            transactionId: txId,
-            walletId: feeCollectorId,
-            type: 'CREDIT',
-            amount: fees.total,
-            currency: sourceCurrency,
-            description: `Fee Collection: ${txId}`,
-            timestamp: new Date().toISOString()
-        });
+        if (this.isPositiveAmount(fees.total)) {
+            const feeCollectorId = await RegulatoryService.resolveSystemNode('FEE_COLLECTOR');
+            legs.push({
+                transactionId: txId,
+                walletId: feeCollectorId,
+                type: 'CREDIT',
+                amount: fees.total,
+                currency: sourceCurrency,
+                description: `Fee Collection: ${txId}`,
+                timestamp: new Date().toISOString()
+            });
+        }
 
         return { legs, balanceHint };
+    }
+
+    private isPositiveAmount(value: unknown): boolean {
+        const amount = Number(value);
+        return Number.isFinite(amount) && amount > 0;
     }
 
     private async commitToCloud(userId: string, txId: string, intent: any, legs: LedgerEntry[], status: TransactionStatus = 'completed') {
@@ -837,7 +939,7 @@ export class BankingEngineService {
             }
 
             // Fetch Sender Details
-            const { data: senderProfile } = await sb.from('users').select('full_name, customer_id, language').eq('id', senderId).maybeSingle();
+            const { data: senderProfile } = await sb.from('users').select('full_name, customer_id, language, nationality, phone, metadata').eq('id', senderId).maybeSingle();
             const { data: senderAuth } = await sb.auth.admin.getUserById(senderId);
             const { data: senderWallet } = await sb.from('wallets').select('account_number').eq('id', fromWalletId).maybeSingle();
             
@@ -845,7 +947,7 @@ export class BankingEngineService {
             let recipientProfile = null;
             let recipientAuth = null;
             if (recipientId) {
-                const { data: rp } = await sb.from('users').select('full_name, customer_id, language').eq('id', recipientId).maybeSingle();
+                const { data: rp } = await sb.from('users').select('full_name, customer_id, language, nationality, phone, metadata').eq('id', recipientId).maybeSingle();
                 recipientProfile = rp;
                 const { data: ra } = await sb.auth.admin.getUserById(recipientId);
                 recipientAuth = ra;
@@ -858,7 +960,7 @@ export class BankingEngineService {
             
             const currency = tx.currency;
             const targetCurrency = tx.metadata?.target_currency || currency;
-            const timestamp = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase();
+            const occurredAtUtc = tx.created_at || tx.createdAt || tx.date || new Date().toISOString();
             const refId = tx.reference_id || tx.referenceId || txId;
 
             bankingLogger.info('banking.transfer_notifications_resolved', { transaction_id: txId, actor_id: senderId, recipient_id: recipientId, reference_id: refId });
@@ -869,6 +971,7 @@ export class BankingEngineService {
             if (recipientId) {
                  const recipientLang = recipientProfile?.language || 'en';
                  const isSw = recipientLang === 'sw';
+                 const recipientTime = formatMessageTime(occurredAtUtc, recipientProfile, recipientAuth?.user, recipientLang, tx.metadata);
                  const footer = isSw 
                     ? "Asante kwa kuichagua ORBI, tunathamini imani yako. Timu ya Kifedha ya ORBI"
                     : "Thank you For choosing ORBI, We value your trust. The ORBI Financial Team";
@@ -885,7 +988,9 @@ export class BankingEngineService {
                  let variables: any = {
                      amount: targetAmount.toLocaleString(),
                      currency: targetCurrency,
-                     timestamp,
+                     timestamp: recipientTime.display,
+                     occurred_at_utc: recipientTime.canonicalUtc,
+                     display_timezone: recipientTime.timezone,
                      refId
                  };
 
@@ -894,8 +999,8 @@ export class BankingEngineService {
                      variables.employeeName = recipientName;
                      variables.month = month;
                      recipientMsg = isSw
-                        ? `Ndugu ${recipientName}, mshahara wako wa mwezi ${month} kiasi cha ${targetCurrency} ${targetAmount.toLocaleString()} umeingia kwenye akaunti yako ya ORBI saa ${timestamp}. Kumbukumbu ${refId}. ${footer}`
-                        : `Dear ${recipientName}, your salary for ${month} of ${targetCurrency} ${targetAmount.toLocaleString()} has been credited to your ORBI account at ${timestamp}. Reference ${refId}. ${footer}`;
+                        ? `Ndugu ${recipientName}, mshahara wako wa mwezi ${month} kiasi cha ${targetCurrency} ${targetAmount.toLocaleString()} umeingia kwenye akaunti yako ya ORBI saa ${recipientTime.display}. Kumbukumbu ${refId}. ${footer}`
+                        : `Dear ${recipientName}, your salary for ${month} of ${targetCurrency} ${targetAmount.toLocaleString()} has been credited to your ORBI account at ${recipientTime.display}. Reference ${refId}. ${footer}`;
                  } else if (isEscrow) {
                      templateName = 'Escrow_Created';
                      // Escrow_Created template only requires currency and amount
@@ -910,8 +1015,8 @@ export class BankingEngineService {
                      variables.recipientName = recipientName;
                      variables.senderName = senderName;
                      recipientMsg = isSw
-                        ? `Ndugu ${recipientName} umefanikiwa kupokea ${targetCurrency} ${targetAmount.toLocaleString()}/= kwenye akaunti yako ya ORBI kutoka kwa ${senderName} saa ${timestamp}. Kumbukumbu ${refId} . ${footer}`
-                        : `Dear ${recipientName} you have successfully received ${targetCurrency} ${targetAmount.toLocaleString()}/= on your ORBI account from ${senderName} at ${timestamp}. Reference ${refId} . ${footer}`;
+                        ? `Ndugu ${recipientName} umefanikiwa kupokea ${targetCurrency} ${targetAmount.toLocaleString()}/= kwenye akaunti yako ya ORBI kutoka kwa ${senderName} saa ${recipientTime.display}. Kumbukumbu ${refId} . ${footer}`
+                        : `Dear ${recipientName} you have successfully received ${targetCurrency} ${targetAmount.toLocaleString()}/= on your ORBI account from ${senderName} at ${recipientTime.display}. Reference ${refId} . ${footer}`;
                  }
                  
                  promises.push(Messaging.dispatch(recipientId, 'info', subject, recipientMsg, { 
@@ -934,13 +1039,14 @@ export class BankingEngineService {
             // Notification for Sender
             const senderLang = senderProfile?.language || 'en';
             const isSenderSw = senderLang === 'sw';
+            const senderTime = formatMessageTime(occurredAtUtc, senderProfile, senderAuth?.user, senderLang, tx.metadata);
             const senderFooter = isSenderSw 
                 ? "Asante kwa kuichagua ORBI, tunathamini imani yako. Timu ya Kifedha ya ORBI"
                 : "Thank you For choosing ORBI, We value your trust. The ORBI Financial Team";
             const senderSubject = isSenderSw ? 'Uhamisho Umekamilika' : 'Transfer Completed';
             const senderMsg = isSenderSw
-                ? `Ndugu ${senderName} umefanikiwa kutuma ${currency} ${amount.toLocaleString()}/= kutoka kwenye akaunti yako ya ORBI kwenda kwa ${recipientName} saa ${timestamp}. Kumbukumbu ${refId} . ${senderFooter}`
-                : `Dear ${senderName} you have successfully sent ${currency} ${amount.toLocaleString()}/= from your ORBI account to ${recipientName} at ${timestamp}. Reference ${refId} . ${senderFooter}`;
+                ? `Ndugu ${senderName} umefanikiwa kutuma ${currency} ${amount.toLocaleString()}/= kutoka kwenye akaunti yako ya ORBI kwenda kwa ${recipientName} saa ${senderTime.display}. Kumbukumbu ${refId} . ${senderFooter}`
+                : `Dear ${senderName} you have successfully sent ${currency} ${amount.toLocaleString()}/= from your ORBI account to ${recipientName} at ${senderTime.display}. Reference ${refId} . ${senderFooter}`;
             
             promises.push(Messaging.dispatch(senderId, 'info', senderSubject, senderMsg, { 
                 sms: true,
@@ -951,7 +1057,9 @@ export class BankingEngineService {
                     amount: amount.toLocaleString(),
                     currency,
                     recipientName,
-                    timestamp,
+                    timestamp: senderTime.display,
+                    occurred_at_utc: senderTime.canonicalUtc,
+                    display_timezone: senderTime.timezone,
                     refId
                 }
             }));
