@@ -90,6 +90,40 @@ export class TransactionService {
         ]);
     }
 
+    private isOperatingWalletRecord(wallet: any): boolean {
+        const text = [
+            wallet?.display_name,
+            wallet?.wallet_name,
+            wallet?.name,
+            wallet?.type,
+            wallet?.wallet_type,
+            wallet?.bucket_type,
+            wallet?.vault_role,
+            wallet?.role,
+            wallet?.management_tier,
+        ].map((value) => String(value || '').toLowerCase()).join(' ');
+        if (/(escrow|paysafe|pay safe|goal|saving|budget|mezani|pot|fungu|reserve|bill)/.test(text)) {
+            return false;
+        }
+        return /(operating|main|internal vault|default|dilpesa|spendable|available)/.test(text);
+    }
+
+    private pickGeneralBalanceLeg(
+        legs: any[],
+        userId: string,
+        ownedWalletIds: Set<string>,
+        walletMap: Record<string, any>,
+    ): any {
+        const ownedLegs = (legs || []).filter((leg: any) =>
+            String(leg?.user_id || '') === String(userId) ||
+            ownedWalletIds.has(String(leg?.wallet_id || ''))
+        );
+        const operatingLeg = ownedLegs.find((leg: any) =>
+            this.isOperatingWalletRecord(walletMap[String(leg?.wallet_id || '')])
+        );
+        return operatingLeg || ownedLegs[0] || legs?.[0];
+    }
+
     private partyDisplayName(user: any, wallet: any, fallback?: string): string {
         return this.firstDisplayText([
             user?.full_name,
@@ -880,10 +914,10 @@ export class TransactionService {
 
             const walletIdList = Array.from(allWalletIds);
             const { data: walletNames } = walletIdList.length
-                ? await sb.from('wallets').select('id, name, user_id').in('id', walletIdList)
+                ? await sb.from('wallets').select('id, name, wallet_name, type, wallet_type, bucket_type, management_tier, role, user_id').in('id', walletIdList)
                 : { data: [] as any[] };
             const { data: vaultNames } = walletIdList.length
-                ? await sb.from('platform_vaults').select('id, name, user_id').in('id', walletIdList)
+                ? await sb.from('platform_vaults').select('id, name, vault_name, vault_role, type, user_id').in('id', walletIdList)
                 : { data: [] as any[] };
             const { data: goalNames } = walletIdList.length
                 ? await sb.from('goals').select('id, name, user_id').in('id', walletIdList)
@@ -959,10 +993,6 @@ export class TransactionService {
                 const txLegs = legsByTransaction[String(tx.id || '')] || [];
                 const debitLeg = txLegs.find((leg: any) => String(leg.entry_side || leg.entry_type || '').toUpperCase().includes('DEBIT'));
                 const creditLeg = txLegs.find((leg: any) => String(leg.entry_side || leg.entry_type || '').toUpperCase().includes('CREDIT'));
-                const userLeg = txLegs.find((leg: any) =>
-                    String(leg.user_id || '') === String(userId) ||
-                    ownedWalletIdSet.has(String(leg.wallet_id || ''))
-                );
                 const isSender = tx.user_id === userId;
                 const sourceWallet = walletMap[String((debitLeg?.wallet_id || tx.walletId || ''))];
                 const targetWallet = walletMap[String((creditLeg?.wallet_id || tx.toWalletId || ''))];
@@ -972,7 +1002,13 @@ export class TransactionService {
                 const senderUser = userMap[senderUserId];
                 const receiverUser = userMap[receiverUserId];
 
-                const direction = isSender ? 'DEBIT' : 'CREDIT';
+                const balanceLeg = this.pickGeneralBalanceLeg(txLegs, userId, ownedWalletIdSet, walletMap);
+                const balanceSide = String(balanceLeg?.entry_side || balanceLeg?.entry_type || '').toUpperCase();
+                const direction = balanceSide.includes('CREDIT')
+                    ? 'CREDIT'
+                    : balanceSide.includes('DEBIT')
+                      ? 'DEBIT'
+                      : isSender ? 'DEBIT' : 'CREDIT';
                 const statusRaw = String(tx.status || '').toLowerCase();
                 const normalizedStatus =
                     statusRaw === 'processing'
@@ -991,7 +1027,7 @@ export class TransactionService {
                     targetWallet,
                     tx.metadata?.recipient_snapshot?.name || targetWalletName,
                 );
-                const balanceAfter = userLeg?.balance_after ?? tx.balance_after ?? tx.balanceAfter ?? null;
+                const balanceAfter = balanceLeg?.balance_after ?? tx.balance_after ?? tx.balanceAfter ?? null;
 
                 return {
                     ...tx,
@@ -1003,6 +1039,17 @@ export class TransactionService {
                     balance_after: balanceAfter,
                     balanceAfter,
                     running_balance: balanceAfter,
+                    balance_scope: 'OPERATING_WALLET',
+                    ledger: {
+                        id: balanceLeg?.id,
+                        transaction_id: balanceLeg?.transaction_id || tx.id,
+                        user_id: balanceLeg?.user_id || userId,
+                        wallet_id: balanceLeg?.wallet_id || null,
+                        entry_side: balanceLeg?.entry_side || balanceLeg?.entry_type || null,
+                        entry_type: balanceLeg?.entry_type || balanceLeg?.entry_side || null,
+                        balance_after: balanceAfter,
+                        balance_scope: 'OPERATING_WALLET',
+                    },
                     ledger_legs: txLegs.map((leg: any) => ({
                         id: leg.id,
                         transaction_id: leg.transaction_id,
@@ -1118,10 +1165,6 @@ export class TransactionService {
         if (!transaction) return null;
         const debitLeg = ledgerRows.find((leg: any) => String(leg.entry_side || leg.entry_type || '').toUpperCase().includes('DEBIT'));
         const creditLeg = ledgerRows.find((leg: any) => String(leg.entry_side || leg.entry_type || '').toUpperCase().includes('CREDIT'));
-        const userLeg = ledgerRows.find((leg: any) =>
-            String(leg.user_id || '') === String(userId) ||
-            ownedWalletIds.has(String(leg.wallet_id || ''))
-        );
         const walletIdList = Array.from(new Set(
             ledgerRows
                 .map((leg: any) => String(leg.wallet_id || '').trim())
@@ -1129,10 +1172,10 @@ export class TransactionService {
         ));
         const [{ data: walletNames }, { data: vaultNames }, { data: goalNames }] = await Promise.all([
             walletIdList.length
-                ? sb.from('wallets').select('id, name, user_id').in('id', walletIdList)
+                ? sb.from('wallets').select('id, name, wallet_name, type, wallet_type, bucket_type, management_tier, role, user_id').in('id', walletIdList)
                 : Promise.resolve({ data: [] as any[] }),
             walletIdList.length
-                ? sb.from('platform_vaults').select('id, name, user_id').in('id', walletIdList)
+                ? sb.from('platform_vaults').select('id, name, vault_name, vault_role, type, user_id').in('id', walletIdList)
                 : Promise.resolve({ data: [] as any[] }),
             walletIdList.length
                 ? sb.from('goals').select('id, name, user_id').in('id', walletIdList)
@@ -1168,7 +1211,8 @@ export class TransactionService {
             targetWallet,
             transaction.metadata?.recipient_snapshot?.name || targetWalletName,
         );
-        const balanceAfter = userLeg?.balance_after ?? transaction.balance_after ?? transaction.balanceAfter ?? null;
+        const balanceLeg = this.pickGeneralBalanceLeg(ledgerRows, userId, ownedWalletIds, walletMap);
+        const balanceAfter = balanceLeg?.balance_after ?? transaction.balance_after ?? transaction.balanceAfter ?? null;
 
         return {
             ...transaction,
@@ -1179,6 +1223,17 @@ export class TransactionService {
             balance_after: balanceAfter,
             balanceAfter,
             running_balance: balanceAfter,
+            balance_scope: 'OPERATING_WALLET',
+            ledger: {
+                id: balanceLeg?.id,
+                transaction_id: balanceLeg?.transaction_id || transaction.id,
+                user_id: balanceLeg?.user_id || userId,
+                wallet_id: balanceLeg?.wallet_id || null,
+                entry_side: balanceLeg?.entry_side || balanceLeg?.entry_type || null,
+                entry_type: balanceLeg?.entry_type || balanceLeg?.entry_side || null,
+                balance_after: balanceAfter,
+                balance_scope: 'OPERATING_WALLET',
+            },
             ledger_legs: ledgerRows.map((leg: any) => ({
                 id: leg.id,
                 transaction_id: leg.transaction_id,

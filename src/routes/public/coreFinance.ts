@@ -436,6 +436,40 @@ const normalizeWalletName = (wallet: any, fallback?: string): string | undefined
   fallback,
 ]);
 
+const isOperatingWalletRecord = (wallet: any): boolean => {
+  const text = [
+    wallet?.display_name,
+    wallet?.wallet_name,
+    wallet?.name,
+    wallet?.type,
+    wallet?.wallet_type,
+    wallet?.bucket_type,
+    wallet?.vault_role,
+    wallet?.role,
+    wallet?.management_tier,
+  ].map((value) => String(value || '').toLowerCase()).join(' ');
+  if (/(escrow|paysafe|pay safe|goal|saving|budget|mezani|pot|fungu|reserve|bill)/.test(text)) {
+    return false;
+  }
+  return /(operating|main|internal vault|default|dilpesa|spendable|available)/.test(text);
+};
+
+const pickGeneralReportBalanceLeg = (
+  legs: any[],
+  userId: string,
+  walletById: Map<string, any>,
+): any => {
+  const ownedLegs = (legs || []).filter((leg: any) => {
+    const wallet = walletById.get(String(leg?.wallet_id || ''));
+    return String(leg?.user_id || '') === String(userId) ||
+      String(wallet?.user_id || '') === String(userId);
+  });
+  const operatingLeg = ownedLegs.find((leg: any) =>
+    isOperatingWalletRecord(walletById.get(String(leg?.wallet_id || ''))),
+  );
+  return operatingLeg || ownedLegs[0] || legs?.[0];
+};
+
 const enrichTransactionsForReport = async (
   sb: any,
   userId: string,
@@ -469,12 +503,32 @@ const enrichTransactionsForReport = async (
     if (walletIds.length) {
       const { data: wallets, error: walletError } = await sb
         .from('wallets')
-        .select('id,name,wallet_name,type,wallet_type,bucket_type,user_id')
+        .select('id,name,wallet_name,type,wallet_type,bucket_type,management_tier,role,user_id')
         .in('id', walletIds);
       if (!walletError && Array.isArray(wallets)) {
         wallets.forEach((wallet: any) => walletById.set(String(wallet.id), wallet));
       } else if (walletError) {
         console.warn('[Transactions Report] wallet enrichment skipped:', walletError.message);
+      }
+
+      const { data: vaults, error: vaultError } = await sb
+        .from('platform_vaults')
+        .select('id,name,vault_name,vault_role,type,user_id')
+        .in('id', walletIds);
+      if (!vaultError && Array.isArray(vaults)) {
+        vaults.forEach((vault: any) => walletById.set(String(vault.id), vault));
+      } else if (vaultError) {
+        console.warn('[Transactions Report] vault enrichment skipped:', vaultError.message);
+      }
+
+      const { data: goals, error: goalError } = await sb
+        .from('goals')
+        .select('id,name,user_id')
+        .in('id', walletIds);
+      if (!goalError && Array.isArray(goals)) {
+        goals.forEach((goal: any) => walletById.set(String(goal.id), goal));
+      } else if (goalError) {
+        console.warn('[Transactions Report] goal enrichment skipped:', goalError.message);
       }
     }
 
@@ -510,6 +564,7 @@ const enrichTransactionsForReport = async (
       if (!legs.length) return transaction;
 
       const userLeg = legs.find((leg: any) => String(leg?.user_id || '') === String(userId)) || legs[0];
+      const balanceLeg = pickGeneralReportBalanceLeg(legs, userId, walletById);
       const debitLeg = legs.find((leg: any) => String(leg?.entry_side || leg?.entry_type || '').toUpperCase().includes('DEBIT'));
       const creditLeg = legs.find((leg: any) => String(leg?.entry_side || leg?.entry_type || '').toUpperCase().includes('CREDIT'));
       const sourceWallet = walletById.get(String((debitLeg || userLeg)?.wallet_id || ''));
@@ -556,14 +611,14 @@ const enrichTransactionsForReport = async (
         'External Destination',
       ]);
       const balanceAfter = firstText([
-        userLeg?.balance_after,
+        balanceLeg?.balance_after,
         transaction?.balance_after,
         transaction?.balanceAfter,
       ]);
 
       return {
         ...transaction,
-        ledger_entry_id: userLeg?.id || transaction?.ledger_entry_id,
+        ledger_entry_id: balanceLeg?.id || userLeg?.id || transaction?.ledger_entry_id,
         balance_after: balanceAfter,
         running_balance: balanceAfter,
         from_display_name: sourceDisplayName,
@@ -576,12 +631,14 @@ const enrichTransactionsForReport = async (
         destination_wallet_name: destinationWalletName,
         ledger: {
           ...(transaction?.ledger || {}),
-          id: userLeg?.id,
+          id: balanceLeg?.id,
           balance_after: balanceAfter,
-          entry_side: userLeg?.entry_side,
-          entry_type: userLeg?.entry_type,
-          wallet_id: userLeg?.wallet_id,
+          entry_side: balanceLeg?.entry_side,
+          entry_type: balanceLeg?.entry_type,
+          wallet_id: balanceLeg?.wallet_id,
+          balance_scope: 'OPERATING_WALLET',
         },
+        balance_scope: 'OPERATING_WALLET',
       };
     });
   } catch (error: any) {
