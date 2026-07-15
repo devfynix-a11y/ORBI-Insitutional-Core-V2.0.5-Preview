@@ -58,6 +58,75 @@ type Deps = {
 
 const API_GATEWAY_SECURITY_ROLES = ['SUPER_ADMIN', 'ADMIN', 'AUDIT', 'RISK_OFFICER', 'FRAUD', 'IT'];
 
+const PAYSAFE_RETRYABLE_ERRORS = new Set([
+  'VAULT_OFFLINE',
+  'SERVICE_ROLE_REQUIRED',
+  'PAYSAFE_ESCROW_QUERY_TIMEOUT',
+  'PAYSAFE_ESCROW_QUERY_FAILED',
+  'PAYSAFE_VAULT_LOOKUP_FAILED',
+  'PAYSAFE_TRANSITION_FAILED',
+]);
+
+const PAYSAFE_ERROR_MESSAGES: Record<string, string> = {
+  VAULT_OFFLINE: 'PaySafe vault service is offline. Please try again shortly.',
+  SERVICE_ROLE_REQUIRED: 'PaySafe settlement service is not configured correctly.',
+  PAYSAFE_ESCROW_QUERY_TIMEOUT: 'PaySafe records took too long to load. Please try again shortly.',
+  PAYSAFE_ESCROW_QUERY_FAILED: 'PaySafe records could not be loaded from the ledger.',
+  PAYSAFE_VAULT_LOOKUP_FAILED: 'PaySafe wallet lookup failed. Please try again shortly.',
+  PAYSAFE_VAULT_NOT_FOUND: 'Your PaySafe wallet is not ready yet.',
+  PAYSAFE_VAULT_UNAVAILABLE: 'Your PaySafe wallet is locked or temporarily unavailable.',
+  OPERATING_WALLET_REQUIRED: 'Your operating wallet is not ready yet.',
+  RECIPIENT_VAULT_NOT_FOUND: 'The recipient wallet is not ready yet.',
+  RECIPIENT_NOT_FOUND: 'The recipient could not be found.',
+  PAYSAFE_AMOUNT_INVALID: 'Enter a valid PaySafe amount.',
+  PAYSAFE_DESCRIPTION_REQUIRED: 'Enter a PaySafe description.',
+  PAYSAFE_SELF_ESCROW_NOT_ALLOWED: 'You cannot create a PaySafe with yourself.',
+  PAYSAFE_SENDER_ACCOUNT_NOT_ACTIVE: 'Your account is not active for PaySafe.',
+  PAYSAFE_RECIPIENT_ACCOUNT_NOT_ACTIVE: 'The recipient account is not active for PaySafe.',
+  PAYSAFE_CURRENCY_MISMATCH: 'PaySafe wallets must use the same currency.',
+  ESCROW_NOT_FOUND: 'This PaySafe record could not be found.',
+  ESCROW_ACCESS_DENIED: 'You do not have access to this PaySafe.',
+  UNAUTHORIZED_RELEASE: 'Only the sender can request this PaySafe release.',
+};
+
+function paySafeErrorResponse(req: any, error: any) {
+  const raw = String(error?.message || error || 'PAYSAFE_SERVICE_ERROR');
+  const code = raw.match(/[A-Z][A-Z0-9_]+/)?.[0] || 'PAYSAFE_SERVICE_ERROR';
+  const retryable = PAYSAFE_RETRYABLE_ERRORS.has(code);
+  const status =
+    code === 'ESCROW_NOT_FOUND' ? 404 :
+    code === 'ESCROW_ACCESS_DENIED' || code === 'UNAUTHORIZED_RELEASE' ? 403 :
+    retryable ? 503 :
+    code === 'PAYSAFE_SERVICE_ERROR' ? 500 :
+    400;
+  return {
+    status,
+    body: {
+      success: false,
+      service: 'PAYSAFE',
+      code,
+      error: code,
+      message: PAYSAFE_ERROR_MESSAGES[code] || 'PaySafe request could not be completed.',
+      retryable,
+      traceId: req.traceId || req.get?.('x-trace-id') || req.get?.('x-request-id') || null,
+    },
+  };
+}
+
+function withPaySafeTimeout<T>(
+  operation: Promise<T>,
+  code = 'PAYSAFE_ESCROW_QUERY_TIMEOUT',
+  timeoutMs = Number(process.env.ORBI_PAYSAFE_ROUTE_TIMEOUT_MS || 8000),
+): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<T>((_resolve, reject) => {
+    timeout = setTimeout(() => reject(new Error(code)), timeoutMs);
+  });
+  return Promise.race([operation, timeoutPromise]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
+}
+
 const isUuidLike = (value: unknown) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
 
@@ -128,6 +197,39 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
     try {
       const result = await LogicCore.getOrganizationDetails(req.params.id);
       if (result.error) return res.status(404).json({ success: false, error: result.error });
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.post('/enterprise/organizations/:id/roles', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    try {
+      const result = await LogicCore.createOrganizationRole(req.params.id, req.body, session.sub);
+      if (result.error) return res.status(400).json({ success: false, error: result.error });
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.post('/enterprise/organizations/:id/admin-change-requests', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    try {
+      const result = await LogicCore.requestOrganizationAdminChange(req.params.id, req.body, session.sub);
+      if (result.error) return res.status(400).json({ success: false, error: result.error });
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.post('/enterprise/admin-change-requests/:id/respond', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    try {
+      const result = await LogicCore.respondOrganizationAdminChange(req.params.id, req.body, session.sub);
+      if (result.error) return res.status(400).json({ success: false, error: result.error });
       res.json(result);
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });
@@ -205,21 +307,25 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
   v1.get('/escrow', authenticate as any, async (req, res) => {
     const session = (req as any).session;
     try {
-      const result = await LogicCore.getEscrows(session.sub);
+      const result = await withPaySafeTimeout(LogicCore.getEscrows(session.sub));
       res.json({ success: true, data: result });
     } catch (e: any) {
-      res.status(500).json({ success: false, error: e.message });
+      const response = paySafeErrorResponse(req, e);
+      console.warn('[PAYSAFE_ROUTE] escrow list failed', response.body);
+      res.status(response.status).json(response.body);
     }
   });
 
   v1.get('/escrow/:id', authenticate as any, async (req, res) => {
     const session = (req as any).session;
     try {
-      const result = await LogicCore.getEscrow(req.params.id, session.sub);
+      const result = await withPaySafeTimeout(LogicCore.getEscrow(req.params.id, session.sub));
       if (!result) return res.status(404).json({ success: false, error: 'ESCROW_NOT_FOUND' });
       res.json({ success: true, data: result });
     } catch (e: any) {
-      res.status(500).json({ success: false, error: e.message });
+      const response = paySafeErrorResponse(req, e);
+      console.warn('[PAYSAFE_ROUTE] escrow detail failed', response.body);
+      res.status(response.status).json(response.body);
     }
   });
 
@@ -227,10 +333,15 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
     const { recipientCustomerId, amount, description, conditions } = req.body;
     const userId = (req as any).session.sub;
     try {
-      const referenceId = await LogicCore.createEscrow(userId, recipientCustomerId, amount, description, conditions);
+      const referenceId = await withPaySafeTimeout(
+        LogicCore.createEscrow(userId, recipientCustomerId, amount, description, conditions),
+        'PAYSAFE_ESCROW_CREATE_TIMEOUT',
+      );
       res.json({ success: true, referenceId });
     } catch (e: any) {
-      res.status(400).json({ success: false, error: e.message });
+      const response = paySafeErrorResponse(req, e);
+      console.warn('[PAYSAFE_ROUTE] escrow create failed', response.body);
+      res.status(response.status).json(response.body);
     }
   });
 
@@ -238,10 +349,15 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
     const { referenceId } = req.body;
     const userId = (req as any).session.sub;
     try {
-      const result = await LogicCore.releaseEscrow(referenceId, userId);
+      const result = await withPaySafeTimeout(
+        LogicCore.releaseEscrow(referenceId, userId),
+        'PAYSAFE_TRANSITION_TIMEOUT',
+      );
       res.json({ success: true, data: result });
     } catch (e: any) {
-      res.status(400).json({ success: false, error: e.message });
+      const response = paySafeErrorResponse(req, e);
+      console.warn('[PAYSAFE_ROUTE] escrow release failed', response.body);
+      res.status(response.status).json(response.body);
     }
   });
 
@@ -249,10 +365,15 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
     const { referenceId } = req.body;
     const userId = (req as any).session.sub;
     try {
-      const result = await LogicCore.acceptEscrow(referenceId, userId);
+      const result = await withPaySafeTimeout(
+        LogicCore.acceptEscrow(referenceId, userId),
+        'PAYSAFE_TRANSITION_TIMEOUT',
+      );
       res.json({ success: true, data: result });
     } catch (e: any) {
-      res.status(400).json({ success: false, error: e.message });
+      const response = paySafeErrorResponse(req, e);
+      console.warn('[PAYSAFE_ROUTE] escrow accept failed', response.body);
+      res.status(response.status).json(response.body);
     }
   });
 
@@ -260,10 +381,15 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
     const { referenceId, reason } = req.body;
     const userId = (req as any).session.sub;
     try {
-      const result = await LogicCore.disputeEscrow(referenceId, userId, reason);
+      const result = await withPaySafeTimeout(
+        LogicCore.disputeEscrow(referenceId, userId, reason),
+        'PAYSAFE_TRANSITION_TIMEOUT',
+      );
       res.json({ success: true, data: result ?? null });
     } catch (e: any) {
-      res.status(400).json({ success: false, error: e.message });
+      const response = paySafeErrorResponse(req, e);
+      console.warn('[PAYSAFE_ROUTE] escrow dispute failed', response.body);
+      res.status(response.status).json(response.body);
     }
   });
 
@@ -272,10 +398,15 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
     const userId = (req as any).session.sub;
 
     try {
-      const result = await LogicCore.refundEscrow(referenceId, userId, reason);
+      const result = await withPaySafeTimeout(
+        LogicCore.refundEscrow(referenceId, userId, reason),
+        'PAYSAFE_TRANSITION_TIMEOUT',
+      );
       res.json({ success: true, data: result });
     } catch (e: any) {
-      res.status(400).json({ success: false, error: e.message });
+      const response = paySafeErrorResponse(req, e);
+      console.warn('[PAYSAFE_ROUTE] escrow refund failed', response.body);
+      res.status(response.status).json(response.body);
     }
   });
 

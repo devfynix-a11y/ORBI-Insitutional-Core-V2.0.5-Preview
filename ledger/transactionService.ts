@@ -72,7 +72,62 @@ export class TransactionService {
 
         return null;
     }
-    
+
+    private firstDisplayText(values: any[]): string | undefined {
+        for (const value of values) {
+            const text = String(value ?? '').trim();
+            if (text && text.toLowerCase() !== 'null' && text !== 'N/A') return text;
+        }
+        return undefined;
+    }
+
+    private walletDisplayName(wallet: any, fallback?: string): string | undefined {
+        return this.firstDisplayText([
+            wallet?.display_name,
+            wallet?.wallet_name,
+            wallet?.name,
+            fallback,
+        ]);
+    }
+
+    private partyDisplayName(user: any, wallet: any, fallback?: string): string {
+        return this.firstDisplayText([
+            user?.full_name,
+            user?.name,
+            this.walletDisplayName(wallet),
+            fallback,
+        ]) || 'External Destination';
+    }
+
+    private async decryptLedgerLegRows(rows: any[]): Promise<any[]> {
+        return Promise.all((rows || []).map(async (leg: any) => {
+            let amount = leg?.amount;
+            let balanceAfter = leg?.balance_after_encrypted || leg?.balance_after;
+
+            try {
+                amount = amount !== undefined && amount !== null
+                    ? await DataProtection.decryptAmount(amount, Number(amount || 0))
+                    : amount;
+            } catch {
+                amount = Number(amount || 0);
+            }
+
+            try {
+                balanceAfter = balanceAfter !== undefined && balanceAfter !== null
+                    ? await DataProtection.decryptAmount(balanceAfter, Number(balanceAfter || 0))
+                    : balanceAfter;
+            } catch {
+                balanceAfter = Number(balanceAfter || 0);
+            }
+
+            return {
+                ...leg,
+                amount: Number(amount || 0),
+                balance_after: balanceAfter !== undefined && balanceAfter !== null ? Number(balanceAfter || 0) : null,
+            };
+        }));
+    }
+     
     /**
      * CALCULATE BALANCE FROM LEDGER
      * Derives the current balance by summing all ledger entries for a wallet.
@@ -699,22 +754,43 @@ export class TransactionService {
                 ...(wallets?.map(w => w.id) || []),
                 ...(vaults?.map(v => v.id) || [])
             ];
+            const ownedWalletIdSet = new Set(walletIds.map(String));
 
             ledgerLogger.info('ledger.transactions_fetch_started', { actor_id: userId, wallet_count: walletIds.length });
 
+            const { data: ownedLedgerRefs, error: ownedLedgerRefError } = walletIds.length
+                ? await sb
+                    .from('financial_ledger')
+                    .select('transaction_id')
+                    .in('wallet_id', walletIds)
+                    .order('created_at', { ascending: false })
+                    .range(offset, offset + Math.max(limit * 4, limit) - 1)
+                : { data: [] as any[], error: null };
+            if (ownedLedgerRefError) {
+                ledgerLogger.warn('ledger.owned_ledger_transaction_lookup_failed', {
+                    actor_id: userId,
+                    error_message: ownedLedgerRefError.message,
+                });
+            }
+            const ledgerTransactionIds = Array.from(new Set(
+                (ownedLedgerRefs || [])
+                    .map((row: any) => String(row?.transaction_id || '').trim())
+                    .filter(Boolean)
+            ));
+
             // 2. Query Transactions (Outgoing OR Incoming)
+            const transactionSelectFields = 'id, reference_id, user_id, amount, currency, description, type, status, created_at, wallet_id, to_wallet_id, metadata, category_id';
             let query = sb
                 .from('transactions')
-                .select('id, reference_id, user_id, amount, currency, description, type, status, created_at, wallet_id, to_wallet_id, metadata, category_id')
+                .select(transactionSelectFields)
                 .order('created_at', { ascending: false })
                 .range(offset, offset + limit - 1);
 
+            const orClauses = [`user_id.eq.${userId}`];
             if (walletIds.length > 0) {
-                // OR syntax: user_id.eq.userId,to_wallet_id.in.(ids)
-                query = query.or(`user_id.eq.${userId},to_wallet_id.in.(${walletIds.join(',')})`);
-            } else {
-                query = query.eq('user_id', userId);
+                orClauses.push(`to_wallet_id.in.(${walletIds.join(',')})`);
             }
+            query = query.or(orClauses.join(','));
 
             const { data, error } = await query;
 
@@ -723,9 +799,38 @@ export class TransactionService {
                 throw error;
             }
             
-            if (!data) return [];
+            const transactionRowsById = new Map<string, any>();
+            (data || []).forEach((row: any) => {
+                if (row?.id) transactionRowsById.set(String(row.id), row);
+            });
 
-            const translated = await this.decryptTransactionRows(data);
+            if (ledgerTransactionIds.length > 0) {
+                const missingLedgerTransactionIds = ledgerTransactionIds.filter((id) => !transactionRowsById.has(id));
+                const chunkSize = 100;
+                for (let i = 0; i < missingLedgerTransactionIds.length; i += chunkSize) {
+                    const chunk = missingLedgerTransactionIds.slice(i, i + chunkSize);
+                    const { data: ledgerTransactionRows, error: ledgerTransactionError } = await sb
+                        .from('transactions')
+                        .select(transactionSelectFields)
+                        .in('id', chunk);
+                    if (ledgerTransactionError) {
+                        ledgerLogger.warn('ledger.owned_ledger_transaction_rows_failed', {
+                            actor_id: userId,
+                            error_message: ledgerTransactionError.message,
+                        });
+                        continue;
+                    }
+                    (ledgerTransactionRows || []).forEach((row: any) => {
+                        if (row?.id) transactionRowsById.set(String(row.id), row);
+                    });
+                }
+            }
+            const mergedRows = Array.from(transactionRowsById.values())
+                .sort((a: any, b: any) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+                .slice(0, limit);
+            if (!mergedRows.length) return [];
+
+            const translated = await this.decryptTransactionRows(mergedRows);
 
             const { data: movementRows } = await sb
                 .from('external_fund_movements')
@@ -734,6 +839,27 @@ export class TransactionService {
                 .order('created_at', { ascending: false })
                 .range(offset, offset + limit - 1);
             
+            const transactionIds = translated
+                .map((tx: any) => String(tx.id || '').trim())
+                .filter(Boolean);
+            const { data: rawLedgerRows, error: ledgerLegError } = transactionIds.length
+                ? await sb
+                    .from('financial_ledger')
+                    .select('id, transaction_id, user_id, wallet_id, entry_side, entry_type, amount, balance_after, balance_after_encrypted, description, created_at')
+                    .in('transaction_id', transactionIds)
+                : { data: [] as any[], error: null };
+            if (ledgerLegError) {
+                ledgerLogger.warn('ledger.transaction_legs_enrichment_failed', { actor_id: userId, error_message: ledgerLegError.message });
+            }
+            const ledgerRows = await this.decryptLedgerLegRows(rawLedgerRows || []);
+            const legsByTransaction: Record<string, any[]> = {};
+            ledgerRows.forEach((leg: any) => {
+                const transactionId = String(leg.transaction_id || '').trim();
+                if (!transactionId) return;
+                if (!legsByTransaction[transactionId]) legsByTransaction[transactionId] = [];
+                legsByTransaction[transactionId].push(leg);
+            });
+
             // 3. ENRICHMENT: Fetch Wallet Names and User Details for both sides
             const allWalletIds = new Set<string>();
             const allUserIds = new Set<string>();
@@ -742,6 +868,10 @@ export class TransactionService {
                 if (tx.walletId) allWalletIds.add(tx.walletId);
                 if (tx.toWalletId) allWalletIds.add(tx.toWalletId);
                 if (tx.user_id) allUserIds.add(tx.user_id);
+            });
+            ledgerRows.forEach((leg: any) => {
+                if (leg.wallet_id) allWalletIds.add(String(leg.wallet_id));
+                if (leg.user_id) allUserIds.add(String(leg.user_id));
             });
             (movementRows || []).forEach((mv: any) => {
                 if (mv.source_wallet_id) allWalletIds.add(String(mv.source_wallet_id));
@@ -826,12 +956,20 @@ export class TransactionService {
 
             // 4. MAP TO TWO-SIDED VIEW
             const ledgerItems = translated.map((tx: any) => {
+                const txLegs = legsByTransaction[String(tx.id || '')] || [];
+                const debitLeg = txLegs.find((leg: any) => String(leg.entry_side || leg.entry_type || '').toUpperCase().includes('DEBIT'));
+                const creditLeg = txLegs.find((leg: any) => String(leg.entry_side || leg.entry_type || '').toUpperCase().includes('CREDIT'));
+                const userLeg = txLegs.find((leg: any) =>
+                    String(leg.user_id || '') === String(userId) ||
+                    ownedWalletIdSet.has(String(leg.wallet_id || ''))
+                );
                 const isSender = tx.user_id === userId;
-                const sourceWallet = walletMap[tx.walletId];
-                const targetWallet = walletMap[tx.toWalletId];
-                
-                const senderUser = userMap[tx.user_id];
-                const receiverUserId = targetWallet?.user_id || tx.metadata?.recipient_snapshot?.id;
+                const sourceWallet = walletMap[String((debitLeg?.wallet_id || tx.walletId || ''))];
+                const targetWallet = walletMap[String((creditLeg?.wallet_id || tx.toWalletId || ''))];
+                 
+                const senderUserId = debitLeg?.user_id || sourceWallet?.user_id || tx.user_id;
+                const receiverUserId = creditLeg?.user_id || targetWallet?.user_id || tx.metadata?.recipient_snapshot?.id;
+                const senderUser = userMap[senderUserId];
                 const receiverUser = userMap[receiverUserId];
 
                 const direction = isSender ? 'DEBIT' : 'CREDIT';
@@ -845,6 +983,16 @@ export class TransactionService {
                             ? 'initiated'
                             : 'completed';
                 
+                const sourceWalletName = this.walletDisplayName(sourceWallet, tx.sourceWalletName || 'Orbi Vault') || 'Orbi Vault';
+                const targetWalletName = this.walletDisplayName(targetWallet, tx.targetWalletName || 'External Destination') || 'External Destination';
+                const senderName = this.partyDisplayName(senderUser, sourceWallet, sourceWalletName);
+                const receiverName = this.partyDisplayName(
+                    receiverUser,
+                    targetWallet,
+                    tx.metadata?.recipient_snapshot?.name || targetWalletName,
+                );
+                const balanceAfter = userLeg?.balance_after ?? tx.balance_after ?? tx.balanceAfter ?? null;
+
                 return {
                     ...tx,
                     id: tx.reference_id || tx.id, // Overwrite ID with reference_id for frontend
@@ -852,26 +1000,47 @@ export class TransactionService {
                     referenceId: tx.reference_id || tx.id,
                     direction,
                     status: normalizedStatus,
-                    sourceWalletName: sourceWallet?.name || 'Orbi Vault',
-                    targetWalletName: targetWallet?.name || 'External Destination',
+                    balance_after: balanceAfter,
+                    balanceAfter,
+                    running_balance: balanceAfter,
+                    ledger_legs: txLegs.map((leg: any) => ({
+                        id: leg.id,
+                        transaction_id: leg.transaction_id,
+                        user_id: leg.user_id,
+                        wallet_id: leg.wallet_id,
+                        entry_side: leg.entry_side || leg.entry_type,
+                        entry_type: leg.entry_type,
+                        amount: leg.amount,
+                        balance_after: leg.balance_after,
+                    })),
+                    source_wallet_id: debitLeg?.wallet_id || tx.walletId || null,
+                    destination_wallet_id: creditLeg?.wallet_id || tx.toWalletId || null,
+                    source_wallet_name: sourceWalletName,
+                    destination_wallet_name: targetWalletName,
+                    sourceWalletName,
+                    targetWalletName,
+                    from_display_name: senderName,
+                    to_display_name: receiverName,
+                    source_display_name: senderName,
+                    destination_display_name: receiverName,
                     sender: {
-                        id: tx.user_id,
-                        name: senderUser?.full_name || 'System',
+                        id: senderUserId || tx.user_id,
+                        name: senderName,
                         customerId: senderUser?.customer_id || 'N/A'
                     },
                     receiver: {
                         id: receiverUserId || 'N/A',
-                        name: receiverUser?.full_name || tx.metadata?.recipient_snapshot?.name || 'External Recipient',
+                        name: receiverName,
                         customerId: receiverUser?.customer_id || 'N/A'
                     },
                     // Generic "Counterparty" for simplified UI display
                     counterparty: isSender ? {
                         label: 'To',
-                        name: receiverUser?.full_name || tx.metadata?.recipient_snapshot?.name || 'External Recipient',
+                        name: receiverName,
                         id: receiverUser?.customer_id || 'N/A'
                     } : {
                         label: 'From',
-                        name: senderUser?.full_name || 'System',
+                        name: senderName,
                         id: senderUser?.customer_id || 'N/A'
                     }
                 };
@@ -928,20 +1097,118 @@ export class TransactionService {
         }
 
         if (!row) return null;
+        const { data: rawLedgerRows, error: ledgerLegError } = await sb
+            .from('financial_ledger')
+            .select('id, transaction_id, user_id, wallet_id, entry_side, entry_type, amount, balance_after, balance_after_encrypted, description, created_at')
+            .eq('transaction_id', row.id);
+        if (ledgerLegError) throw ledgerLegError;
+        const ledgerRows = await this.decryptLedgerLegRows(rawLedgerRows || []);
+
         const canView =
             String(row.user_id || '') === userId ||
             ownedWalletIds.has(String(row.wallet_id || '')) ||
-            ownedWalletIds.has(String(row.to_wallet_id || ''));
+            ownedWalletIds.has(String(row.to_wallet_id || '')) ||
+            ledgerRows.some((leg: any) =>
+                String(leg.user_id || '') === String(userId) ||
+                ownedWalletIds.has(String(leg.wallet_id || ''))
+            );
         if (!canView) return null;
 
         const [transaction] = await this.decryptTransactionRows([row]);
         if (!transaction) return null;
+        const debitLeg = ledgerRows.find((leg: any) => String(leg.entry_side || leg.entry_type || '').toUpperCase().includes('DEBIT'));
+        const creditLeg = ledgerRows.find((leg: any) => String(leg.entry_side || leg.entry_type || '').toUpperCase().includes('CREDIT'));
+        const userLeg = ledgerRows.find((leg: any) =>
+            String(leg.user_id || '') === String(userId) ||
+            ownedWalletIds.has(String(leg.wallet_id || ''))
+        );
+        const walletIdList = Array.from(new Set(
+            ledgerRows
+                .map((leg: any) => String(leg.wallet_id || '').trim())
+                .filter(Boolean)
+        ));
+        const [{ data: walletNames }, { data: vaultNames }, { data: goalNames }] = await Promise.all([
+            walletIdList.length
+                ? sb.from('wallets').select('id, name, user_id').in('id', walletIdList)
+                : Promise.resolve({ data: [] as any[] }),
+            walletIdList.length
+                ? sb.from('platform_vaults').select('id, name, user_id').in('id', walletIdList)
+                : Promise.resolve({ data: [] as any[] }),
+            walletIdList.length
+                ? sb.from('goals').select('id, name, user_id').in('id', walletIdList)
+                : Promise.resolve({ data: [] as any[] }),
+        ]);
+        const walletMap: Record<string, any> = {};
+        const userIds = new Set<string>();
+        [...(walletNames || []), ...(vaultNames || []), ...(goalNames || [])].forEach((wallet: any) => {
+            walletMap[String(wallet.id)] = wallet;
+            if (wallet.user_id) userIds.add(String(wallet.user_id));
+        });
+        ledgerRows.forEach((leg: any) => {
+            if (leg.user_id) userIds.add(String(leg.user_id));
+        });
+        if (transaction.user_id) userIds.add(String(transaction.user_id));
+        const { data: userDetails } = userIds.size
+            ? await sb.from('users').select('id, full_name, customer_id').in('id', Array.from(userIds))
+            : { data: [] as any[] };
+        const userMap: Record<string, any> = {};
+        (userDetails || []).forEach((user: any) => userMap[String(user.id)] = user);
+
+        const sourceWallet = walletMap[String(debitLeg?.wallet_id || transaction.walletId || '')];
+        const targetWallet = walletMap[String(creditLeg?.wallet_id || transaction.toWalletId || '')];
+        const senderUserId = debitLeg?.user_id || sourceWallet?.user_id || transaction.user_id;
+        const receiverUserId = creditLeg?.user_id || targetWallet?.user_id || transaction.metadata?.recipient_snapshot?.id;
+        const senderUser = userMap[String(senderUserId || '')];
+        const receiverUser = userMap[String(receiverUserId || '')];
+        const sourceWalletName = this.walletDisplayName(sourceWallet, transaction.sourceWalletName || 'Orbi Vault') || 'Orbi Vault';
+        const targetWalletName = this.walletDisplayName(targetWallet, transaction.targetWalletName || 'External Destination') || 'External Destination';
+        const senderName = this.partyDisplayName(senderUser, sourceWallet, sourceWalletName);
+        const receiverName = this.partyDisplayName(
+            receiverUser,
+            targetWallet,
+            transaction.metadata?.recipient_snapshot?.name || targetWalletName,
+        );
+        const balanceAfter = userLeg?.balance_after ?? transaction.balance_after ?? transaction.balanceAfter ?? null;
+
         return {
             ...transaction,
             id: transaction.reference_id || transaction.id,
             internalId: transaction.id,
             referenceId: transaction.reference_id || transaction.id,
             status: String(transaction.status || '').toLowerCase(),
+            balance_after: balanceAfter,
+            balanceAfter,
+            running_balance: balanceAfter,
+            ledger_legs: ledgerRows.map((leg: any) => ({
+                id: leg.id,
+                transaction_id: leg.transaction_id,
+                user_id: leg.user_id,
+                wallet_id: leg.wallet_id,
+                entry_side: leg.entry_side || leg.entry_type,
+                entry_type: leg.entry_type,
+                amount: leg.amount,
+                balance_after: leg.balance_after,
+            })),
+            source_wallet_id: debitLeg?.wallet_id || transaction.walletId || null,
+            destination_wallet_id: creditLeg?.wallet_id || transaction.toWalletId || null,
+            source_wallet_name: sourceWalletName,
+            destination_wallet_name: targetWalletName,
+            sourceWalletName,
+            targetWalletName,
+            from_display_name: senderName,
+            to_display_name: receiverName,
+            source_display_name: senderName,
+            destination_display_name: receiverName,
+            sender: {
+                id: senderUserId || transaction.user_id,
+                name: senderName,
+                customerId: senderUser?.customer_id || 'N/A',
+            },
+            receiver: {
+                id: receiverUserId || 'N/A',
+                name: receiverName,
+                customerId: receiverUser?.customer_id || 'N/A',
+            },
         };
     }
 

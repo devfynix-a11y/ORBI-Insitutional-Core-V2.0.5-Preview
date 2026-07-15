@@ -250,6 +250,7 @@ services:
       - /tmp:size=256m,mode=1777
     volumes:
       - /srv/orbi/backups/database:/srv/orbi/backups/database:ro
+      - orbi_public_uploads:/app/public/uploads
     mem_limit: 6g
     cpus: 3.0
     expose:
@@ -459,5 +460,6 @@ volumes:
   orbi_postgres_wal_archive:
   orbi_valkey_data:
   orbi_storage_data:
+  orbi_public_uploads:
   orbi_prometheus_data:
   orbi_grafana_data:

@@ -109,7 +109,12 @@ async function ensurePublicUserRow(userId: string, sessionUser: any, fallbackMet
     avatar_url: metadata.avatar_url || null,
     customer_id: metadata.customer_id || null,
     currency: metadata.currency || 'TZS',
+    preferred_currency: metadata.preferred_currency || metadata.currency || 'TZS',
+    country_code: metadata.country_code || null,
+    country_name: metadata.country_name || null,
+    dial_code: metadata.dial_code || null,
     language: metadata.language || 'en',
+    fcm_token: metadata.fcm_token || null,
     account_status: metadata.account_status || 'active',
     role: String(metadata.role || 'USER').toUpperCase(),
     registry_type: String(metadata.registry_type || 'CONSUMER').toUpperCase(),
@@ -412,12 +417,27 @@ export const registerAuthUserRoutes = (v1: Router, deps: Deps) => {
 
   v1.post('/auth/password/reset/complete', async (req, res) => {
     try {
-      const { identifier, requestId, code, password } = req.body;
-      if (!identifier || !requestId || !code || !password) {
+      const {
+        identifier,
+        requestId,
+        code,
+        password,
+        newPassword,
+        new_password,
+        p,
+      } = req.body;
+      const normalizedPassword = String(password ?? newPassword ?? new_password ?? p ?? '').trim();
+      if (!identifier || !requestId || !code || !normalizedPassword) {
         return res.status(400).json({ success: false, error: 'MISSING_FIELDS' });
       }
+      if (normalizedPassword.length < 8) {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_PASSWORD_POLICY: Password must be at least 8 characters.',
+        });
+      }
 
-      const result = await LogicCore.completePasswordResetWithOtp(identifier, requestId, code, password);
+      const result = await LogicCore.completePasswordResetWithOtp(identifier, requestId, code, normalizedPassword);
       if (result.error) {
         return res.status(400).json({
           success: false,

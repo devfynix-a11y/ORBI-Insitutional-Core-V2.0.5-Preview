@@ -63,16 +63,16 @@ export class EscrowService {
         ] = await Promise.all([
             sb
                 .from('users')
-                .select('id,account_status,registry_type')
+                .select('id,account_status,registry_type,full_name')
                 .in('id', [senderId, recipient.userId]),
             sb
                 .from('platform_vaults')
-                .select('id,user_id,vault_role,currency,status,is_locked')
+                .select('id,user_id,vault_role,currency,status,is_locked,balance')
                 .eq('user_id', senderId)
                 .in('vault_role', ['OPERATING', 'INTERNAL_TRANSFER']),
             sb
                 .from('platform_vaults')
-                .select('id,user_id,vault_role,currency,status,is_locked')
+                .select('id,user_id,vault_role,currency,status,is_locked,balance')
                 .eq('user_id', recipient.userId)
                 .eq('vault_role', 'OPERATING'),
         ]);
@@ -93,9 +93,18 @@ export class EscrowService {
             throw new Error('PAYSAFE_RECIPIENT_REGISTRY_INVALID');
         }
         if (senderVaultError || recipientVaultError) throw new Error('PAYSAFE_VAULT_LOOKUP_FAILED');
-        const sourceVault = (senderVaults || []).find((vault: any) => vault.vault_role === 'OPERATING');
-        const paySafeVault = (senderVaults || []).find((vault: any) => vault.vault_role === 'INTERNAL_TRANSFER');
-        const recipientVault = (recipientVaults || [])[0];
+        const isUsableVault = (vault: any) => !Boolean(vault.is_locked)
+            && !['locked', 'frozen', 'blocked', 'suspended'].includes(String(vault.status || '').toLowerCase());
+        const sourceVault = (senderVaults || [])
+            .filter((vault: any) => vault.vault_role === 'OPERATING' && isUsableVault(vault))
+            .sort((a: any, b: any) => Number(b.balance || 0) - Number(a.balance || 0))
+            .find((vault: any) => Number(vault.balance || 0) >= amount);
+        const paySafeVault = (senderVaults || [])
+            .filter((vault: any) => vault.vault_role === 'INTERNAL_TRANSFER' && isUsableVault(vault))
+            .sort((a: any, b: any) => Number(b.balance || 0) - Number(a.balance || 0))[0];
+        const recipientVault = (recipientVaults || [])
+            .filter((vault: any) => isUsableVault(vault))
+            .sort((a: any, b: any) => Number(b.balance || 0) - Number(a.balance || 0))[0];
         if (!sourceVault) throw new Error('OPERATING_WALLET_REQUIRED');
         if (!paySafeVault) throw new Error('PAYSAFE_VAULT_NOT_FOUND');
         if (!recipientVault) throw new Error('RECIPIENT_VAULT_NOT_FOUND');
@@ -233,14 +242,32 @@ export class EscrowService {
             },
         ]);
 
-        await this.notifySafely(recipient.userId, 'info', 'Inbound PaySafe payment', {
-            sw: `Una malipo yanayosubiri ya ${currency} ${amount.toLocaleString()} kwenye Orbi PaySafe.`,
-            en: `You have a pending ${currency} ${amount.toLocaleString()} payment in Orbi PaySafe.`,
+        const senderName = String(senderAccount.full_name || 'ORBI customer').trim();
+        const formattedAmount = `${currency} ${amount.toLocaleString()}`;
+
+        await this.notifySafely(senderId, 'info', 'ORBI PaySafe created', {
+            sw: `Umeunda PaySafe ya ${formattedAmount} kwa ${recipient.profile.full_name}. Fedha ziko salama hadi uthibitishe release.`,
+            en: `You created a ${formattedAmount} PaySafe for ${recipient.profile.full_name}. Money is safe until you confirm release.`,
         }, {
             template: 'Escrow_Created',
             variables: {
                 amount: amount.toLocaleString(),
                 currency,
+                senderName,
+                recipientName: recipient.profile.full_name,
+                refId: referenceId,
+            },
+        });
+
+        await this.notifySafely(recipient.userId, 'info', 'ORBI PaySafe request received', {
+            sw: `${senderName} ametengeneza PaySafe ya ${formattedAmount} kwa ajili yako. Fedha ziko salama hadi release ithibitishwe.`,
+            en: `${senderName} created a ${formattedAmount} PaySafe for you. Money is safe until release is confirmed.`,
+        }, {
+            template: 'Escrow_Request_Received',
+            variables: {
+                amount: amount.toLocaleString(),
+                currency,
+                senderName,
                 recipientName: recipient.profile.full_name,
                 refId: referenceId,
             },
@@ -263,7 +290,7 @@ export class EscrowService {
             ? await this.settleMerchantEscrow(referenceId, actorId)
             : await this.transition(referenceId, actorId, 'RELEASE');
 
-        await this.notifySafely(agreement.receiver_id, 'info', 'PaySafe release requested', {
+        await this.notifySafely(agreement.receiver_id, 'info', 'ORBI PaySafe release requested', {
             sw: `PaySafe ${referenceId} iko tayari kukubaliwa. Thibitisha hold kabla dirisha halijaisha.`,
             en: `PaySafe ${referenceId} is ready for acceptance. Confirm the hold before the window closes.`,
         }, {
@@ -289,11 +316,11 @@ export class EscrowService {
         if (agreement.merchant_id) throw new Error('PAYSAFE_ACCEPT_NOT_SUPPORTED_FOR_MERCHANT');
         const result = await this.transition(referenceId, actorId, 'ACCEPT');
 
-        await this.notifySafely(agreement.sender_id, 'info', 'PaySafe funds accepted', {
+        await this.notifySafely(agreement.sender_id, 'info', 'ORBI PaySafe funds accepted', {
             sw: `PaySafe ${referenceId} imekubaliwa na fedha zimetolewa kwa mpokeaji.`,
             en: `PaySafe ${referenceId} was accepted and the funds were released to the recipient.`,
         });
-        await this.notifySafely(agreement.receiver_id, 'info', 'PaySafe funds released', {
+        await this.notifySafely(agreement.receiver_id, 'info', 'ORBI PaySafe funds released', {
             sw: `Malipo ya ${agreement.currency} ${Number(agreement.amount).toLocaleString()} yametolewa kwenye akaunti yako.`,
             en: `${agreement.currency} ${Number(agreement.amount).toLocaleString()} has been released to your account.`,
         });
@@ -315,11 +342,11 @@ export class EscrowService {
         const result = await this.transition(referenceId, userId, 'DISPUTE', null, reason);
 
         await Promise.all([
-            this.notifySafely(agreement.sender_id, 'security', 'PaySafe dispute opened', {
+            this.notifySafely(agreement.sender_id, 'security', 'ORBI PaySafe dispute opened', {
                 sw: `Malipo ya PaySafe ${referenceId} yamewekwa chini ya ukaguzi.`,
                 en: `PaySafe payment ${referenceId} has been placed under review.`,
             }),
-            this.notifySafely(agreement.receiver_id, 'security', 'PaySafe dispute opened', {
+            this.notifySafely(agreement.receiver_id, 'security', 'ORBI PaySafe dispute opened', {
                 sw: `Malipo ya PaySafe ${referenceId} yamewekwa chini ya ukaguzi.`,
                 en: `PaySafe payment ${referenceId} has been placed under review.`,
             }),
@@ -337,13 +364,35 @@ export class EscrowService {
         if (agreement.sender_id !== actorId) throw new Error('UNAUTHORIZED_REFUND');
         const result = await this.transition(referenceId, actorId, 'REFUND', agreement.source_vault_id, reason);
 
-        await this.notifySafely(agreement.sender_id, 'info', 'PaySafe payment refunded', {
-            sw: `Malipo yako ya PaySafe ${referenceId} yamerejeshwa kwenye akaunti yako.`,
-            en: `Your PaySafe payment ${referenceId} has been refunded to your account.`,
-        });
+        const formattedAmount = `${agreement.currency} ${Number(agreement.amount).toLocaleString()}`;
+        await Promise.all([
+            this.notifySafely(agreement.sender_id, 'info', 'ORBI PaySafe payment refunded', {
+                sw: `Malipo yako ya PaySafe ${referenceId} ya ${formattedAmount} yamerejeshwa kwenye akaunti yako.`,
+                en: `Your ${formattedAmount} PaySafe payment ${referenceId} has been refunded to your account.`,
+            }, {
+                template: 'Escrow_Refunded',
+                variables: {
+                    amount: Number(agreement.amount).toLocaleString(),
+                    currency: agreement.currency,
+                    refId: referenceId,
+                },
+            }),
+            this.notifySafely(agreement.receiver_id, 'info', 'ORBI PaySafe refund completed', {
+                sw: `PaySafe ${referenceId} ya ${formattedAmount} imerejeshwa kwa mtumaji. Hold hii imefungwa.`,
+                en: `PaySafe ${referenceId} for ${formattedAmount} was refunded to the sender. This hold is now closed.`,
+            }, {
+                template: 'Escrow_Refunded',
+                variables: {
+                    amount: Number(agreement.amount).toLocaleString(),
+                    currency: agreement.currency,
+                    refId: referenceId,
+                },
+            }),
+        ]);
         await Audit.log('FINANCIAL', actorId, 'ESCROW_REFUNDED', {
             referenceId,
             senderId: agreement.sender_id,
+            receiverId: agreement.receiver_id,
             transactionId: agreement.transaction_id,
             reason,
             idempotent: Boolean(result?.idempotent),
@@ -365,11 +414,15 @@ export class EscrowService {
         if (!sb) return [];
         const { data, error } = await sb
             .from('escrow_agreements')
-            .select('*,transaction:transactions(*)')
+            .select('*')
             .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
             .order('created_at', { ascending: false });
-        if (error) throw new Error('PAYSAFE_ESCROW_QUERY_FAILED');
-        return ((data || []) as EscrowAgreementRecord[]).map((agreement) =>
+        if (error) {
+            this.logSupabaseError('escrow list query failed', error);
+            throw new Error('PAYSAFE_ESCROW_QUERY_FAILED');
+        }
+        const agreements = await this.attachTransactions((data || []) as EscrowAgreementRecord[]);
+        return agreements.map((agreement) =>
             this.decorateAgreement(agreement, userId),
         );
     }
@@ -385,11 +438,55 @@ export class EscrowService {
         if (!sb) throw new Error('VAULT_OFFLINE');
         const { data, error } = await sb
             .from('escrow_agreements')
-            .select('*,transaction:transactions(*)')
+            .select('*')
             .eq('reference_id', referenceId)
             .maybeSingle();
-        if (error) throw new Error('PAYSAFE_ESCROW_QUERY_FAILED');
-        return data as EscrowAgreementRecord | null;
+        if (error) {
+            this.logSupabaseError('escrow detail query failed', error);
+            throw new Error('PAYSAFE_ESCROW_QUERY_FAILED');
+        }
+        if (!data) return null;
+        const [agreement] = await this.attachTransactions([data as EscrowAgreementRecord]);
+        return agreement || null;
+    }
+
+    private async attachTransactions(agreements: EscrowAgreementRecord[]): Promise<EscrowAgreementRecord[]> {
+        if (!agreements.length) return agreements;
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb) return agreements;
+
+        const transactionIds = Array.from(new Set(
+            agreements
+                .map((agreement) => agreement.transaction_id)
+                .filter((id): id is string => Boolean(id)),
+        ));
+        if (!transactionIds.length) return agreements;
+
+        const { data, error } = await sb
+            .from('transactions')
+            .select('*')
+            .in('id', transactionIds);
+        if (error) {
+            this.logSupabaseError('escrow transaction hydration failed', error);
+            return agreements;
+        }
+
+        const transactionById = new Map(
+            ((data || []) as Record<string, any>[]).map((transaction) => [String(transaction.id), transaction]),
+        );
+        return agreements.map((agreement) => ({
+            ...agreement,
+            transaction: transactionById.get(String(agreement.transaction_id)) || null,
+        }));
+    }
+
+    private logSupabaseError(context: string, error: any): void {
+        console.warn(`[PAYSAFE_LEDGER] ${context}`, {
+            code: error?.code,
+            message: error?.message,
+            details: error?.details,
+            hint: error?.hint,
+        });
     }
 
     private async transition(

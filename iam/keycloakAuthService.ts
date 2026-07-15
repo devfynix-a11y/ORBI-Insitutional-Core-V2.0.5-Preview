@@ -1,10 +1,11 @@
 import { randomUUID } from 'crypto';
-import { createRemoteJWKSet, decodeJwt, jwtVerify, type JWTPayload } from 'jose';
+import { createRemoteJWKSet, decodeJwt, decodeProtectedHeader, jwtVerify, type JWTPayload } from 'jose';
 import type { Permission, Session, UserRole } from '../types.js';
 import { IdentityGenerator } from '../services/utils.js';
 import { getOrbiDatabase } from '../services/orbiDatabase.js';
 import { OTPService } from '../backend/security/otpService.js';
 import { logger } from '../backend/infrastructure/logger.js';
+import { JWTNode } from '../backend/security/jwt.js';
 import {
   DEFAULT_INSTITUTIONAL_APP_ORIGIN,
   TRUSTED_INSTITUTIONAL_APP_ORIGINS,
@@ -396,6 +397,37 @@ export class KeycloakAuthService {
     };
   }
 
+  private async getCoreJwtSession(token: string): Promise<Session | null> {
+    const payload = await JWTNode.verify<JWTPayload & {
+      userId?: string;
+      issuer?: string;
+      role?: string;
+      registry_type?: string;
+      app_origin?: string;
+    }>(token);
+    if (!payload || payload.type !== 'access') return null;
+
+    const userId = String(payload.sub || payload.userId || '').trim();
+    if (!userId) {
+      keycloakAuthLogger.warn('core.session_missing_subject');
+      return null;
+    }
+
+    const identity = await this.getIdentity(userId);
+    if (!identity) {
+      keycloakAuthLogger.warn('core.session_identity_unavailable', { sub: userId });
+      return null;
+    }
+    if (identity.account_status === 'blocked' || identity.account_status === 'frozen') return null;
+
+    return this.toSession(identity, token, {
+      ...payload,
+      sub: userId,
+      iss: String(payload.iss || payload.issuer || 'orbi-core'),
+      azp: String(payload.azp || 'orbi-core'),
+    });
+  }
+
   private async exchangeToken(params: Record<string, string>): Promise<KeycloakTokenResponse> {
     const response = await fetch(`${realmUrl()}/protocol/openid-connect/token`, {
       method: 'POST',
@@ -558,6 +590,11 @@ export class KeycloakAuthService {
   async getSession(token?: string, refreshToken?: string): Promise<Session | null> {
     if (!token) return null;
     try {
+      const header = decodeProtectedHeader(token);
+      if (header.alg !== 'RS256') {
+        return this.getCoreJwtSession(token);
+      }
+
       const { payload } = await jwtVerify(token, this.jwks, {
         algorithms: ['RS256'],
         issuer: issuer(),
@@ -711,16 +748,20 @@ export class KeycloakAuthService {
     if (!identifier || !requestId || !code) {
       return { data: null, error: new Error('PASSWORD_RESET_CHALLENGE_REQUIRED') };
     }
-    const passwordPolicyError = this.validatePasswordPolicy(password);
+    const normalizedPassword = String(password || '').trim();
+    const passwordPolicyError = this.validatePasswordPolicy(normalizedPassword);
     if (passwordPolicyError) return { data: null, error: passwordPolicyError };
     const identity = await this.findChallengeIdentity(identifier);
     if (!identity) return { data: null, error: new Error('IDENTITY_NOT_FOUND') };
     const valid = await OTPService.verify(requestId, code, identity.id);
     if (!valid) return { data: null, error: new Error('INVALID_OTP') };
     try {
-      await this.setKeycloakPassword(identity.id, password);
+      await this.setKeycloakPassword(identity.id, normalizedPassword);
     } catch (error: any) {
       const message = String(error?.message || error || '');
+      if (message.toLowerCase().includes('invalidpasswordhistory')) {
+        return { data: null, error: new Error('PASSWORD_RECENTLY_USED') };
+      }
       if (message.toLowerCase().includes('invalid password')) {
         return { data: null, error: new Error(`INVALID_PASSWORD_POLICY: ${message}`) };
       }

@@ -50,6 +50,10 @@ CREATE TABLE IF NOT EXISTS public.users (
     address TEXT,
     avatar_url TEXT,
     currency TEXT DEFAULT 'TZS',
+    preferred_currency TEXT DEFAULT 'TZS',
+    country_code TEXT,
+    country_name TEXT,
+    dial_code TEXT,
     account_status TEXT DEFAULT 'pending_confirmation',
     status_reason TEXT,
     status_reason_code TEXT,
@@ -866,6 +870,7 @@ CREATE TABLE IF NOT EXISTS public.allocation_rules (
 CREATE TABLE IF NOT EXISTS public.shared_pots (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     owner_user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    organization_id UUID REFERENCES public.organizations(id) ON DELETE SET NULL,
     name TEXT NOT NULL,
     purpose TEXT,
     currency TEXT DEFAULT 'TZS',
@@ -873,6 +878,12 @@ CREATE TABLE IF NOT EXISTS public.shared_pots (
     current_amount NUMERIC DEFAULT 0,
     status TEXT DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'PAUSED', 'COMPLETED', 'ARCHIVED')),
     access_model TEXT DEFAULT 'INVITE' CHECK (access_model IN ('INVITE', 'PRIVATE', 'ORG')),
+    governance_model TEXT NOT NULL DEFAULT 'OWNER_CONTROLLED' CHECK (governance_model IN ('OWNER_CONTROLLED', 'MEMBER_APPROVAL', 'ORG_APPROVAL')),
+    withdrawal_policy TEXT NOT NULL DEFAULT 'OWNER_OR_MANAGER' CHECK (withdrawal_policy IN ('OWNER_ONLY', 'OWNER_OR_MANAGER', 'APPROVAL_REQUIRED')),
+    min_withdrawal_approvals INTEGER NOT NULL DEFAULT 1 CHECK (min_withdrawal_approvals >= 1 AND min_withdrawal_approvals <= 10),
+    withdrawal_limit_amount NUMERIC,
+    maturity_at TIMESTAMPTZ,
+    require_withdrawal_reason BOOLEAN NOT NULL DEFAULT false,
     metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -904,6 +915,44 @@ CREATE TABLE IF NOT EXISTS public.shared_pot_invitations (
     metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.shared_pot_withdrawal_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    pot_id UUID NOT NULL REFERENCES public.shared_pots(id) ON DELETE CASCADE,
+    requester_user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    target_wallet_id UUID NOT NULL,
+    amount NUMERIC NOT NULL CHECK (amount > 0),
+    currency TEXT NOT NULL DEFAULT 'TZS',
+    reason TEXT,
+    status TEXT NOT NULL DEFAULT 'PENDING'
+        CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED', 'CANCELLED', 'EXECUTED')),
+    required_approvals INTEGER NOT NULL DEFAULT 1 CHECK (required_approvals >= 1 AND required_approvals <= 10),
+    approvals JSONB NOT NULL DEFAULT '[]'::jsonb,
+    rejection_reason TEXT,
+    transaction_id UUID,
+    idempotency_key TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    decided_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS public.shared_pot_delete_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    pot_id UUID NOT NULL REFERENCES public.shared_pots(id) ON DELETE CASCADE,
+    requested_by UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'PENDING_APPROVAL'
+        CHECK (status IN ('PENDING_APPROVAL', 'SCHEDULED', 'CANCELLED', 'REJECTED', 'ARCHIVED')),
+    required_approvals INTEGER NOT NULL DEFAULT 3 CHECK (required_approvals >= 3),
+    approvals JSONB NOT NULL DEFAULT '[]'::jsonb,
+    reason TEXT,
+    otp_verified_at TIMESTAMPTZ,
+    scheduled_archive_at TIMESTAMPTZ,
+    archived_at TIMESTAMPTZ,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 
@@ -1204,6 +1253,10 @@ CREATE INDEX IF NOT EXISTS idx_wealth_insights_user_status
 CREATE TABLE IF NOT EXISTS public.organizations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
+    creator_user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    primary_admin_user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    owner_type TEXT NOT NULL DEFAULT 'ORGANIZATION' CHECK (owner_type IN ('ORGANIZATION', 'GROUP', 'COMPANY')),
+    owner_label TEXT,
     registration_number TEXT,
     tax_id TEXT,
     country TEXT,
@@ -1212,6 +1265,38 @@ CREATE TABLE IF NOT EXISTS public.organizations (
     metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.organization_role_definitions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+    role_key TEXT NOT NULL,
+    role_name TEXT NOT NULL,
+    permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
+    is_system BOOLEAN NOT NULL DEFAULT false,
+    created_by UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (organization_id, role_key)
+);
+
+CREATE TABLE IF NOT EXISTS public.organization_role_change_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+    target_user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    requested_by UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    action TEXT NOT NULL CHECK (action IN ('ADD_ADMIN', 'REMOVE_ADMIN', 'TRANSFER_PRIMARY_ADMIN')),
+    from_role TEXT,
+    to_role TEXT,
+    status TEXT NOT NULL DEFAULT 'PENDING'
+        CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED', 'EXECUTED', 'CANCELLED')),
+    required_approvals INTEGER NOT NULL DEFAULT 3 CHECK (required_approvals >= 3),
+    approvals JSONB NOT NULL DEFAULT '[]'::jsonb,
+    reason TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    decided_at TIMESTAMPTZ
 );
 
 -- TRUSTBRIDGE: Escrow Agreements
@@ -1275,6 +1360,33 @@ BEGIN
         ALTER TABLE public.users ADD COLUMN org_role TEXT;
     END IF;
 END $$;
+
+ALTER TABLE public.organizations
+    ADD COLUMN IF NOT EXISTS creator_user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS primary_admin_user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS owner_type TEXT NOT NULL DEFAULT 'ORGANIZATION',
+    ADD COLUMN IF NOT EXISTS owner_label TEXT;
+
+DO $$
+BEGIN
+    ALTER TABLE public.organizations
+        DROP CONSTRAINT IF EXISTS organizations_owner_type_check,
+        ADD CONSTRAINT organizations_owner_type_check
+            CHECK (owner_type IN ('ORGANIZATION', 'GROUP', 'COMPANY'));
+    ALTER TABLE public.organization_role_change_requests
+        DROP CONSTRAINT IF EXISTS organization_role_change_requests_action_check,
+        ADD CONSTRAINT organization_role_change_requests_action_check
+            CHECK (action IN ('ADD_ADMIN', 'REMOVE_ADMIN', 'TRANSFER_PRIMARY_ADMIN'));
+    ALTER TABLE public.organization_role_change_requests
+        DROP CONSTRAINT IF EXISTS organization_role_change_requests_required_approvals_check,
+        ADD CONSTRAINT organization_role_change_requests_required_approvals_check
+            CHECK (required_approvals >= 3);
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_org_role_defs_org
+    ON public.organization_role_definitions(organization_id, role_key);
+CREATE INDEX IF NOT EXISTS idx_org_role_change_requests_org
+    ON public.organization_role_change_requests(organization_id, status, created_at DESC);
 
 DO $$ 
 BEGIN 
@@ -4685,9 +4797,13 @@ DECLARE
     wallet1_id UUID;
     wallet2_id UUID;
     meta_customer_id TEXT;
+    profile_currency TEXT;
+    profile_language TEXT;
 BEGIN
     new_user_id := NEW.id;
     meta_customer_id := NEW.raw_user_meta_data->>'customer_id';
+    profile_currency := COALESCE(NULLIF(UPPER(TRIM(NEW.raw_user_meta_data->>'currency')), ''), 'TZS');
+    profile_language := COALESCE(NULLIF(NEW.raw_user_meta_data->>'language', ''), 'en');
     
     IF meta_customer_id IS NOT NULL THEN
         new_customer_id := meta_customer_id;
@@ -4703,7 +4819,8 @@ BEGIN
     wallet2_id := md5(new_user_id::text || 'PaySafe')::uuid;
 
     INSERT INTO public.users (
-        id, email, full_name, customer_id, phone, nationality, currency, registry_type, role, app_origin, metadata
+        id, email, full_name, customer_id, phone, nationality, address, currency, preferred_currency,
+        country_code, country_name, dial_code, language, registry_type, role, app_origin, fcm_token, metadata
     )
     VALUES (
         new_user_id,
@@ -4712,10 +4829,17 @@ BEGIN
         new_customer_id,
         NEW.raw_user_meta_data->>'phone',
         COALESCE(NEW.raw_user_meta_data->>'nationality', 'Tanzania'),
-        'TZS',
+        NEW.raw_user_meta_data->>'address',
+        profile_currency,
+        COALESCE(NULLIF(UPPER(TRIM(NEW.raw_user_meta_data->>'preferred_currency')), ''), profile_currency),
+        NEW.raw_user_meta_data->>'country_code',
+        NEW.raw_user_meta_data->>'country_name',
+        NEW.raw_user_meta_data->>'dial_code',
+        profile_language,
         COALESCE(NEW.raw_user_meta_data->>'registry_type', 'CONSUMER'),
         COALESCE(NEW.raw_user_meta_data->>'role', 'USER'),
         COALESCE(NEW.raw_user_meta_data->>'app_origin', 'OBI_INSTITUTIONAL_CORE_V25'),
+        NEW.raw_user_meta_data->>'fcm_token',
         jsonb_build_object('transfer_card', jsonb_build_object(
             'holder_name', NEW.raw_user_meta_data->>'full_name',
             'card_number_masked', new_customer_id,
@@ -4723,19 +4847,32 @@ BEGIN
             'status', 'ready',
             'provisioned_at', NOW(),
             'product_name', 'Orbi'
-        ))
+        )) || COALESCE(NEW.raw_user_meta_data, '{}'::jsonb)
     )
     ON CONFLICT (id) DO UPDATE SET
         email = EXCLUDED.email,
         full_name = COALESCE(EXCLUDED.full_name, public.users.full_name),
         customer_id = COALESCE(public.users.customer_id, EXCLUDED.customer_id),
+        phone = COALESCE(EXCLUDED.phone, public.users.phone),
+        nationality = COALESCE(EXCLUDED.nationality, public.users.nationality),
+        address = COALESCE(EXCLUDED.address, public.users.address),
+        currency = COALESCE(EXCLUDED.currency, public.users.currency),
+        preferred_currency = COALESCE(EXCLUDED.preferred_currency, public.users.preferred_currency),
+        country_code = COALESCE(EXCLUDED.country_code, public.users.country_code),
+        country_name = COALESCE(EXCLUDED.country_name, public.users.country_name),
+        dial_code = COALESCE(EXCLUDED.dial_code, public.users.dial_code),
+        language = COALESCE(EXCLUDED.language, public.users.language),
+        registry_type = COALESCE(EXCLUDED.registry_type, public.users.registry_type),
+        role = COALESCE(EXCLUDED.role, public.users.role),
+        app_origin = COALESCE(EXCLUDED.app_origin, public.users.app_origin),
+        fcm_token = COALESCE(EXCLUDED.fcm_token, public.users.fcm_token),
         metadata = public.users.metadata || EXCLUDED.metadata;
 
     INSERT INTO public.platform_vaults (
         id, user_id, vault_role, name, balance, encrypted_balance, currency, color, icon, metadata
     )
     VALUES (
-        wallet1_id, new_user_id, 'OPERATING', 'Orbi', 0, encrypted_zero, 'TZS', '#10B981', 'credit-card',
+        wallet1_id, new_user_id, 'OPERATING', 'Orbi', 0, encrypted_zero, profile_currency, '#10B981', 'credit-card',
         jsonb_build_object(
             'linked_customer_id', new_customer_id,
             'account_number', new_customer_id,
@@ -4749,7 +4886,7 @@ BEGIN
         id, user_id, vault_role, name, balance, encrypted_balance, currency, color, icon, metadata
     )
     VALUES (
-        wallet2_id, new_user_id, 'INTERNAL_TRANSFER', 'PaySafe', 0, encrypted_zero, 'TZS', '#6366F1', 'shield-check',
+        wallet2_id, new_user_id, 'INTERNAL_TRANSFER', 'PaySafe', 0, encrypted_zero, profile_currency, '#6366F1', 'shield-check',
         jsonb_build_object(
             'is_secure_escrow', true,
             'slogan', 'Secure Internal Transfers',
@@ -4840,6 +4977,8 @@ BEGIN
     ALTER TABLE public.fee_correction_logs ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.item_reconciliation_audit ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.organizations ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.organization_role_definitions ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.organization_role_change_requests ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.escrow_agreements ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.treasury_policies ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.treasury_approvers ENABLE ROW LEVEL SECURITY;
@@ -4853,6 +4992,14 @@ END $$;
 DROP POLICY IF EXISTS "Users view own organization" ON public.organizations;
 CREATE POLICY "Users view own organization" ON public.organizations 
     FOR SELECT USING (id IN (SELECT organization_id FROM public.users WHERE id = auth.uid()));
+
+DROP POLICY IF EXISTS organization_role_definitions_service_role ON public.organization_role_definitions;
+CREATE POLICY organization_role_definitions_service_role ON public.organization_role_definitions
+    FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+DROP POLICY IF EXISTS organization_role_change_requests_service_role ON public.organization_role_change_requests;
+CREATE POLICY organization_role_change_requests_service_role ON public.organization_role_change_requests
+    FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
 DROP POLICY IF EXISTS "Users view corporate goals" ON public.goals;
 DROP POLICY IF EXISTS "Users manage own goals" ON public.goals;
@@ -5997,6 +6144,7 @@ DECLARE
     v_amount NUMERIC;
     v_source_vault_id UUID;
     v_escrow_vault_id UUID;
+    v_receiver_vault_id UUID;
     v_merchant_id UUID;
 BEGIN
     IF LOWER(COALESCE(NEW.type, '')) <> 'escrow'
@@ -6011,10 +6159,11 @@ BEGIN
         NEW.wallet_id
     );
     v_escrow_vault_id := NULLIF(NEW.metadata->>'escrow_vault_id', '')::UUID;
+    v_receiver_vault_id := NULLIF(NEW.metadata->>'receiver_vault_id', '')::UUID;
     v_merchant_id := NULLIF(NEW.metadata->>'merchant_id', '')::UUID;
 
     IF v_receiver_id IS NULL OR v_amount IS NULL OR v_amount <= 0
-       OR v_source_vault_id IS NULL OR v_escrow_vault_id IS NULL THEN
+       OR v_source_vault_id IS NULL OR v_escrow_vault_id IS NULL OR v_receiver_vault_id IS NULL THEN
         RAISE EXCEPTION 'PAYSAFE_ESCROW_METADATA_INVALID: canonical escrow metadata is incomplete';
     END IF;
 
@@ -6029,6 +6178,7 @@ BEGIN
         receiver_id,
         source_vault_id,
         escrow_vault_id,
+        receiver_vault_id,
         merchant_id,
         service_code,
         amount,
@@ -6045,6 +6195,7 @@ BEGIN
         v_receiver_id,
         v_source_vault_id,
         v_escrow_vault_id,
+        v_receiver_vault_id,
         v_merchant_id,
         NULLIF(NEW.metadata->>'service_code', ''),
         v_amount,
@@ -7370,6 +7521,48 @@ NOTIFY pgrst, 'reload schema';
 
 ALTER TABLE public.shared_pots
     ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+ALTER TABLE public.shared_pots
+    ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES public.organizations(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS governance_model TEXT NOT NULL DEFAULT 'OWNER_CONTROLLED',
+    ADD COLUMN IF NOT EXISTS withdrawal_policy TEXT NOT NULL DEFAULT 'OWNER_OR_MANAGER',
+    ADD COLUMN IF NOT EXISTS min_withdrawal_approvals INTEGER NOT NULL DEFAULT 1,
+    ADD COLUMN IF NOT EXISTS withdrawal_limit_amount NUMERIC,
+    ADD COLUMN IF NOT EXISTS maturity_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS require_withdrawal_reason BOOLEAN NOT NULL DEFAULT false;
+
+DO $$
+BEGIN
+    ALTER TABLE public.shared_pots
+        DROP CONSTRAINT IF EXISTS shared_pots_governance_model_check,
+        ADD CONSTRAINT shared_pots_governance_model_check
+            CHECK (governance_model IN ('OWNER_CONTROLLED', 'MEMBER_APPROVAL', 'ORG_APPROVAL'));
+    ALTER TABLE public.shared_pots
+        DROP CONSTRAINT IF EXISTS shared_pots_withdrawal_policy_check,
+        ADD CONSTRAINT shared_pots_withdrawal_policy_check
+            CHECK (withdrawal_policy IN ('OWNER_ONLY', 'OWNER_OR_MANAGER', 'APPROVAL_REQUIRED'));
+    ALTER TABLE public.shared_pots
+        DROP CONSTRAINT IF EXISTS shared_pots_min_withdrawal_approvals_check,
+        ADD CONSTRAINT shared_pots_min_withdrawal_approvals_check
+            CHECK (min_withdrawal_approvals >= 1 AND min_withdrawal_approvals <= 10);
+END $$;
+
+UPDATE public.shared_pots
+SET
+    governance_model = CASE
+        WHEN access_model = 'ORG' THEN 'ORG_APPROVAL'
+        ELSE 'OWNER_CONTROLLED'
+    END,
+    withdrawal_policy = CASE
+        WHEN access_model = 'ORG' THEN 'APPROVAL_REQUIRED'
+        WHEN access_model = 'PRIVATE' THEN 'OWNER_ONLY'
+        ELSE 'OWNER_OR_MANAGER'
+    END,
+    min_withdrawal_approvals = CASE
+        WHEN access_model = 'ORG' THEN GREATEST(min_withdrawal_approvals, 2)
+        ELSE min_withdrawal_approvals
+    END
+WHERE withdrawal_policy = 'APPROVAL_REQUIRED'
+   OR governance_model = 'MEMBER_APPROVAL';
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_shared_pots_owner_idempotency
     ON public.shared_pots(owner_user_id, idempotency_key)
@@ -7381,10 +7574,23 @@ ALTER TABLE public.shared_pot_invitations
 CREATE UNIQUE INDEX IF NOT EXISTS idx_shared_pot_invitation_response_idempotency
     ON public.shared_pot_invitations(invitee_user_id, response_idempotency_key)
     WHERE response_idempotency_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shared_pot_withdrawal_request_idempotency
+    ON public.shared_pot_withdrawal_requests(requester_user_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_shared_pot_withdrawal_requests_pot
+    ON public.shared_pot_withdrawal_requests(pot_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_shared_pot_withdrawal_requests_requester
+    ON public.shared_pot_withdrawal_requests(requester_user_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_shared_pot_delete_requests_pot
+    ON public.shared_pot_delete_requests(pot_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_shared_pot_delete_requests_due
+    ON public.shared_pot_delete_requests(status, scheduled_archive_at);
 
 ALTER TABLE public.shared_pots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.shared_pot_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.shared_pot_invitations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.shared_pot_withdrawal_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.shared_pot_delete_requests ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS shared_pots_service_role ON public.shared_pots;
 CREATE POLICY shared_pots_service_role ON public.shared_pots
@@ -7396,6 +7602,14 @@ CREATE POLICY shared_pot_members_service_role ON public.shared_pot_members
 
 DROP POLICY IF EXISTS shared_pot_invitations_service_role ON public.shared_pot_invitations;
 CREATE POLICY shared_pot_invitations_service_role ON public.shared_pot_invitations
+    FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+DROP POLICY IF EXISTS shared_pot_withdrawal_requests_service_role ON public.shared_pot_withdrawal_requests;
+CREATE POLICY shared_pot_withdrawal_requests_service_role ON public.shared_pot_withdrawal_requests
+    FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+DROP POLICY IF EXISTS shared_pot_delete_requests_service_role ON public.shared_pot_delete_requests;
+CREATE POLICY shared_pot_delete_requests_service_role ON public.shared_pot_delete_requests
     FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
 DROP FUNCTION IF EXISTS public.shared_pot_contribute_v1(

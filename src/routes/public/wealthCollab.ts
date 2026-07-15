@@ -29,7 +29,27 @@ export const resolveSharedPotMembership = async (sb: any, potId: string, userId:
     ? { role: 'OWNER', user_id: userId, pot_id: potId }
     : null;
 
-  const effectiveMembership = membership || ownerMembership;
+  let organizationMembership = null;
+  if (!membership && !ownerMembership && String(pot.access_model || '').toUpperCase() === 'ORG' && pot.organization_id) {
+    const { data: orgUser, error: orgUserError } = await sb
+      .from('users')
+      .select('id,organization_id,org_role')
+      .eq('id', userId)
+      .maybeSingle();
+    if (orgUserError) throw new Error(orgUserError.message);
+    const orgRole = String(orgUser?.org_role || '').toUpperCase();
+    if (String(orgUser?.organization_id || '') === String(pot.organization_id)) {
+      organizationMembership = {
+        role: ['ADMIN', 'MANAGER', 'SIGNATORY'].includes(orgRole) ? 'MANAGER' : 'VIEWER',
+        user_id: userId,
+        pot_id: potId,
+        organization_role: orgRole || 'MEMBER',
+        derived_from_organization: true,
+      };
+    }
+  }
+
+  const effectiveMembership = membership || ownerMembership || organizationMembership;
   if (!effectiveMembership) throw new Error('SHARED_POT_ACCESS_DENIED');
   return { pot, membership: effectiveMembership };
 };

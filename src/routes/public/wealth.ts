@@ -30,6 +30,7 @@ type Deps = {
   LogicCore: any;
   getSupabase: () => any;
   getAdminSupabase: () => any;
+  OTPService?: any;
 };
 
 const toNumber = (value: any) => {
@@ -83,6 +84,12 @@ const SharedPotCreateSchema = z.object({
     currency: z.string().min(3).max(8).optional(),
     target_amount: z.coerce.number().nonnegative().optional(),
     access_model: z.enum(['INVITE', 'PRIVATE', 'ORG']).optional(),
+    governance_model: z.enum(['OWNER_CONTROLLED', 'MEMBER_APPROVAL', 'ORG_APPROVAL']).optional(),
+    withdrawal_policy: z.enum(['OWNER_ONLY', 'OWNER_OR_MANAGER', 'APPROVAL_REQUIRED']).optional(),
+    min_withdrawal_approvals: z.coerce.number().int().min(1).max(10).optional(),
+    withdrawal_limit_amount: z.coerce.number().positive().optional(),
+    maturity_at: z.string().datetime().optional(),
+    require_withdrawal_reason: z.boolean().optional(),
     idempotency_key: z.string().min(8).max(128).optional(),
 });
 
@@ -115,6 +122,7 @@ const SharedPotInviteResponseSchema = z.object({
 const SharedPotWithdrawSchema = z.object({
     amount: z.coerce.number().positive(),
     target_wallet_id: z.string().uuid().optional(),
+    reason: z.string().trim().min(3).max(240).optional(),
     idempotency_key: z.string().min(8).max(128).optional(),
 });
 
@@ -180,7 +188,7 @@ const AllocationRuleUpdateSchema = AllocationRuleCreateSchema.partial().extend({
 });
 
 export const registerWealthRoutes = (v1: Router, deps: Deps) => {
-  const { authenticate, LogicCore, getSupabase, getAdminSupabase } = deps;
+  const { authenticate, LogicCore, getSupabase, getAdminSupabase, OTPService } = deps;
   const executeSharedBudgetSpend = createSharedBudgetSpendExecutor(LogicCore);
 
   registerBillReserveRoutes(v1, {
@@ -212,6 +220,7 @@ export const registerWealthRoutes = (v1: Router, deps: Deps) => {
     canContributeToSharedPot,
     resolveUserBySharedPotIdentifier,
     expireSharedPotInvitationIfNeeded,
+    OTPService,
   });
 
   registerSharedBudgetRoutes(v1, {

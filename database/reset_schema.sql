@@ -194,6 +194,10 @@ CREATE TABLE IF NOT EXISTS public.users (
     address TEXT,
     avatar_url TEXT,
     currency TEXT DEFAULT 'TZS',
+    preferred_currency TEXT DEFAULT 'TZS',
+    country_code TEXT,
+    country_name TEXT,
+    dial_code TEXT,
     account_status TEXT DEFAULT 'pending_confirmation',
     status_reason TEXT,
     status_reason_code TEXT,
@@ -4930,9 +4934,13 @@ DECLARE
     wallet1_id UUID;
     wallet2_id UUID;
     meta_customer_id TEXT;
+    profile_currency TEXT;
+    profile_language TEXT;
 BEGIN
     new_user_id := NEW.id;
     meta_customer_id := NEW.raw_user_meta_data->>'customer_id';
+    profile_currency := COALESCE(NULLIF(UPPER(TRIM(NEW.raw_user_meta_data->>'currency')), ''), 'TZS');
+    profile_language := COALESCE(NULLIF(NEW.raw_user_meta_data->>'language', ''), 'en');
     
     IF meta_customer_id IS NOT NULL THEN
         new_customer_id := meta_customer_id;
@@ -4948,7 +4956,8 @@ BEGIN
     wallet2_id := md5(new_user_id::text || 'PaySafe')::uuid;
 
     INSERT INTO public.users (
-        id, email, full_name, customer_id, phone, nationality, currency, registry_type, role, app_origin, metadata
+        id, email, full_name, customer_id, phone, nationality, address, currency, preferred_currency,
+        country_code, country_name, dial_code, language, registry_type, role, app_origin, fcm_token, metadata
     )
     VALUES (
         new_user_id,
@@ -4957,10 +4966,17 @@ BEGIN
         new_customer_id,
         NEW.raw_user_meta_data->>'phone',
         COALESCE(NEW.raw_user_meta_data->>'nationality', 'Tanzania'),
-        'TZS',
+        NEW.raw_user_meta_data->>'address',
+        profile_currency,
+        COALESCE(NULLIF(UPPER(TRIM(NEW.raw_user_meta_data->>'preferred_currency')), ''), profile_currency),
+        NEW.raw_user_meta_data->>'country_code',
+        NEW.raw_user_meta_data->>'country_name',
+        NEW.raw_user_meta_data->>'dial_code',
+        profile_language,
         COALESCE(NEW.raw_user_meta_data->>'registry_type', 'CONSUMER'),
         COALESCE(NEW.raw_user_meta_data->>'role', 'USER'),
         COALESCE(NEW.raw_user_meta_data->>'app_origin', 'OBI_INSTITUTIONAL_CORE_V25'),
+        NEW.raw_user_meta_data->>'fcm_token',
         jsonb_build_object('transfer_card', jsonb_build_object(
             'holder_name', NEW.raw_user_meta_data->>'full_name',
             'card_number_masked', new_customer_id,
@@ -4968,19 +4984,32 @@ BEGIN
             'status', 'ready',
             'provisioned_at', NOW(),
             'product_name', 'Orbi'
-        ))
+        )) || COALESCE(NEW.raw_user_meta_data, '{}'::jsonb)
     )
     ON CONFLICT (id) DO UPDATE SET
         email = EXCLUDED.email,
         full_name = COALESCE(EXCLUDED.full_name, public.users.full_name),
         customer_id = COALESCE(public.users.customer_id, EXCLUDED.customer_id),
-        metadata = public.users.metadata || EXCLUDED.metadata;
+        phone = COALESCE(EXCLUDED.phone, public.users.phone),
+        nationality = COALESCE(EXCLUDED.nationality, public.users.nationality),
+        address = COALESCE(EXCLUDED.address, public.users.address),
+        currency = COALESCE(EXCLUDED.currency, public.users.currency),
+        preferred_currency = COALESCE(EXCLUDED.preferred_currency, public.users.preferred_currency),
+        country_code = COALESCE(EXCLUDED.country_code, public.users.country_code),
+        country_name = COALESCE(EXCLUDED.country_name, public.users.country_name),
+        dial_code = COALESCE(EXCLUDED.dial_code, public.users.dial_code),
+        language = COALESCE(EXCLUDED.language, public.users.language),
+        registry_type = COALESCE(EXCLUDED.registry_type, public.users.registry_type),
+        role = COALESCE(EXCLUDED.role, public.users.role),
+        app_origin = COALESCE(EXCLUDED.app_origin, public.users.app_origin),
+        fcm_token = COALESCE(EXCLUDED.fcm_token, public.users.fcm_token),
+        metadata = COALESCE(public.users.metadata, '{}'::jsonb) || EXCLUDED.metadata;
 
     INSERT INTO public.platform_vaults (
         id, user_id, vault_role, name, balance, encrypted_balance, currency, color, icon, metadata
     )
     VALUES (
-        wallet1_id, new_user_id, 'OPERATING', 'Orbi', 0, encrypted_zero, 'TZS', '#10B981', 'credit-card',
+        wallet1_id, new_user_id, 'OPERATING', 'Orbi', 0, encrypted_zero, profile_currency, '#10B981', 'credit-card',
         jsonb_build_object(
             'linked_customer_id', new_customer_id,
             'account_number', new_customer_id,
@@ -4994,7 +5023,7 @@ BEGIN
         id, user_id, vault_role, name, balance, encrypted_balance, currency, color, icon, metadata
     )
     VALUES (
-        wallet2_id, new_user_id, 'INTERNAL_TRANSFER', 'PaySafe', 0, encrypted_zero, 'TZS', '#6366F1', 'shield-check',
+        wallet2_id, new_user_id, 'INTERNAL_TRANSFER', 'PaySafe', 0, encrypted_zero, profile_currency, '#6366F1', 'shield-check',
         jsonb_build_object(
             'is_secure_escrow', true,
             'slogan', 'Secure Internal Transfers',

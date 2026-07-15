@@ -1306,6 +1306,10 @@ export class AuthService {
                         phone: formattedPhone,
                         nationality: nationality,
                         currency: normalizedCurrency,
+                        preferred_currency: (m?.preferred_currency || normalizedCurrency).toString().trim().toUpperCase(),
+                        country_code: m?.country_code,
+                        country_name: m?.country_name,
+                        dial_code: m?.dial_code,
                         language: language,
                         account_status: accountStatus,
                         auth_confirmed_at: null,
@@ -1598,6 +1602,7 @@ export class AuthService {
     }
 
     async completePasswordReset(password: string, identifier?: string, requestId?: string, code?: string) {
+        const normalizedPassword = String(password || '').trim();
         if (identifier && requestId && code) {
             const identity = await this.resolveIdentityForChallenge(identifier);
             if (!identity) return { data: null, error: new Error('IDENTITY_NOT_FOUND') };
@@ -1605,7 +1610,7 @@ export class AuthService {
             if (!valid) return { data: null, error: new Error('INVALID_OTP') };
             const sb = getAdminSupabase();
             if (!sb) return { data: null, error: new Error('DB_OFFLINE') };
-            const result = await sb.auth.admin.updateUserById(identity.userId, { password });
+            const result = await sb.auth.admin.updateUserById(identity.userId, { password: normalizedPassword });
             if (!result.error) {
                 try {
                     await sb.from('user_sessions').update({ is_revoked: true }).eq('user_id', identity.userId);
@@ -1617,7 +1622,7 @@ export class AuthService {
             return result;
         }
 
-        const result = await this.updatePassword(password);
+        const result = await this.updatePassword(normalizedPassword);
         if (!result.error) {
             await this.security.logActivity('system', 'PASSWORD_RESET_COMPLETED', 'success', 'User completed password reset');
         }

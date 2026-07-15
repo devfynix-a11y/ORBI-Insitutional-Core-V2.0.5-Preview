@@ -156,7 +156,10 @@ class OrbiTalkGatewayService {
                 normalized.timestamp = normalized.timestamp || fallbackTimestamp;
                 break;
             case 'Escrow_Created':
+            case 'Escrow_Request_Received':
             case 'Escrow_Released':
+            case 'Escrow_Refunded':
+                normalized.senderName = normalized.senderName || fallbackSenderName;
                 normalized.recipientName = normalized.recipientName || fallbackRecipientName;
                 normalized.currency = normalized.currency || fallbackCurrency;
                 normalized.amount = normalized.amount ?? fallbackAmount;

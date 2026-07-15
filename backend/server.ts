@@ -1606,6 +1606,81 @@ class OrbiServer {
     }
 
     // --- ENTERPRISE B2B & TREASURY ---
+    private normalizeOrgRole(role: string) {
+        const normalized = String(role || 'MEMBER').trim().toUpperCase().replace(/\s+/g, '_');
+        const aliases: Record<string, string> = {
+            FINANCE: 'ACCOUNTANT',
+            MHASIBU: 'ACCOUNTANT',
+            MENEJA: 'MANAGER',
+            SAINI: 'SIGNATORY',
+            SIGNER: 'SIGNATORY',
+        };
+        return aliases[normalized] || normalized;
+    }
+
+    private canLeadOrganization(role: string) {
+        return ['ADMIN', 'SIGNATORY'].includes(this.normalizeOrgRole(role));
+    }
+
+    private async countOrganizationAdmins(orgId: string) {
+        const sb = getAdminSupabase();
+        if (!sb) return 0;
+        const { count } = await sb
+            .from('users')
+            .select('id', { count: 'exact', head: true })
+            .eq('organization_id', orgId)
+            .eq('org_role', 'ADMIN');
+        return Number(count || 0);
+    }
+
+    private async notifyOrganizationMembers(orgId: string, subject: string, body: string, variables: Record<string, any> = {}) {
+        const sb = getAdminSupabase();
+        if (!sb) return;
+        const { data: members } = await sb
+            .from('users')
+            .select('id')
+            .eq('organization_id', orgId)
+            .eq('account_status', 'active');
+        await Promise.all((members || []).map((member: any) =>
+            Messaging.dispatch(String(member.id), 'info', subject, body, {
+                push: true,
+                sms: false,
+                email: true,
+                eventCode: variables.eventCode || 'ORGANIZATION_GOVERNANCE_UPDATED',
+                variables,
+            }).catch((error: any) => {
+                console.warn('[Organization] Member notification deferred', {
+                    orgId,
+                    userId: member.id,
+                    code: String(error?.code || error?.message || ''),
+                });
+            })
+        ));
+    }
+
+    private async ensureOrganizationRoleDefinitions(orgId: string, actorId: string) {
+        const sb = getAdminSupabase();
+        if (!sb) return;
+        const defaults = [
+            { role_key: 'ADMIN', role_name: 'Admin', permissions: ['organization.manage', 'members.invite', 'roles.assign', 'fungu.manage'] },
+            { role_key: 'MANAGER', role_name: 'Manager', permissions: ['members.invite', 'fungu.manage'] },
+            { role_key: 'ACCOUNTANT', role_name: 'Mhasibu', permissions: ['finance.view', 'reports.export', 'fungu.view'] },
+            { role_key: 'SIGNATORY', role_name: 'Signatory', permissions: ['approvals.sign', 'admin.removal.approve', 'fungu.approve'] },
+            { role_key: 'MEMBER', role_name: 'Member', permissions: ['fungu.view'] },
+        ];
+        for (const role of defaults) {
+            await sb.from('organization_role_definitions').upsert({
+                organization_id: orgId,
+                role_key: role.role_key,
+                role_name: role.role_name,
+                permissions: role.permissions,
+                is_system: true,
+                created_by: actorId,
+                updated_at: new Date().toISOString(),
+            }, { onConflict: 'organization_id,role_key' });
+        }
+    }
+
     async createOrganization(payload: any, actorId: string) {
         const sb = getAdminSupabase();
         if (!sb) return { error: 'DB_OFFLINE' };
@@ -1620,6 +1695,10 @@ class OrbiServer {
 
         const { data, error } = await sb.from('organizations').insert({
             name: payload.name,
+            creator_user_id: actorId,
+            primary_admin_user_id: actorId,
+            owner_type: payload.owner_type || 'ORGANIZATION',
+            owner_label: payload.owner_label || payload.name,
             registration_number: payload.registration_number,
             tax_id: payload.tax_id,
             country: payload.country,
@@ -1628,6 +1707,7 @@ class OrbiServer {
         }).select().single();
 
         if (error) return { error: error.message };
+        await this.ensureOrganizationRoleDefinitions(data.id, actorId);
 
         // 2. Auto-assign the creator as the Organization ADMIN
         await sb.from('users').update({ 
@@ -1636,6 +1716,12 @@ class OrbiServer {
         }).eq('id', actorId);
 
         await this.security.logActivity(actorId, 'ORG_CREATED', 'success', `Created organization ${payload.name} and assumed ADMIN role`);
+        await this.notifyOrganizationMembers(
+            data.id,
+            'Organization created',
+            `${payload.name} organization profile was created and governance roles are ready.`,
+            { orgId: data.id, orgName: payload.name, actorId, eventCode: 'ORGANIZATION_CREATED' },
+        );
         return { success: true, data };
     }
 
@@ -1650,21 +1736,35 @@ class OrbiServer {
     async linkUserToOrganization(userId: string, orgId: string, role: string, actorId: string) {
         const sb = getAdminSupabase();
         if (!sb) return { error: 'DB_OFFLINE' };
+        const normalizedRole = this.normalizeOrgRole(role);
 
         // 1. Security Check: Ensure the actor is an ADMIN of this specific organization
         const { data: actor } = await sb.from('users').select('organization_id, org_role').eq('id', actorId).single();
-        if (!actor || actor.organization_id !== orgId || actor.org_role !== 'ADMIN') {
+        if (!actor || actor.organization_id !== orgId || this.normalizeOrgRole(actor.org_role) !== 'ADMIN') {
             return { error: 'UNAUTHORIZED: Only Organization Admins can manage team members.' };
+        }
+        if (normalizedRole === 'ADMIN') {
+            return this.requestOrganizationAdminChange(orgId, {
+                action: 'ADD_ADMIN',
+                target_user_id: userId,
+                reason: 'New organization admin assignment requires three leader approvals.',
+            }, actorId);
         }
 
         // 2. Link the user and assign the role
         const { error } = await sb.from('users').update({
             organization_id: orgId,
-            org_role: role
+            org_role: normalizedRole
         }).eq('id', userId);
 
         if (error) return { error: error.message };
-        await this.security.logActivity(actorId, 'USER_ORG_LINKED', 'success', `Linked user ${userId} to org ${orgId} as ${role}`);
+        await this.security.logActivity(actorId, 'USER_ORG_LINKED', 'success', `Linked user ${userId} to org ${orgId} as ${normalizedRole}`);
+        await this.notifyOrganizationMembers(
+            orgId,
+            'Organization member updated',
+            `A member role was updated to ${normalizedRole}.`,
+            { orgId, userId, role: normalizedRole, actorId, eventCode: 'ORGANIZATION_MEMBER_ROLE_UPDATED' },
+        );
         return { success: true };
     }
 
@@ -1674,7 +1774,8 @@ class OrbiServer {
 
         // 1. Security Check: Ensure the actor is an ADMIN of this specific organization
         const { data: actor } = await sb.from('users').select('organization_id, org_role, organizations(name)').eq('id', actorId).single();
-        if (!actor || actor.organization_id !== orgId || actor.org_role !== 'ADMIN') {
+        const normalizedRole = this.normalizeOrgRole(role);
+        if (!actor || actor.organization_id !== orgId || this.normalizeOrgRole(actor.org_role) !== 'ADMIN') {
             return { error: 'UNAUTHORIZED: Only Organization Admins can invite team members.' };
         }
 
@@ -1683,11 +1784,18 @@ class OrbiServer {
         if (!targetUser) {
             return { error: 'USER_NOT_FOUND: No Orbi account found with this email. They must register first.' };
         }
+        if (normalizedRole === 'ADMIN') {
+            return this.requestOrganizationAdminChange(orgId, {
+                action: 'ADD_ADMIN',
+                target_user_id: targetUser.id,
+                reason: 'New organization admin invitation requires three leader approvals.',
+            }, actorId);
+        }
 
         // 3. Link the user
         const { error } = await sb.from('users').update({
             organization_id: orgId,
-            org_role: role
+            org_role: normalizedRole
         }).eq('id', targetUser.id);
 
         if (error) return { error: error.message };
@@ -1698,17 +1806,168 @@ class OrbiServer {
             targetUser.id,
             'info',
             'You have been added to an Organization',
-            `You have been invited to join ${orgName} as a ${role}. Your corporate wallet is now active.`,
+            `You have been invited to join ${orgName} as a ${normalizedRole}. Your corporate wallet is now active.`,
             { 
                 sms: true,
                 email: true,
                 template: 'Org_Invitation',
-                variables: { orgName, role }
+                variables: { orgName, role: normalizedRole }
             }
         );
 
-        await this.security.logActivity(actorId, 'USER_ORG_INVITED', 'success', `Invited user ${email} to org ${orgId} as ${role}`);
+        await this.security.logActivity(actorId, 'USER_ORG_INVITED', 'success', `Invited user ${email} to org ${orgId} as ${normalizedRole}`);
+        await this.notifyOrganizationMembers(
+            orgId,
+            'Organization invitation accepted',
+            `${targetUser.full_name || email} was added as ${normalizedRole}.`,
+            { orgId, userId: targetUser.id, role: normalizedRole, actorId, eventCode: 'ORGANIZATION_MEMBER_ADDED' },
+        );
         return { success: true, userId: targetUser.id };
+    }
+
+    async createOrganizationRole(orgId: string, payload: any, actorId: string) {
+        const sb = getAdminSupabase();
+        if (!sb) return { error: 'DB_OFFLINE' };
+        const { data: actor } = await sb.from('users').select('organization_id, org_role').eq('id', actorId).single();
+        if (!actor || actor.organization_id !== orgId || this.normalizeOrgRole(actor.org_role) !== 'ADMIN') {
+            return { error: 'UNAUTHORIZED: Only Organization Admins can create roles.' };
+        }
+        const roleKey = this.normalizeOrgRole(payload.role_key || payload.name);
+        const { data, error } = await sb.from('organization_role_definitions').upsert({
+            organization_id: orgId,
+            role_key: roleKey,
+            role_name: payload.role_name || payload.name || roleKey,
+            permissions: Array.isArray(payload.permissions) ? payload.permissions : [],
+            is_system: false,
+            created_by: actorId,
+            updated_at: new Date().toISOString(),
+        }, { onConflict: 'organization_id,role_key' }).select('*').single();
+        if (error) return { error: error.message };
+        await this.notifyOrganizationMembers(
+            orgId,
+            'Organization role updated',
+            `A role named ${data.role_name} was added or updated.`,
+            { orgId, role: roleKey, actorId, eventCode: 'ORGANIZATION_ROLE_UPDATED' },
+        );
+        return { success: true, data };
+    }
+
+    async requestOrganizationAdminChange(orgId: string, payload: any, actorId: string) {
+        const sb = getAdminSupabase();
+        if (!sb) return { error: 'DB_OFFLINE' };
+        const action = String(payload.action || 'REMOVE_ADMIN').toUpperCase();
+        const targetUserId = String(payload.targetUserId || payload.target_user_id || '');
+        if (!targetUserId) return { error: 'TARGET_USER_REQUIRED' };
+        const { data: actor } = await sb.from('users').select('organization_id, org_role').eq('id', actorId).single();
+        if (!actor || actor.organization_id !== orgId || this.normalizeOrgRole(actor.org_role) !== 'ADMIN') {
+            return { error: 'UNAUTHORIZED: Only Organization Admins can request admin changes.' };
+        }
+        const { data: target } = await sb.from('users').select('id, org_role').eq('id', targetUserId).eq('organization_id', orgId).single();
+        if (!target) return { error: 'ORG_TARGET_NOT_FOUND' };
+        if (action === 'REMOVE_ADMIN' && this.normalizeOrgRole(target.org_role) === 'ADMIN') {
+            const adminCount = await this.countOrganizationAdmins(orgId);
+            if (adminCount <= 1) return { error: 'ORG_ADMIN_MIN_REQUIRED' };
+        }
+        if (action === 'ADD_ADMIN' || action === 'TRANSFER_PRIMARY_ADMIN') {
+            const adminCount = await this.countOrganizationAdmins(orgId);
+            if (adminCount >= 2 && this.normalizeOrgRole(target.org_role) !== 'ADMIN') {
+                return { error: 'ORG_ADMIN_MAX_REACHED' };
+            }
+        }
+        const { data, error } = await sb.from('organization_role_change_requests').insert({
+            organization_id: orgId,
+            target_user_id: targetUserId,
+            requested_by: actorId,
+            action,
+            from_role: this.normalizeOrgRole(target.org_role),
+            to_role: action === 'REMOVE_ADMIN' ? (payload.to_role || 'MANAGER') : 'ADMIN',
+            required_approvals: 3,
+            reason: payload.reason || null,
+            metadata: { requested_from: 'mobile_or_admin_portal' },
+        }).select('*').single();
+        if (error) return { error: error.message };
+        await this.notifyOrganizationMembers(
+            orgId,
+            'Organization admin change requested',
+            'A leadership change request has been created and needs three leader approvals.',
+            { orgId, requestId: data.id, action, targetUserId, actorId, eventCode: 'ORGANIZATION_ADMIN_CHANGE_REQUESTED' },
+        );
+        return { success: true, data };
+    }
+
+    async respondOrganizationAdminChange(requestId: string, payload: any, actorId: string) {
+        const sb = getAdminSupabase();
+        if (!sb) return { error: 'DB_OFFLINE' };
+        const action = String(payload.action || '').toUpperCase();
+        if (!['APPROVE', 'REJECT'].includes(action)) return { error: 'INVALID_ACTION' };
+        const { data: request } = await sb.from('organization_role_change_requests').select('*').eq('id', requestId).single();
+        if (!request) return { error: 'REQUEST_NOT_FOUND' };
+        if (String(request.status).toUpperCase() !== 'PENDING') return { error: 'REQUEST_NOT_PENDING' };
+        const { data: actor } = await sb.from('users').select('organization_id, org_role').eq('id', actorId).single();
+        if (!actor || actor.organization_id !== request.organization_id || !this.canLeadOrganization(actor.org_role)) {
+            return { error: 'UNAUTHORIZED: Only Admins or Signatories can approve leadership changes.' };
+        }
+        if (String(request.target_user_id) === actorId) return { error: 'SELF_APPROVAL_DENIED' };
+        const approvals = Array.isArray(request.approvals) ? request.approvals : [];
+        if (approvals.some((item: any) => String(item.user_id) === actorId)) return { error: 'ALREADY_REVIEWED' };
+        const updatedApprovals = [...approvals, {
+            user_id: actorId,
+            role: this.normalizeOrgRole(actor.org_role),
+            action,
+            note: payload.note || null,
+            at: new Date().toISOString(),
+        }];
+        if (action === 'REJECT') {
+            const { data, error } = await sb.from('organization_role_change_requests').update({
+                approvals: updatedApprovals,
+                status: 'REJECTED',
+                decided_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+            }).eq('id', requestId).select('*').single();
+            if (error) return { error: error.message };
+            await this.notifyOrganizationMembers(request.organization_id, 'Organization admin change rejected', 'A leadership change request was rejected.', { orgId: request.organization_id, requestId, actorId, eventCode: 'ORGANIZATION_ADMIN_CHANGE_REJECTED' });
+            return { success: true, data };
+        }
+        const approvalCount = updatedApprovals.filter((item: any) => item.action === 'APPROVE').length;
+        if (approvalCount < Number(request.required_approvals || 3)) {
+            const { data, error } = await sb.from('organization_role_change_requests').update({
+                approvals: updatedApprovals,
+                updated_at: new Date().toISOString(),
+            }).eq('id', requestId).select('*').single();
+            if (error) return { error: error.message };
+            return { success: true, data, requires_more_approvals: true };
+        }
+        if (request.action === 'REMOVE_ADMIN') {
+            if (this.normalizeOrgRole(request.from_role) === 'ADMIN') {
+                const adminCount = await this.countOrganizationAdmins(request.organization_id);
+                if (adminCount <= 1) return { error: 'ORG_ADMIN_MIN_REQUIRED' };
+            }
+            await sb.from('users').update({ org_role: request.to_role || 'MANAGER' }).eq('id', request.target_user_id).eq('organization_id', request.organization_id);
+        } else if (request.action === 'ADD_ADMIN') {
+            const adminCount = await this.countOrganizationAdmins(request.organization_id);
+            if (adminCount >= 2) {
+                const { data: target } = await sb.from('users').select('org_role').eq('id', request.target_user_id).eq('organization_id', request.organization_id).single();
+                if (this.normalizeOrgRole(target?.org_role) !== 'ADMIN') return { error: 'ORG_ADMIN_MAX_REACHED' };
+            }
+            await sb.from('users').update({ org_role: 'ADMIN' }).eq('id', request.target_user_id).eq('organization_id', request.organization_id);
+        } else if (request.action === 'TRANSFER_PRIMARY_ADMIN') {
+            const adminCount = await this.countOrganizationAdmins(request.organization_id);
+            if (adminCount >= 2) {
+                const { data: target } = await sb.from('users').select('org_role').eq('id', request.target_user_id).eq('organization_id', request.organization_id).single();
+                if (this.normalizeOrgRole(target?.org_role) !== 'ADMIN') return { error: 'ORG_ADMIN_MAX_REACHED' };
+            }
+            await sb.from('organizations').update({ primary_admin_user_id: request.target_user_id, updated_at: new Date().toISOString() }).eq('id', request.organization_id);
+            await sb.from('users').update({ org_role: 'ADMIN' }).eq('id', request.target_user_id).eq('organization_id', request.organization_id);
+        }
+        const { data, error } = await sb.from('organization_role_change_requests').update({
+            approvals: updatedApprovals,
+            status: 'EXECUTED',
+            decided_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+        }).eq('id', requestId).select('*').single();
+        if (error) return { error: error.message };
+        await this.notifyOrganizationMembers(request.organization_id, 'Organization leadership updated', 'A leadership change was approved and applied.', { orgId: request.organization_id, requestId, actorId, eventCode: 'ORGANIZATION_ADMIN_CHANGE_EXECUTED' });
+        return { success: true, data };
     }
 
     async requestTreasuryWithdrawal(userId: string, goalId: string, amount: number, destinationWalletId: string, reason: string) {
@@ -1740,11 +1999,19 @@ class OrbiServer {
         
         const { data: org } = await sb.from('organizations').select('*').eq('id', orgId).single();
         if (!org) return { error: 'NOT_FOUND' };
+        await this.ensureOrganizationRoleDefinitions(orgId, String(org.creator_user_id || org.primary_admin_user_id || ''));
 
         const { data: members } = await sb.from('users').select('id, full_name, email, org_role, account_status').eq('organization_id', orgId);
         const { data: goals } = await sb.from('goals').select('*').eq('organization_id', orgId).eq('is_corporate', true);
+        const { data: roles } = await sb.from('organization_role_definitions').select('*').eq('organization_id', orgId).order('is_system', { ascending: false }).order('role_name', { ascending: true });
+        const { data: adminChangeRequests } = await sb
+            .from('organization_role_change_requests')
+            .select('*')
+            .eq('organization_id', orgId)
+            .order('created_at', { ascending: false })
+            .limit(50);
         
-        return { success: true, data: { ...org, members: members || [], goals: goals || [] } };
+        return { success: true, data: { ...org, members: members || [], goals: goals || [], roles: roles || [], admin_change_requests: adminChangeRequests || [] } };
     }
 
     async getPendingApprovals(orgId: string) {

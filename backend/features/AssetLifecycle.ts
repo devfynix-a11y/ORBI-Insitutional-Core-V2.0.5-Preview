@@ -3,6 +3,49 @@ import { getAdminSupabase, getSupabase } from '../../services/supabaseClient.js'
 import { EnvUtils } from '../../services/utils.js';
 import { Audit } from '../security/audit.js';
 import { ImageObjectStorage } from '../storage/ImageObjectStorage.js';
+import { mkdir, unlink, writeFile } from 'fs/promises';
+import { randomUUID } from 'crypto';
+import path from 'path';
+
+const allowedLocalImageTypes = new Map<string, { extension: string; signatures: number[][] }>([
+    ['image/jpeg', { extension: 'jpg', signatures: [[0xff, 0xd8, 0xff]] }],
+    ['image/jpg', { extension: 'jpg', signatures: [[0xff, 0xd8, 0xff]] }],
+    ['image/png', { extension: 'png', signatures: [[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]] }],
+    ['image/webp', { extension: 'webp', signatures: [[0x52, 0x49, 0x46, 0x46]] }],
+]);
+
+const hasSignature = (file: Buffer, signatures: number[][]) =>
+    signatures.some((signature) =>
+        signature.every((byte, index) => file[index] === byte),
+    );
+
+const validateLocalImage = (file: Buffer, contentType?: string) => {
+    const normalizedType = String(contentType || '').split(';')[0].trim().toLowerCase();
+    const allowed = allowedLocalImageTypes.get(normalizedType);
+    if (!allowed) {
+        throw new Error('UNSUPPORTED_IMAGE_TYPE: Only JPEG, PNG, and WEBP images are accepted.');
+    }
+
+    const maxBytes = Number(process.env.ORBI_IMAGE_MAX_BYTES || 5 * 1024 * 1024);
+    if (!file.length || file.length > maxBytes) {
+        throw new Error(`INVALID_IMAGE_SIZE: Image must be between 1 byte and ${maxBytes} bytes.`);
+    }
+
+    const validSignature =
+        normalizedType === 'image/webp'
+            ? file.length >= 12 &&
+              file.subarray(0, 4).toString('ascii') === 'RIFF' &&
+              file.subarray(8, 12).toString('ascii') === 'WEBP'
+            : hasSignature(file, allowed.signatures);
+    if (!validSignature) {
+        throw new Error('IMAGE_SIGNATURE_MISMATCH');
+    }
+
+    return {
+        contentType: normalizedType === 'image/jpg' ? 'image/jpeg' : normalizedType,
+        extension: allowed.extension,
+    };
+};
 
 /**
  * ASSET LIFECYCLE MANAGEMENT (V2.0)
@@ -25,6 +68,25 @@ export class AssetLifecycleManager {
         return this.r2Storage;
     }
 
+    private publicBaseUrl(): string {
+        return String(
+            process.env.ORBI_IMAGE_PUBLIC_BASE_URL ||
+            process.env.BACKEND_URL ||
+            process.env.ORBI_PRIMARY_CORE_BASE_URL ||
+            'http://localhost:3000',
+        ).trim().replace(/\/+$/, '');
+    }
+
+    private async commitLocal(userId: string, file: Buffer, contentType?: string): Promise<string> {
+        const validated = validateLocalImage(file, contentType);
+        const relativeDir = path.posix.join('uploads', 'avatars', userId);
+        const fileName = `${Date.now()}-${randomUUID()}.${validated.extension}`;
+        const absoluteDir = path.join(process.cwd(), 'public', 'uploads', 'avatars', userId);
+        await mkdir(absoluteDir, { recursive: true });
+        await writeFile(path.join(absoluteDir, fileName), file);
+        return `${this.publicBaseUrl()}/${relativeDir}/${fileName}`;
+    }
+
     /**
      * TERMINATION PROTOCOL
      * Securely removes binary assets from cloud nodes.
@@ -44,6 +106,23 @@ export class AssetLifecycleManager {
                 return removed;
             } catch (error) {
                 console.error('[Lifecycle] R2 asset decommission failed:', error);
+                return false;
+            }
+        }
+
+        if (url && url.includes('/uploads/avatars/')) {
+            try {
+                const urlObj = new URL(url);
+                const marker = '/uploads/avatars/';
+                const markerIndex = urlObj.pathname.indexOf(marker);
+                if (markerIndex === -1) return true;
+                const relativePath = decodeURIComponent(urlObj.pathname.slice(markerIndex + 1));
+                const normalizedPath = path.normalize(relativePath);
+                if (!normalizedPath.startsWith(path.normalize('uploads/avatars/'))) return false;
+                await unlink(path.join(process.cwd(), 'public', normalizedPath)).catch(() => {});
+                return true;
+            } catch (e) {
+                console.error("[Lifecycle] Local asset termination failure:", e);
                 return false;
             }
         }
@@ -87,22 +166,35 @@ export class AssetLifecycleManager {
             return this.getR2Storage().uploadAvatar(userId, file, contentType);
         }
 
-        const sb = getAdminSupabase() || getSupabase();
-        if (!sb) throw new Error("CLOUD_NODE_OFFLINE");
+        if (!Buffer.isBuffer(file)) throw new Error('INVALID_IMAGE_BUFFER');
 
-        const ext = contentType === 'image/jpeg' ? 'jpg' : contentType === 'image/webp' ? 'webp' : 'png';
+        const sb = getAdminSupabase() || getSupabase();
+        if (!sb?.storage) return this.commitLocal(userId, file, contentType);
+
+        const validated = validateLocalImage(file, contentType);
+        const ext = validated.extension;
         const fileName = `${userId}/${Date.now()}.${ext}`;
         const filePath = `staff_avatars/${fileName}`;
 
-        const { error: uploadError } = await sb.storage.from(this.bucketName).upload(filePath, file, {
-            cacheControl: '3600',
-            upsert: true,
-            contentType: contentType || 'image/png'
-        });
+        let uploadError: any = null;
+        try {
+            const uploadResult = await sb.storage.from(this.bucketName).upload(filePath, file, {
+                cacheControl: '3600',
+                upsert: true,
+                contentType: validated.contentType,
+            });
+            uploadError = uploadResult.error;
+        } catch (error) {
+            uploadError = error;
+        }
 
         if (uploadError) {
-            console.error("[Lifecycle] COMMIT_FAULT:", uploadError.message);
-            throw new Error(`STORAGE_COMMIT_FAILED: ${uploadError.message}`);
+            const message = String(uploadError?.message || uploadError || '');
+            if (message.includes('storage.buckets') || message.includes('schema cache') || message.toLowerCase().includes('bucket')) {
+                return this.commitLocal(userId, file, contentType);
+            }
+            console.error("[Lifecycle] COMMIT_FAULT:", message);
+            throw new Error(`STORAGE_COMMIT_FAILED: ${message}`);
         }
 
         const { data } = sb.storage.from(this.bucketName).getPublicUrl(filePath);

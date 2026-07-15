@@ -37,6 +37,8 @@ COPY --chown=orbi:orbi package.json package-lock.json ./
 COPY --chown=orbi:orbi --from=production-dependencies /app/node_modules ./node_modules
 COPY --chown=orbi:orbi --from=builder /app/dist ./dist
 COPY --chown=orbi:orbi --from=builder /app/public ./public
+RUN mkdir -p /app/public/uploads \
+    && chown -R orbi:orbi /app/public
 
 USER orbi
 

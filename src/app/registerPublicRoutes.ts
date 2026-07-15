@@ -276,6 +276,7 @@ export const registerAppPublicRoutes = (deps: Deps) => {
     LogicCore,
     getSupabase,
     getAdminSupabase,
+    OTPService,
   });
 
   mountPublicRoutes(app, v1, globalIpLimiter as any);

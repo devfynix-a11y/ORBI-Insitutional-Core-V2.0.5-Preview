@@ -47,12 +47,27 @@ export interface TemplatePayloads {
     Escrow_Created: {
         currency: string;
         amount: string | number;
+        senderName?: string;
+        recipientName?: string;
+        refId?: string;
+    };
+    Escrow_Request_Received: {
+        currency: string;
+        amount: string | number;
+        senderName?: string;
         recipientName?: string;
         refId?: string;
     };
     Escrow_Released: {
         currency: string;
         amount: string | number;
+        recipientName?: string;
+        refId?: string;
+    };
+    Escrow_Refunded: {
+        currency: string;
+        amount: string | number;
+        senderName?: string;
         recipientName?: string;
         refId?: string;
     };

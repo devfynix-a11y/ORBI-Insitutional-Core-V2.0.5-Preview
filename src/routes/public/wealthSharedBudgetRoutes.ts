@@ -49,6 +49,84 @@ const fetchSharedBudgetsById = async (sb: any, budgetIds: string[]): Promise<Map
   return new Map((data || []).map((budget: any) => [String(budget.id), budget]));
 };
 
+type ReportRangeKey = 'week' | 'month' | 'year';
+
+const toMoneyNumber = (value: any): number => {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const resolveReportRange = (raw: unknown): { key: ReportRangeKey; start: Date; end: Date } => {
+  const key = String(Array.isArray(raw) ? raw[0] : raw || 'month').toLowerCase() as ReportRangeKey;
+  const safeKey: ReportRangeKey = ['week', 'month', 'year'].includes(key) ? key : 'month';
+  const end = new Date();
+  const start = new Date(end);
+
+  if (safeKey === 'week') {
+    const day = start.getDay();
+    const mondayOffset = day === 0 ? -6 : 1 - day;
+    start.setDate(start.getDate() + mondayOffset);
+    start.setHours(0, 0, 0, 0);
+  } else if (safeKey === 'year') {
+    start.setMonth(0, 1);
+    start.setHours(0, 0, 0, 0);
+  } else {
+    start.setDate(1);
+    start.setHours(0, 0, 0, 0);
+  }
+
+  return { key: safeKey, start, end };
+};
+
+const buildSharedBudgetReport = (budget: any, members: any[], transactions: any[], usersById: Map<string, any>, range: ReturnType<typeof resolveReportRange>) => {
+  const periodByUser = new Map<string, number>();
+  const totalSpent = (transactions || []).reduce((sum: number, transaction: any) => {
+    const amount = toMoneyNumber(transaction.amount);
+    const userId = String(transaction.member_user_id || '');
+    if (userId) periodByUser.set(userId, (periodByUser.get(userId) || 0) + amount);
+    return sum + amount;
+  }, 0);
+
+  return {
+    report_type: 'SHARED_BUDGET',
+    range: {
+      key: range.key,
+      start: range.start.toISOString(),
+      end: range.end.toISOString(),
+    },
+    budget: {
+      id: budget.id,
+      name: budget.name,
+      purpose: budget.purpose,
+      currency: budget.currency || 'TZS',
+      budget_limit: toMoneyNumber(budget.budget_limit),
+      spent_amount: toMoneyNumber(budget.spent_amount),
+      remaining_amount: Math.max(0, toMoneyNumber(budget.budget_limit) - toMoneyNumber(budget.spent_amount)),
+      period_type: budget.period_type,
+      status: budget.status,
+    },
+    summary: {
+      currency: budget.currency || 'TZS',
+      total_spent: totalSpent,
+      transaction_count: transactions.length,
+      member_count: members.length,
+      budget_limit: toMoneyNumber(budget.budget_limit),
+      remaining_amount: Math.max(0, toMoneyNumber(budget.budget_limit) - toMoneyNumber(budget.spent_amount)),
+    },
+    members: (members || []).map((member: any) => ({
+      ...member,
+      users: usersById.get(String(member.user_id)) || null,
+      period_spent_amount: periodByUser.get(String(member.user_id)) || 0,
+    })),
+    transactions: (transactions || []).map((transaction: any) => ({
+      ...transaction,
+      users: usersById.get(String(transaction.member_user_id)) || null,
+    })),
+    generatedAt: new Date().toISOString(),
+    issuer: 'ORBI FINANCIAL TECHNOLOGIES',
+  };
+};
+
 export const registerSharedBudgetRoutes = (v1: Router, deps: Deps) => {
   const {
     authenticate,
@@ -222,6 +300,44 @@ export const registerSharedBudgetRoutes = (v1: Router, deps: Deps) => {
         users: usersById.get(String(transaction.member_user_id)) || null,
       }));
       res.json({ success: true, data: { transactions } });
+    } catch (e: any) {
+      res.status(e.message === 'SHARED_BUDGET_ACCESS_DENIED' ? 403 : 400).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.get('/wealth/shared-budgets/:id/report', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    const range = resolveReportRange(req.query.range);
+    try {
+      const sb = getAdminSupabase() || getSupabase();
+      if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+      const { budget } = await resolveSharedBudgetMembership(sb, req.params.id, session.sub);
+
+      const { data: memberRows, error: memberError } = await sb
+        .from('shared_budget_members')
+        .select('id,budget_id,user_id,role,status,member_limit,spent_amount,metadata,created_at')
+        .eq('budget_id', budget.id)
+        .order('created_at', { ascending: true });
+      if (memberError) return res.status(400).json({ success: false, error: memberError.message });
+
+      const { data: transactionRows, error: transactionError } = await sb
+        .from('shared_budget_transactions')
+        .select('*')
+        .eq('shared_budget_id', budget.id)
+        .gte('created_at', range.start.toISOString())
+        .lte('created_at', range.end.toISOString())
+        .order('created_at', { ascending: false });
+      if (transactionError) return res.status(400).json({ success: false, error: transactionError.message });
+
+      const userIds = Array.from(new Set([
+        ...compactIds(memberRows || [], 'user_id'),
+        ...compactIds(transactionRows || [], 'member_user_id'),
+      ]));
+      const usersById = await fetchUsersById(sb, userIds);
+      res.json({
+        success: true,
+        data: buildSharedBudgetReport(budget, memberRows || [], transactionRows || [], usersById, range),
+      });
     } catch (e: any) {
       res.status(e.message === 'SHARED_BUDGET_ACCESS_DENIED' ? 403 : 400).json({ success: false, error: e.message });
     }

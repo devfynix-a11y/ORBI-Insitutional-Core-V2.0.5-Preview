@@ -25,7 +25,12 @@ export const SignUpSchema = z.object({
     nationality: z.string().optional(),
     address: z.string().optional(),
     language: z.enum(['en', 'sw']).optional(),
-    currency: z.string().length(3).default('USD'),
+    currency: z.string().trim().length(3).default('TZS'),
+    preferred_currency: z.string().trim().length(3).optional(),
+    country_code: z.string().trim().min(2).max(3).optional(),
+    country_name: z.string().optional(),
+    dial_code: z.string().optional(),
+    fcm_token: z.string().optional(),
     registry_type: z.string().default('CONSUMER'),
     metadata: z.record(z.string(), z.any()).optional()
 }).refine(data => (data.email || data.e) || data.phone, {

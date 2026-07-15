@@ -622,5 +622,133 @@
     "body": "Muamala wa mteja wa {{direction}} uko {{status}}: {{currency}} {{amount}}.",
     "channel": "push",
     "messageType": "transactional"
+  },
+  {
+    "name": "Escrow_Request_Received",
+    "language": "en",
+    "subject": "PaySafe request received",
+    "body": "Hello {{recipientName}},\n\n{{senderName}} created a PaySafe request for you.\n\nReference: {{refId}}\nAmount: {{currency}} {{amount}}\n\nMoney is held safely by ORBI until release is confirmed.",
+    "channel": "email",
+    "messageType": "transactional",
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
+  },
+  {
+    "name": "Escrow_Request_Received",
+    "language": "sw",
+    "subject": "Ombi la PaySafe limepokelewa",
+    "body": "Habari {{recipientName}},\n\n{{senderName}} ametengeneza ombi la PaySafe kwa ajili yako.\n\nKumbukumbu: {{refId}}\nKiasi: {{currency}} {{amount}}\n\nFedha zimeshikiliwa salama na ORBI hadi release ithibitishwe.",
+    "channel": "email",
+    "messageType": "transactional",
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
+  },
+  {
+    "name": "Escrow_Request_Received",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI PaySafe: Ref {{refId}}. {{senderName}} created {{currency}} {{amount}} PaySafe for you. Funds are safe until release is confirmed.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Escrow_Request_Received",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI PaySafe: Kumb {{refId}}. {{senderName}} ameunda PaySafe ya {{currency}} {{amount}} kwa ajili yako. Fedha ziko salama hadi release ithibitishwe.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Escrow_Created",
+    "language": "en",
+    "subject": "PaySafe created",
+    "body": "Hello {{senderName}},\n\nYour PaySafe has been created successfully.\n\nReference: {{refId}}\nReceiver: {{recipientName}}\nAmount: {{currency}} {{amount}}\n\nMoney is safe until you confirm release.",
+    "channel": "email",
+    "messageType": "transactional",
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
+  },
+  {
+    "name": "Escrow_Created",
+    "language": "sw",
+    "subject": "PaySafe imeundwa",
+    "body": "Habari {{senderName}},\n\nPaySafe yako imeundwa kwa mafanikio.\n\nKumbukumbu: {{refId}}\nMpokeaji: {{recipientName}}\nKiasi: {{currency}} {{amount}}\n\nFedha ziko salama hadi uthibitishe release.",
+    "channel": "email",
+    "messageType": "transactional",
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
+  },
+  {
+    "name": "Escrow_Created",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI PaySafe: Kumb {{refId}}. Umeunda PaySafe ya {{currency}} {{amount}} kwa {{recipientName}}. Fedha ziko salama hadi uthibitishe release.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Escrow_Released",
+    "language": "en",
+    "subject": "PaySafe release requested",
+    "body": "Hello {{recipientName}},\n\nPaySafe release has been requested.\n\nReference: {{refId}}\nAmount: {{currency}} {{amount}}\n\nPlease review and accept if everything is correct.",
+    "channel": "email",
+    "messageType": "transactional",
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
+  },
+  {
+    "name": "Escrow_Released",
+    "language": "sw",
+    "subject": "Release ya PaySafe imeombwa",
+    "body": "Habari {{recipientName}},\n\nRelease ya PaySafe imeombwa.\n\nKumbukumbu: {{refId}}\nKiasi: {{currency}} {{amount}}\n\nTafadhali pitia na ukubali kama kila kitu kiko sawa.",
+    "channel": "email",
+    "messageType": "transactional",
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
+  },
+  {
+    "name": "Escrow_Released",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI PaySafe: Kumb {{refId}}. Release ya {{currency}} {{amount}} imeombwa kwa {{recipientName}}. Tafadhali pitia na ukubali.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Escrow_Refunded",
+    "language": "en",
+    "subject": "ORBI PaySafe refund completed",
+    "body": "Hello,\n\nPaySafe refund has been completed.\n\nReference: {{refId}}\nAmount: {{currency}} {{amount}}\n\nThe PaySafe hold is now closed.",
+    "channel": "email",
+    "messageType": "transactional",
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
+  },
+  {
+    "name": "Escrow_Refunded",
+    "language": "sw",
+    "subject": "Refund ya ORBI PaySafe imekamilika",
+    "body": "Habari,\n\nRefund ya PaySafe imekamilika.\n\nKumbukumbu: {{refId}}\nKiasi: {{currency}} {{amount}}\n\nHold ya PaySafe imefungwa.",
+    "channel": "email",
+    "messageType": "transactional",
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
+  },
+  {
+    "name": "Escrow_Refunded",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI PaySafe: Ref {{refId}}. Refund of {{currency}} {{amount}} is complete. The PaySafe hold is closed.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Escrow_Refunded",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI PaySafe: Kumb {{refId}}. Refund ya {{currency}} {{amount}} imekamilika. Hold ya PaySafe imefungwa.",
+    "channel": "sms",
+    "messageType": "transactional"
   }
 ]

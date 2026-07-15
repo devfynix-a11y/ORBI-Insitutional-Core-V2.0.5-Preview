@@ -50,6 +50,7 @@ services:
       - "${ORBI_DEV_BIND_ADDRESS:-127.0.0.1}:3000:3000"
     volumes:
       - orbi_database_backups:/srv/orbi/backups/database:ro
+      - orbi_public_uploads:/app/public/uploads
     healthcheck:
       test:
         [
@@ -80,3 +81,5 @@ networks:
 volumes:
   orbi_database_backups:
     name: orbi-database-backups
+  orbi_public_uploads:
+    name: orbi-public-uploads

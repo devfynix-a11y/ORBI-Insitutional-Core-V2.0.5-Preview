@@ -10,7 +10,7 @@ import { Sessions } from "../session/session.service.js";
 import { Attestation } from "../device/attestation.service.js";
 import { AIFraud } from "../fraud/ai-fraud.service.js";
 import { HSM } from "../security/hsm.service.js";
-import { getAdminSupabase, getSupabase } from "../../../supabaseClient.js";
+import { getAdminSupabase } from "../../../supabaseClient.js";
 import { OTPService } from "../../../security/otpService.js";
 import { Messaging } from "../../../features/MessagingService.js";
 import { Audit } from "../../../security/audit.js";
@@ -171,10 +171,9 @@ const buildBiometricUserAgent = (device: any) => {
         .join(' | ');
 };
 
-const issueSupabaseSessionForUser = async (userId: string) => {
+const issueCoreSessionForUser = async (userId: string, deviceId: string) => {
     const sb = getAdminSupabase();
-    const publicSb = getSupabase();
-    if (!sb || !publicSb) {
+    if (!sb) {
         throw new Error('SUPABASE_SESSION_FAILED');
     }
 
@@ -184,30 +183,27 @@ const issueSupabaseSessionForUser = async (userId: string) => {
         throw new Error('IDENTITY_NOT_FOUND');
     }
 
-    const loginEmail = authUser.email || authUser.user_metadata?.email;
-    if (!loginEmail) {
-        throw new Error('SUPABASE_SESSION_FAILED');
-    }
-
-    const linkResult = await sb.auth.admin.generateLink({
-        type: 'magiclink',
-        email: loginEmail,
-    });
-    if (linkResult.error || !linkResult.data?.properties?.hashed_token) {
-        throw new Error(linkResult.error?.message || 'SUPABASE_SESSION_FAILED');
-    }
-
-    const supaSessionResult = await publicSb.auth.verifyOtp({
-        type: 'magiclink',
-        token_hash: linkResult.data.properties.hashed_token,
-    });
-    if (supaSessionResult.error || !supaSessionResult.data?.session) {
-        throw new Error(supaSessionResult.error?.message || 'SUPABASE_SESSION_FAILED');
-    }
+    const userMetadata = authUser.user_metadata || {};
+    const sessionClaims = {
+        role: String(userMetadata.role || 'USER').trim().toUpperCase(),
+        app_origin: String(userMetadata.app_origin || process.env.ORBI_MOBILE_ORIGIN || DEFAULT_MOBILE_APP_ORIGIN).trim(),
+        registry_type: String(userMetadata.registry_type || 'CONSUMER').trim().toUpperCase(),
+        email: authUser.email || undefined,
+    };
+    const accessToken = await HSM.generateSecureToken(userId, deviceId || 'trusted-device', sessionClaims);
+    const refreshToken = Sessions.createRefreshToken(userId, deviceId || 'trusted-device');
+    const session = {
+        access_token: accessToken,
+        refresh_token: refreshToken,
+        token_type: 'bearer',
+        expires_in: 15 * 60,
+        expires_at: Math.floor(Date.now() / 1000) + 15 * 60,
+        user: authUser,
+    };
 
     return {
         authUser,
-        supaSession: supaSessionResult.data.session,
+        supaSession: session,
     };
 };
 
@@ -727,7 +723,7 @@ export class AuthController {
             }
 
             if (decision === 'ALLOW') {
-                const { supaSession } = await issueSupabaseSessionForUser(userId);
+                const { supaSession } = await issueCoreSessionForUser(userId, fingerprint);
                 await persistBiometricSession(
                     userId,
                     supaSession.refresh_token || refreshToken,
@@ -954,7 +950,7 @@ export class AuthController {
                 return res.status(403).json({ success: false, error: 'IDENTITY_MISMATCH' });
             }
 
-            const { supaSession } = await issueSupabaseSessionForUser(userRow.id);
+            const { supaSession } = await issueCoreSessionForUser(userRow.id, fingerprint);
             await persistBiometricSession(
                 userRow.id,
                 supaSession.refresh_token || Sessions.createRefreshToken(userRow.id, fingerprint),

@@ -88,6 +88,251 @@ const enrichTransactionGeoMetadata = (req: any) => {
   return req.body;
 };
 
+type ReportRangeKey = 'week' | 'month' | 'year';
+
+const toMoneyNumber = (value: any): number => {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const resolveReportRange = (raw: unknown): { key: ReportRangeKey; start: Date; end: Date } => {
+  const key = String(Array.isArray(raw) ? raw[0] : raw || 'month').toLowerCase() as ReportRangeKey;
+  const safeKey: ReportRangeKey = ['week', 'month', 'year'].includes(key) ? key : 'month';
+  const end = new Date();
+  const start = new Date(end);
+
+  if (safeKey === 'week') {
+    const day = start.getDay();
+    const mondayOffset = day === 0 ? -6 : 1 - day;
+    start.setDate(start.getDate() + mondayOffset);
+    start.setHours(0, 0, 0, 0);
+  } else if (safeKey === 'year') {
+    start.setMonth(0, 1);
+    start.setHours(0, 0, 0, 0);
+  } else {
+    start.setDate(1);
+    start.setHours(0, 0, 0, 0);
+  }
+
+  return { key: safeKey, start, end };
+};
+
+const transactionTimestamp = (transaction: any): Date | null => {
+  const raw = transaction?.created_at || transaction?.createdAt || transaction?.date;
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const isCreditLike = (transaction: any): boolean => {
+  const type = String(transaction?.type || transaction?.direction || '').toUpperCase();
+  const side = String(transaction?.entry_side || '').toUpperCase();
+  return ['CREDIT', 'INCOMING', 'DEPOSIT', 'RECEIVED'].some((marker) => type.includes(marker) || side.includes(marker));
+};
+
+const buildTransactionReport = (transactions: any[], range: ReturnType<typeof resolveReportRange>) => {
+  const scoped = (transactions || []).filter((transaction: any) => {
+    const timestamp = transactionTimestamp(transaction);
+    return timestamp ? timestamp >= range.start && timestamp <= range.end : false;
+  });
+
+  const summary = scoped.reduce((acc: any, transaction: any) => {
+    const amount = toMoneyNumber(transaction?.amount);
+    if (isCreditLike(transaction)) {
+      acc.total_in += amount;
+    } else {
+      acc.total_out += amount;
+    }
+    acc.net = acc.total_in - acc.total_out;
+    acc.transaction_count += 1;
+    const currency = String(transaction?.currency || 'TZS').toUpperCase();
+    acc.currencies[currency] = (acc.currencies[currency] || 0) + amount;
+    const status = String(transaction?.status || 'UNKNOWN').toUpperCase();
+    acc.statuses[status] = (acc.statuses[status] || 0) + 1;
+    return acc;
+  }, {
+    total_in: 0,
+    total_out: 0,
+    net: 0,
+    transaction_count: 0,
+    currencies: {},
+    statuses: {},
+  });
+
+  return {
+    report_type: 'TRANSACTION_HISTORY',
+    range: {
+      key: range.key,
+      start: range.start.toISOString(),
+      end: range.end.toISOString(),
+    },
+    summary,
+    transactions: scoped,
+    generatedAt: new Date().toISOString(),
+    issuer: 'ORBI FINANCIAL TECHNOLOGIES',
+  };
+};
+
+const transactionIdentity = (transaction: any): string | null => {
+  const raw = transaction?.internalId ||
+    transaction?.internal_id ||
+    transaction?.transaction_id ||
+    transaction?.transactionId ||
+    transaction?.id ||
+    transaction?.reference ||
+    transaction?.referenceId ||
+    transaction?.transaction_reference;
+  const id = String(raw || '').trim();
+  return id || null;
+};
+
+const firstText = (values: any[]): string | undefined => {
+  for (const value of values) {
+    const text = String(value || '').trim();
+    if (text && text.toLowerCase() !== 'null') return text;
+  }
+  return undefined;
+};
+
+const normalizeWalletName = (wallet: any, fallback?: string): string | undefined => firstText([
+  wallet?.wallet_name,
+  wallet?.name,
+  wallet?.display_name,
+  fallback,
+]);
+
+const enrichTransactionsForReport = async (
+  sb: any,
+  userId: string,
+  transactions: any[],
+): Promise<any[]> => {
+  const ids = Array.from(new Set(
+    transactions
+      .map(transactionIdentity)
+      .filter((id): id is string => Boolean(id)),
+  ));
+  if (!ids.length) return transactions;
+
+  try {
+    const { data: ledgerRows, error: ledgerError } = await sb
+      .from('financial_ledger')
+      .select('id,transaction_id,user_id,wallet_id,entry_side,entry_type,amount,balance_after,description,created_at')
+      .in('transaction_id', ids);
+
+    if (ledgerError || !Array.isArray(ledgerRows) || ledgerRows.length === 0) {
+      if (ledgerError) console.warn('[Transactions Report] ledger enrichment skipped:', ledgerError.message);
+      return transactions;
+    }
+
+    const walletIds = Array.from(new Set(
+      ledgerRows
+        .map((row: any) => String(row?.wallet_id || '').trim())
+        .filter(Boolean),
+    ));
+
+    const walletById = new Map<string, any>();
+    if (walletIds.length) {
+      const { data: wallets, error: walletError } = await sb
+        .from('wallets')
+        .select('id,name,wallet_name,type,wallet_type,bucket_type,user_id')
+        .in('id', walletIds);
+      if (!walletError && Array.isArray(wallets)) {
+        wallets.forEach((wallet: any) => walletById.set(String(wallet.id), wallet));
+      } else if (walletError) {
+        console.warn('[Transactions Report] wallet enrichment skipped:', walletError.message);
+      }
+    }
+
+    const legsByTransaction = new Map<string, any[]>();
+    ledgerRows.forEach((row: any) => {
+      const txId = String(row?.transaction_id || '').trim();
+      if (!txId) return;
+      const existing = legsByTransaction.get(txId) || [];
+      existing.push(row);
+      legsByTransaction.set(txId, existing);
+    });
+
+    const userIds = Array.from(new Set([
+      ...ledgerRows.map((row: any) => String(row?.user_id || '').trim()),
+      ...Array.from(walletById.values()).map((wallet: any) => String(wallet?.user_id || '').trim()),
+    ].filter(Boolean)));
+    const userById = new Map<string, any>();
+    if (userIds.length) {
+      const { data: users, error: userError } = await sb
+        .from('users')
+        .select('id,full_name,customer_id')
+        .in('id', userIds);
+      if (!userError && Array.isArray(users)) {
+        users.forEach((user: any) => userById.set(String(user.id), user));
+      } else if (userError) {
+        console.warn('[Transactions Report] user enrichment skipped:', userError.message);
+      }
+    }
+
+    return transactions.map((transaction: any) => {
+      const txId = transactionIdentity(transaction);
+      const legs = txId ? (legsByTransaction.get(txId) || []) : [];
+      if (!legs.length) return transaction;
+
+      const userLeg = legs.find((leg: any) => String(leg?.user_id || '') === String(userId)) || legs[0];
+      const debitLeg = legs.find((leg: any) => String(leg?.entry_side || leg?.entry_type || '').toUpperCase().includes('DEBIT'));
+      const creditLeg = legs.find((leg: any) => String(leg?.entry_side || leg?.entry_type || '').toUpperCase().includes('CREDIT'));
+      const sourceWallet = walletById.get(String((debitLeg || userLeg)?.wallet_id || ''));
+      const destinationWallet = walletById.get(String((creditLeg || userLeg)?.wallet_id || ''));
+      const sourceUser = userById.get(String(debitLeg?.user_id || sourceWallet?.user_id || ''));
+      const destinationUser = userById.get(String(creditLeg?.user_id || destinationWallet?.user_id || ''));
+      const sourceWalletName = normalizeWalletName(sourceWallet, transaction?.source_wallet_name || transaction?.sourceWalletName);
+      const destinationWalletName = normalizeWalletName(destinationWallet, transaction?.destination_wallet_name || transaction?.targetWalletName);
+      const sourceDisplayName = firstText([
+        sourceUser?.full_name,
+        transaction?.from_display_name,
+        transaction?.source_display_name,
+        sourceWalletName,
+        'Orbi',
+      ]);
+      const destinationDisplayName = firstText([
+        destinationUser?.full_name,
+        transaction?.to_display_name,
+        transaction?.destination_display_name,
+        transaction?.metadata?.recipient_snapshot?.name,
+        destinationWalletName,
+        'External Destination',
+      ]);
+      const balanceAfter = firstText([
+        userLeg?.balance_after,
+        transaction?.balance_after,
+        transaction?.balanceAfter,
+      ]);
+
+      return {
+        ...transaction,
+        ledger_entry_id: userLeg?.id || transaction?.ledger_entry_id,
+        balance_after: balanceAfter,
+        running_balance: balanceAfter,
+        from_display_name: sourceDisplayName,
+        to_display_name: destinationDisplayName,
+        source_display_name: sourceDisplayName,
+        destination_display_name: destinationDisplayName,
+        source_wallet_id: (debitLeg || userLeg)?.wallet_id || transaction?.source_wallet_id,
+        destination_wallet_id: (creditLeg || userLeg)?.wallet_id || transaction?.destination_wallet_id,
+        source_wallet_name: sourceWalletName,
+        destination_wallet_name: destinationWalletName,
+        ledger: {
+          ...(transaction?.ledger || {}),
+          id: userLeg?.id,
+          balance_after: balanceAfter,
+          entry_side: userLeg?.entry_side,
+          entry_type: userLeg?.entry_type,
+          wallet_id: userLeg?.wallet_id,
+        },
+      };
+    });
+  } catch (error: any) {
+    console.warn('[Transactions Report] enrichment failed:', error?.message || error);
+    return transactions;
+  }
+};
+
 export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
   const {
     authenticate,
@@ -440,6 +685,24 @@ export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
     try {
       const result = await LogicCore.getTransactionsPaginated(session.sub, limit, offset);
       res.json({ success: true, data: result });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.get('/transactions/report', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    const range = resolveReportRange(req.query.range);
+    const limit = Math.min(Math.max(Number(req.query.limit || 500), 1), 1000);
+    try {
+      const result = await LogicCore.getTransactionsPaginated(session.sub, limit, 0);
+      const transactions = Array.isArray(result) ? result : (result?.items || result?.transactions || result?.data || []);
+      const enrichedTransactions = await enrichTransactionsForReport(
+        getSupabase(),
+        session.sub,
+        transactions,
+      );
+      res.json({ success: true, data: buildTransactionReport(enrichedTransactions, range) });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });
     }
