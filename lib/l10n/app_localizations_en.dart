@@ -1364,7 +1364,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sendMoneySessionExpiredMessage =>
-      'Session expired. Please login again.';
+      'Your session has expired. Please log in again.';
 
   @override
   String get sendMoneyTransferBlockedMessage =>
@@ -1786,7 +1786,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get transactionsSessionExpiredMessage =>
-      'Session expired. Please login again.';
+      'Your session has expired. Please log in again.';
 
   @override
   String get transactionsFetchFailedMessage =>

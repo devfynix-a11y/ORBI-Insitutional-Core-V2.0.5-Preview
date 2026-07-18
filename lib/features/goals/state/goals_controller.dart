@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../../../core/state/app_runtime_cache.dart';
 import '../../../core/utils/user_facing_error.dart';
 import '../data/goals_service.dart';
 
@@ -27,18 +28,34 @@ class GoalsController extends ChangeNotifier {
     if (notify) notifyListeners();
 
     try {
-      final goalsResult = await _loadCollection(
-        () => _service.fetchGoals(token),
-        fallback: 'goals',
-      );
-      final categoriesResult = await _loadCollection(
-        () => _service.fetchCategories(token),
-        fallback: 'budgets',
-      );
-      final tasksResult = await _loadCollection(
-        () => _service.fetchTasks(token),
-        fallback: 'tasks',
-      );
+      final cachedGoals = AppRuntimeCache.goals;
+      final cachedCategories = AppRuntimeCache.categories;
+      final cachedTasks = AppRuntimeCache.tasks;
+      if (cachedGoals != null ||
+          cachedCategories != null ||
+          cachedTasks != null) {
+        _goals = _sortGoals(cachedGoals ?? const <Map<String, dynamic>>[]);
+        _categories = _sortCategories(
+          cachedCategories ?? const <Map<String, dynamic>>[],
+        );
+        _tasks = _sortTasks(cachedTasks ?? const <Map<String, dynamic>>[]);
+        _isLoading = false;
+        _error = null;
+        if (notify) notifyListeners();
+        return;
+      }
+
+      final results = await Future.wait<_LoadResult>([
+        _loadCollection(() => _service.fetchGoals(token), fallback: 'goals'),
+        _loadCollection(
+          () => _service.fetchCategories(token),
+          fallback: 'budgets',
+        ),
+        _loadCollection(() => _service.fetchTasks(token), fallback: 'tasks'),
+      ]);
+      final goalsResult = results[0];
+      final categoriesResult = results[1];
+      final tasksResult = results[2];
 
       _goals = _sortGoals(goalsResult.items);
       _categories = _sortCategories(categoriesResult.items);
@@ -69,7 +86,7 @@ class GoalsController extends ChangeNotifier {
     required String fallback,
   }) async {
     try {
-      final items = await loader();
+      final items = await loader().timeout(const Duration(seconds: 8));
       return _LoadResult(items: items);
     } catch (e) {
       return _LoadResult(

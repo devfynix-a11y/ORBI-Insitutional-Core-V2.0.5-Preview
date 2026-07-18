@@ -29,12 +29,15 @@ import '../wallet/presentation/bill_reserves_screen.dart';
 import '../wallet/presentation/allocation_rules_screen.dart';
 import '../wallet/presentation/link_external_wallet_launcher.dart';
 import '../advanced_hub/presentation/advanced_hub_sheet.dart';
+import '../enterprise/presentation/enterprise_dashboard_screen.dart';
 import 'package:orbi_mobileapp/features/notifications/state/notification_controller.dart';
 import 'package:orbi_mobileapp/features/profile/state/profile_controller.dart';
 import '../goals/state/goals_controller.dart';
+import 'shell_navigation_signal.dart';
 
 // Custom AppBar
 import '../../core/theme/orbi_theme.dart';
+import '../../core/services/app_bootstrap_service.dart';
 import '../../core/widgets/orbi_app_bar_new.dart';
 import '../../core/widgets/orbi_loading_landing.dart';
 import '../../core/widgets/orbi_state_card.dart';
@@ -88,6 +91,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   StreamSubscription<Map<String, dynamic>>? _serviceAccessEventSubscription;
   Timer? _dashboardRealtimeRefreshDebounce;
   Timer? _identityRefreshDebounce;
+  Timer? _realtimeWatchdogTimer;
 
   AuthController? _auth;
 
@@ -95,6 +99,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    ShellNavigationSignal.selectedTab.addListener(_handleShellTabSignal);
   }
 
   @override
@@ -146,22 +151,56 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     });
 
     try {
+      debugPrint('[SHELL_BOOT] start critical hydration');
       _ensureRealtimeNotifications(token);
       final dashboardController = context.read<DashboardController>();
       final profileController = context.read<ProfileController>();
       final notificationController = context.read<NotificationController>();
       final goalsController = context.read<GoalsController>();
       final walletService = WalletService();
+      final bootstrapService = AppBootstrapService();
 
       await Future.wait<void>([
-        dashboardController.fetchDashboardData(token),
-        profileController.loadProfile(),
-        walletService.getWallets(forceRefresh: true).then((_) {}),
-        notificationController.fetch(token),
-        goalsController.loadAll(token, notify: false),
-      ]);
-      await _auth?.refreshCurrentProfile();
+        bootstrapService.fetchInitialSnapshot(token).then((_) {}).timeout(
+          const Duration(seconds: 10),
+          onTimeout: () {
+            debugPrint('[SHELL_BOOT] app bootstrap snapshot timed out');
+          },
+        ),
+        dashboardController
+            .fetchDashboardData(
+              token,
+              optionalTimeout: const Duration(seconds: 3),
+              requiredTimeout: const Duration(seconds: 5),
+            )
+            .timeout(
+              const Duration(seconds: 12),
+              onTimeout: () {
+                debugPrint('[SHELL_BOOT] dashboard critical hydration timed out');
+              },
+            ),
+        profileController.loadProfile().timeout(
+          const Duration(seconds: 8),
+          onTimeout: () {
+            debugPrint('[SHELL_BOOT] profile critical hydration timed out');
+          },
+        ),
+        walletService.getWallets().then((_) {}).timeout(
+          const Duration(seconds: 8),
+          onTimeout: () {
+            debugPrint('[SHELL_BOOT] wallets critical hydration timed out');
+          },
+        ),
+      ]).timeout(
+        const Duration(seconds: 16),
+        onTimeout: () {
+          debugPrint('[SHELL_BOOT] critical hydration budget reached');
+          return <void>[];
+        },
+      );
       if (!mounted) return;
+      debugPrint('[SHELL_BOOT] critical hydration complete');
+      _startRealtimeWatchdog();
 
       setState(() {
         _bootstrapInProgress = false;
@@ -174,30 +213,52 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
       unawaited(
         Future<void>(() async {
-          try {
-            await walletService
-                .getWalletTransactions(
-                  '',
-                  limit: 50,
-                  offset: 0,
-                  forceRefresh: true,
-                )
-                .then((_) {});
-          } catch (e) {
-            debugPrint('⚠️ Deferred shell bootstrap sync failed: $e');
-            if (!mounted) return;
-            final raw = e.toString().toLowerCase();
-            final sessionExpired =
-                raw.contains('401') ||
-                raw.contains('unauthorized') ||
-                raw.contains('token expired') ||
-                raw.contains('jwt') ||
-                raw.contains('session expired') ||
-                raw.contains('forbidden');
-            if (sessionExpired) {
-              _routeToPrimaryLogin(message: l10n.shellSessionExpiredMessage);
-            }
+          if (!dashboardController.hasData) {
+            await _runDeferredBootstrapTask(
+              'dashboard_retry',
+              () => dashboardController.fetchDashboardData(token).timeout(
+                const Duration(seconds: 24),
+              ),
+              l10n,
+            );
           }
+          await Future.wait<void>([
+            _runDeferredBootstrapTask(
+              'auth_profile_refresh',
+              () => _auth?.refreshCurrentProfile().timeout(
+                    const Duration(seconds: 8),
+                  ) ??
+                  Future<void>.value(),
+              l10n,
+            ),
+            _runDeferredBootstrapTask(
+              'notifications',
+              () => notificationController.fetch(token).timeout(
+                const Duration(seconds: 12),
+              ),
+              l10n,
+            ),
+            _runDeferredBootstrapTask(
+              'goals',
+              () => goalsController.loadAll(token, notify: false).timeout(
+                const Duration(seconds: 14),
+              ),
+              l10n,
+            ),
+            _runDeferredBootstrapTask(
+              'transactions_cache',
+              () => walletService
+                  .getWalletTransactions(
+                    '',
+                    limit: 50,
+                    offset: 0,
+                    forceRefresh: true,
+                  )
+                  .then((_) {})
+                  .timeout(const Duration(seconds: 14)),
+              l10n,
+            ),
+          ]);
         }),
       );
     } catch (e) {
@@ -234,8 +295,36 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     return l10n.shellStartupFailedMessage;
   }
 
+  Future<void> _runDeferredBootstrapTask(
+    String label,
+    Future<void> Function() task,
+    AppLocalizations l10n,
+  ) async {
+    try {
+      debugPrint('[SHELL_BOOT] deferred $label start');
+      await task();
+      debugPrint('[SHELL_BOOT] deferred $label complete');
+    } catch (e) {
+      debugPrint('[SHELL_BOOT] deferred $label failed: $e');
+      if (!mounted) return;
+      final raw = e.toString().toLowerCase();
+      final sessionExpired =
+          raw.contains('401') ||
+          raw.contains('unauthorized') ||
+          raw.contains('token expired') ||
+          raw.contains('jwt') ||
+          raw.contains('session expired') ||
+          raw.contains('forbidden');
+      if (sessionExpired) {
+        _routeToPrimaryLogin(message: l10n.shellSessionExpiredMessage);
+      }
+    }
+  }
+
   void _routeToPrimaryLogin({String? message}) {
     if (!mounted) return;
+    _realtimeWatchdogTimer?.cancel();
+    _realtimeWatchdogTimer = null;
     context.read<NotificationController>().stopRealtime();
     setState(() {
       _bootstrapInProgress = false;
@@ -256,17 +345,41 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    ShellNavigationSignal.selectedTab.removeListener(_handleShellTabSignal);
     _dashboardRealtimeRefreshDebounce?.cancel();
     _identityRefreshDebounce?.cancel();
+    _realtimeWatchdogTimer?.cancel();
     _balanceUpdateSubscription?.cancel();
     _serviceAccessEventSubscription?.cancel();
     super.dispose();
+  }
+
+  void _handleShellTabSignal() {
+    final index = ShellNavigationSignal.selectedTab.value;
+    if (index == null) return;
+    ShellNavigationSignal.selectedTab.value = null;
+    if (!mounted) return;
+    final screens = _buildScreens();
+    final safeIndex = screens.isEmpty ? 0 : index.clamp(0, screens.length - 1);
+    if (_currentIndex == safeIndex) return;
+    setState(() => _currentIndex = safeIndex);
   }
 
   void _ensureRealtimeNotifications(String token) {
     final userId = _resolveUserId(_auth?.session['user']);
     if (userId == null || userId.isEmpty) return;
     context.read<NotificationController>().startRealtime(token, userId);
+  }
+
+  void _startRealtimeWatchdog() {
+    _realtimeWatchdogTimer?.cancel();
+    _realtimeWatchdogTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (!mounted) return;
+      if (_auth?.isAuthenticated != true || _auth?.isReauthLocked == true) {
+        return;
+      }
+      context.read<NotificationController>().ensureRealtime();
+    });
   }
 
   void _scheduleRealtimeDashboardRefresh() {
@@ -320,6 +433,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final token = await _auth?.getValidAccessToken();
     if (!mounted || token == null || token.isEmpty) return;
     _ensureRealtimeNotifications(token);
+    context.read<NotificationController>().ensureRealtime();
     try {
       await context.read<NotificationController>().fetch(token);
     } catch (_) {
@@ -356,9 +470,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         unawaited(_restoreRealtimeNotifications());
         _scheduleIdentityRefresh();
       }
-    } else if (state == AppLifecycleState.hidden ||
-        state == AppLifecycleState.paused) {
-      context.read<NotificationController>().stopRealtime();
     }
   }
 

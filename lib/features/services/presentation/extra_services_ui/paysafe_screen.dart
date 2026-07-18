@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../../core/theme/orbi_theme.dart';
 import '../../../../core/utils/amount_input_formatter.dart';
@@ -252,10 +253,19 @@ class _PaySafeScreenState extends State<PaySafeScreen>
       );
       return;
     }
+    final confirmed = await _confirmAction(
+      title: _t('Request release?', 'Omba release?'),
+      message: _t(
+        'The receiver will be asked to accept or reject this release before funds move.',
+        'Mpokeaji ataombwa kukubali au kukataa release hii kabla fedha hazijahama.',
+      ),
+      confirmLabel: _t('Request release', 'Omba release'),
+    );
+    if (!confirmed) return;
     await _runAction(
       success: _t(
-        'Release requested. Waiting for receiver acceptance.',
-        'Ombi la release limetumwa. Inasubiri idhini ya mpokeaji.',
+        'Release requested. Waiting for receiver final acceptance.',
+        'Release imeombwa. Inasubiri idhini ya mwisho ya mpokeaji.',
       ),
       action: () => _escrowService.releaseEscrow(referenceId),
       referenceId: referenceId,
@@ -275,11 +285,46 @@ class _PaySafeScreenState extends State<PaySafeScreen>
       );
       return;
     }
+    final confirmed = await _confirmAction(
+      title: _isReturnPending(escrow)
+          ? _t('Accept return?', 'Kubali return?')
+          : _isReleasePending(escrow)
+          ? _t('Accept release?', 'Kubali release?')
+          : _t('Confirm PaySafe?', 'Thibitisha PaySafe?'),
+      message: _isReturnPending(escrow)
+          ? _t(
+              'Funds will return to the sender and this PaySafe will close.',
+              'Fedha zitarudi kwa mtumaji na PaySafe hii itafungwa.',
+            )
+          : _isReleasePending(escrow)
+          ? _t(
+              'Funds will be credited to your account.',
+              'Fedha zitaingia kwenye akaunti yako.',
+            )
+          : _t(
+              'This confirms the hold. Funds will remain locked until the sender requests release.',
+              'Hii inathibitisha hold. Fedha zitaendelea kushikiliwa hadi mtumaji aombe release.',
+            ),
+      confirmLabel: _isReleasePending(escrow)
+          ? _t('Accept release', 'Kubali release')
+          : _t('Confirm', 'Thibitisha'),
+    );
+    if (!confirmed) return;
     await _runAction(
-      success: _t(
-        'Hold accepted and funds released.',
-        'Hold imekubaliwa na fedha zimeachiwa.',
-      ),
+      success: _isReturnPending(escrow)
+          ? _t(
+              'Return accepted. Funds will go back to the sender.',
+              'Return imekubaliwa. Fedha zitarudi kwa mtumaji.',
+            )
+          : _isReleasePending(escrow)
+          ? _t(
+              'Release accepted. Funds have been credited to your account.',
+              'Release imekubaliwa. Fedha zimeingia kwenye akaunti yako.',
+            )
+          : _t(
+              'PaySafe confirmed. Waiting for sender release.',
+              'PaySafe imethibitishwa. Inasubiri mtumaji a-release.',
+            ),
       action: () => _escrowService.acceptEscrow(referenceId),
       referenceId: referenceId,
       actionType: 'accept',
@@ -298,8 +343,34 @@ class _PaySafeScreenState extends State<PaySafeScreen>
       );
       return;
     }
+    final confirmed = await _confirmAction(
+      title: _receiverAccepted(escrow)
+          ? _t('Request return?', 'Omba return?')
+          : _t('Cancel PaySafe?', 'Ghairi PaySafe?'),
+      message: _receiverAccepted(escrow)
+          ? _t(
+              'Because the receiver already confirmed, this will send a return request with a 24-hour response window.',
+              'Kwa kuwa mpokeaji ameshathibitisha, hii itatuma ombi la return lenye dirisha la saa 24.',
+            )
+          : _t(
+              'The receiver has not confirmed yet, so funds will return instantly.',
+              'Mpokeaji bado hajathibitisha, hivyo fedha zitarudi papo hapo.',
+            ),
+      confirmLabel: _receiverAccepted(escrow)
+          ? _t('Request return', 'Omba return')
+          : _t('Cancel PaySafe', 'Ghairi PaySafe'),
+    );
+    if (!confirmed) return;
     await _runAction(
-      success: _t('Refund started.', 'Marejesho yameanzishwa.'),
+      success: _receiverAccepted(escrow)
+          ? _t(
+              'Return requested. Receiver has 24 hours to accept or dispute.',
+              'Return imeombwa. Mpokeaji ana saa 24 kukubali au kufungua dispute.',
+            )
+          : _t(
+              'PaySafe cancelled. Funds are returning instantly.',
+              'PaySafe imeghairiwa. Fedha zinarudi papo hapo.',
+            ),
       action: () => _escrowService.refundEscrow(referenceId),
       referenceId: referenceId,
       actionType: 'refund',
@@ -320,6 +391,15 @@ class _PaySafeScreenState extends State<PaySafeScreen>
     }
     final reason = await _askDisputeReason();
     if (reason == null || reason.trim().isEmpty) return;
+    final confirmed = await _confirmAction(
+      title: _t('Open dispute?', 'Fungua dispute?'),
+      message: _t(
+        'Funds will stay locked while customer care reviews this PaySafe.',
+        'Fedha zitaendelea kushikiliwa wakati huduma kwa wateja wakikagua PaySafe hii.',
+      ),
+      confirmLabel: _t('Open dispute', 'Fungua dispute'),
+    );
+    if (!confirmed) return;
     await _runAction(
       success: _t('Dispute submitted.', 'Malalamiko yametumwa.'),
       action: () =>
@@ -363,6 +443,33 @@ class _PaySafeScreenState extends State<PaySafeScreen>
     );
     controller.dispose();
     return result;
+  }
+
+  Future<bool> _confirmAction({
+    required String title,
+    required String message,
+    required String confirmLabel,
+  }) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(title),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: Text(_t('Cancel', 'Ghairi')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: Text(confirmLabel),
+            ),
+          ],
+        );
+      },
+    );
+    return result ?? false;
   }
 
   Future<void> _runAction({
@@ -578,9 +685,24 @@ class _PaySafeScreenState extends State<PaySafeScreen>
         status.contains('LOCK');
   }
 
+  bool _isReturnPending(Map<String, dynamic> escrow) {
+    final status = _normalizedStatus(escrow);
+    return status.contains('RETURN_PENDING') ||
+        _pickBool([escrow['returnPending'], escrow['return_pending']]);
+  }
+
+  bool _isReleasePending(Map<String, dynamic> escrow) {
+    final status = _normalizedStatus(escrow);
+    return status.contains('RELEASE_PENDING') ||
+        status.contains('RELEASE_REQUESTED') ||
+        status.contains('AWAITING_RECEIVER_ACCEPTANCE');
+  }
+
   bool _isAwaitingReceiverAcceptance(Map<String, dynamic> escrow) {
+    if (_isReleasePending(escrow)) return true;
     if (_receiverAccepted(escrow)) return false;
     final status = _normalizedStatus(escrow);
+    if (status == 'HELD') return true;
     return status.contains('AWAIT') ||
         status.contains('RELEASE_PENDING') ||
         status.contains('RELEASE_REQUESTED') ||
@@ -599,14 +721,16 @@ class _PaySafeScreenState extends State<PaySafeScreen>
     if (_actorRole(escrow) != 'sender') return false;
     return !_isTerminalStatus(status) &&
         !_isBlockedStatus(status) &&
-        !_isAwaitingReceiverAcceptance(escrow) &&
-        !_receiverAccepted(escrow);
+        !_isReturnPending(escrow) &&
+        _receiverAccepted(escrow);
   }
 
   bool _canAccept(Map<String, dynamic> escrow) {
     if (_availableActionFlag(escrow, 'accept')) return true;
     return _actorRole(escrow) == 'receiver' &&
-        _isAwaitingReceiverAcceptance(escrow) &&
+        (_isAwaitingReceiverAcceptance(escrow) ||
+            _isReleasePending(escrow) ||
+            _isReturnPending(escrow)) &&
         !_pickBool([
           escrow['holdWindowExpired'],
           escrow['hold_window_expired'],
@@ -618,8 +742,8 @@ class _PaySafeScreenState extends State<PaySafeScreen>
     final status = _normalizedStatus(escrow);
     if (_actorRole(escrow) != 'sender') return false;
     return !_isTerminalStatus(status) &&
-        !status.contains('REFUND_PENDING') &&
-        !_receiverAccepted(escrow);
+        !_isReturnPending(escrow) &&
+        !status.contains('REFUND_PENDING');
   }
 
   bool _canDispute(Map<String, dynamic> escrow) {
@@ -663,16 +787,23 @@ class _PaySafeScreenState extends State<PaySafeScreen>
       case 'release':
         return {
           ...merged,
-          'status': 'AWAITING_RECEIVER_ACCEPTANCE',
-          'receiver_accepted': false,
-          'release_requested_at': DateTime.now().toUtc().toIso8601String(),
+          'status': 'RELEASED',
+          'released_at': DateTime.now().toUtc().toIso8601String(),
         };
       case 'refund':
-        return {...merged, 'status': 'REFUND_PENDING'};
+        return {
+          ...merged,
+          'status': _receiverAccepted(current) ? 'RETURN_PENDING' : 'REFUNDED',
+          'return_pending': _receiverAccepted(current),
+        };
       case 'accept':
         return {
           ...merged,
-          'status': 'RELEASED',
+          'status': _isReturnPending(current)
+              ? 'REFUNDED'
+              : _isReleasePending(current)
+              ? 'RELEASED'
+              : 'HELD',
           'receiver_accepted': true,
           'receiver_accepted_at': DateTime.now().toUtc().toIso8601String(),
         };
@@ -684,13 +815,28 @@ class _PaySafeScreenState extends State<PaySafeScreen>
   }
 
   String _status(Map<String, dynamic> escrow) {
+    final status = _normalizedStatus(escrow);
+    if (status.contains('REFUNDED')) {
+      return _t('Refunded', 'Imerejeshwa');
+    }
+    if (status.contains('RELEASED') || status.contains('COMPLETED')) {
+      return _t('Released', 'Imeachiwa');
+    }
+    if (_isBlockedStatus(status)) {
+      return _t('Under review', 'Inakaguliwa');
+    }
+    if (_isReturnPending(escrow)) {
+      return _t('Return requested', 'Return imeombwa');
+    }
+    if (_isReleasePending(escrow)) {
+      return _t('Release waiting for receiver', 'Release inasubiri mpokeaji');
+    }
     if (_receiverAccepted(escrow)) {
-      return _t('Receiver accepted hold', 'Mpokeaji amekubali hold');
+      return _t('Receiver confirmed PaySafe', 'Mpokeaji amethibitisha PaySafe');
     }
     if (_isAwaitingReceiverAcceptance(escrow)) {
       return _t('Awaiting receiver acceptance', 'Inasubiri idhini ya mpokeaji');
     }
-    final status = _normalizedStatus(escrow);
     if (status.isEmpty) return _t('Pending', 'Inasubiri');
     return status.replaceAll('_', ' ');
   }
@@ -732,6 +878,25 @@ class _PaySafeScreenState extends State<PaySafeScreen>
   }
 
   String _holdSummary(Map<String, dynamic> escrow) {
+    final status = _normalizedStatus(escrow);
+    if (status.contains('REFUNDED')) {
+      return _t(
+        'This PaySafe was cancelled or returned. Funds are no longer held.',
+        'PaySafe hii imeghairiwa au kurejeshwa. Fedha hazishikiliwi tena.',
+      );
+    }
+    if (status.contains('RELEASED') || status.contains('COMPLETED')) {
+      return _t(
+        'This PaySafe was released successfully. Funds have moved to the approved receiver.',
+        'PaySafe hii imeachiwa kikamilifu. Fedha zimeenda kwa mpokeaji aliyethibitishwa.',
+      );
+    }
+    if (_isBlockedStatus(status)) {
+      return _t(
+        'This PaySafe is under review. Funds remain locked until customer care resolves it.',
+        'PaySafe hii inakaguliwa. Fedha zinaendelea kushikiliwa hadi huduma kwa wateja watakapotoa uamuzi.',
+      );
+    }
     final expiry = _holdExpiry(escrow);
     final awaitingAcceptance = _isAwaitingReceiverAcceptance(escrow);
     final receiverAccepted = _receiverAccepted(escrow);
@@ -740,10 +905,32 @@ class _PaySafeScreenState extends State<PaySafeScreen>
       escrow['holdWindowExpired'],
       escrow['hold_window_expired'],
     ]);
+    if (_isReturnPending(escrow)) {
+      return actorRole == 'receiver'
+          ? _t(
+              'Sender requested a return. Accept it or open a dispute within 24 hours.',
+              'Mtumaji ameomba return. Ikubali au fungua dispute ndani ya saa 24.',
+            )
+          : _t(
+              'Return request is waiting for receiver response. It auto-returns after 24 hours if there is no dispute.',
+              'Ombi la return linasubiri jibu la mpokeaji. Litarudi kiotomatiki baada ya saa 24 kama hakuna dispute.',
+            );
+    }
+    if (_isReleasePending(escrow)) {
+      return actorRole == 'receiver'
+          ? _t(
+              'Sender requested release. Accept to receive funds, or open a dispute if something is wrong.',
+              'Mtumaji ameomba release. Kubali upokee fedha, au fungua dispute kama kuna tatizo.',
+            )
+          : _t(
+              'Release is waiting for receiver final acceptance.',
+              'Release inasubiri idhini ya mwisho ya mpokeaji.',
+            );
+    }
     if (receiverAccepted) {
       return _t(
-        'Hold accepted. Funds stay locked while this record settles.',
-        'Hold imekubaliwa. Fedha zinaendelea kushikiliwa hadi rekodi ikamilike.',
+        'Receiver confirmed this PaySafe. Sender can now release funds.',
+        'Mpokeaji amethibitisha PaySafe hii. Mtumaji anaweza ku-release fedha.',
       );
     }
     if (expired) {
@@ -780,6 +967,20 @@ class _PaySafeScreenState extends State<PaySafeScreen>
       'Sender can release, refund, or dispute while the hold remains active.',
       'Mtumaji anaweza kuachia, kurejesha, au kupinga huku hold ikiwa hai.',
     );
+  }
+
+  String _acceptActionLabel(Map<String, dynamic> escrow) {
+    if (_isReturnPending(escrow)) return _t('Accept Return', 'Kubali Return');
+    if (_isReleasePending(escrow)) {
+      return _t('Accept Release', 'Kubali Release');
+    }
+    return _t('Confirm PaySafe', 'Thibitisha PaySafe');
+  }
+
+  String _refundActionLabel(Map<String, dynamic> escrow) {
+    return _receiverAccepted(escrow)
+        ? _t('Request Return', 'Omba Return')
+        : _t('Cancel', 'Ghairi');
   }
 
   String _formatDateTime(DateTime value) {
@@ -909,6 +1110,8 @@ class _PaySafeScreenState extends State<PaySafeScreen>
                         status: _status(escrow),
                         summary: _holdSummary(escrow),
                         amount: _amount(escrow),
+                        acceptLabel: _acceptActionLabel(escrow),
+                        refundLabel: _refundActionLabel(escrow),
                         onAccept: _busy || !_canAccept(escrow)
                             ? null
                             : () => _acceptPaySafe(escrow),
@@ -942,6 +1145,8 @@ class _PaySafeScreenState extends State<PaySafeScreen>
                           status: _status(escrow),
                           summary: _holdSummary(escrow),
                           amount: _amount(escrow),
+                          acceptLabel: _acceptActionLabel(escrow),
+                          refundLabel: _refundActionLabel(escrow),
                           onAccept: null,
                           onRelease: null,
                           onDispute: null,
@@ -1150,12 +1355,7 @@ class _PaySafeCreateSheetState extends State<_PaySafeCreateSheet> {
         _recipientPreview = _PaySafeRecipientPreview(
           recipientId: recipientId,
           name: name,
-          displayIdentifier: _pickString([
-            customerId,
-            phone,
-            email,
-            query,
-          ]),
+          displayIdentifier: _pickString([customerId, phone, email, query]),
           userId: userId,
           customerId: customerId,
           identifier: _pickString([customerId, phone, email, userId, query]),
@@ -1687,6 +1887,8 @@ class _PaySafeTile extends StatelessWidget {
     required this.status,
     required this.summary,
     required this.amount,
+    required this.acceptLabel,
+    required this.refundLabel,
     required this.onAccept,
     required this.onRelease,
     required this.onDispute,
@@ -1699,6 +1901,8 @@ class _PaySafeTile extends StatelessWidget {
   final String status;
   final String summary;
   final String amount;
+  final String acceptLabel;
+  final String refundLabel;
   final VoidCallback? onAccept;
   final VoidCallback? onRelease;
   final VoidCallback? onDispute;
@@ -1710,98 +1914,337 @@ class _PaySafeTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = OrbiTheme.uiOf(context);
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: colors.card,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: colors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    final accent = _statusAccent(context);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final actionCount = [
+          onAccept,
+          onRelease,
+          onDispute,
+          onRefund,
+        ].whereType<VoidCallback>().length;
+        final actionButtons = <Widget>[
+          if (onAccept != null)
+            _PaySafeActionButton(
+              width: double.infinity,
+              label: acceptLabel,
+              onPressed: onAccept,
+              filled: true,
+            ),
+          if (onRelease != null)
+            _PaySafeActionButton(
+              width: double.infinity,
+              label: _t('Release', 'Achia'),
+              onPressed: onRelease,
+              tonal: true,
+            ),
+          if (onDispute != null)
+            _PaySafeActionButton(
+              width: double.infinity,
+              label: _t('Dispute', 'Pinga'),
+              onPressed: onDispute,
+            ),
+          if (onRefund != null)
+            _PaySafeActionButton(
+              width: double.infinity,
+              label: refundLabel,
+              onPressed: onRefund,
+            ),
+        ];
+        final actionGap = actionButtons.length >= 3 ? 6.0 : 8.0;
+        return Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: colors.card,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: colors.border),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.08),
+                blurRadius: 22,
+                offset: const Offset(0, 12),
+              ),
+            ],
+          ),
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 46,
-                height: 46,
-                decoration: BoxDecoration(
-                  color: colors.accent.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Icon(Icons.shield_outlined, color: colors.accent),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 46,
+                    height: 46,
+                    decoration: BoxDecoration(
+                      color: accent.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Icon(Icons.shield_outlined, color: accent),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: colors.textPrimary,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                            height: 1.15,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: AlignmentDirectional.centerStart,
+                          child: _PaySafeStatusChip(
+                            label: status,
+                            color: accent,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 132),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: AlignmentDirectional.centerEnd,
+                      child: Text(
+                        amount,
+                        style: TextStyle(
+                          color: colors.textPrimary,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+              if (reference.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                _PaySafeReferenceRow(
+                  reference: reference,
+                  copiedLabel: _t('Escrow ID copied', 'ID ya Escrow imenakiliwa'),
+                ),
+              ],
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: colors.cardMuted.withValues(alpha: 0.72),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: colors.border),
+                ),
+                child: Text(
+                  summary,
+                  maxLines: 5,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: colors.textMuted,
+                    height: 1.35,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              if (actionCount > 0) ...[
+                const SizedBox(height: 14),
+                Row(
                   children: [
-                    Text(
-                      title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: colors.textPrimary,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 16,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      reference.isEmpty ? status : '$status • $reference',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: colors.textMuted),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      summary,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: colors.textMuted,
-                        height: 1.25,
-                        fontSize: 12.5,
-                      ),
-                    ),
+                    for (var i = 0; i < actionButtons.length; i++) ...[
+                      Expanded(child: actionButtons[i]),
+                      if (i != actionButtons.length - 1)
+                        SizedBox(width: actionGap),
+                    ],
                   ],
                 ),
-              ),
-              const SizedBox(width: 10),
-              Text(
-                amount,
-                style: TextStyle(
-                  color: colors.textPrimary,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
+              ],
             ],
           ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              FilledButton(
-                onPressed: onAccept,
-                child: Text(_t('Accept Hold', 'Kubali Hold')),
+        );
+      },
+    );
+  }
+
+  Color _statusAccent(BuildContext context) {
+    final lower = status.toLowerCase();
+    if (lower.contains('refund') || lower.contains('return')) {
+      return const Color(0xFFF59E0B);
+    }
+    if (lower.contains('release') || lower.contains('confirmed')) {
+      return const Color(0xFF2563EB);
+    }
+    if (lower.contains('review') || lower.contains('dispute')) {
+      return const Color(0xFFEF4444);
+    }
+    if (lower.contains('released') || lower.contains('completed')) {
+      return const Color(0xFF10B981);
+    }
+    return OrbiTheme.uiOf(context).accent;
+  }
+}
+
+class _PaySafeReferenceRow extends StatelessWidget {
+  const _PaySafeReferenceRow({
+    required this.reference,
+    required this.copiedLabel,
+  });
+
+  final String reference;
+  final String copiedLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = OrbiTheme.uiOf(context);
+    return Container(
+      padding: const EdgeInsetsDirectional.only(start: 10, end: 4),
+      decoration: BoxDecoration(
+        color: colors.cardMuted.withValues(alpha: 0.52),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: colors.border.withValues(alpha: 0.72)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              reference,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: colors.textMuted,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.2,
               ),
-              FilledButton.tonal(
-                onPressed: onRelease,
-                child: Text(_t('Release', 'Achia')),
-              ),
-              OutlinedButton(
-                onPressed: onDispute,
-                child: Text(_t('Dispute', 'Pinga')),
-              ),
-              OutlinedButton(
-                onPressed: onRefund,
-                child: Text(_t('Refund', 'Rejesha')),
-              ),
-            ],
+            ),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            tooltip: 'Copy',
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: reference));
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context)
+                ..hideCurrentSnackBar()
+                ..showSnackBar(
+                  SnackBar(
+                    content: Text(copiedLabel),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+            },
+            icon: Icon(
+              Icons.copy_rounded,
+              size: 18,
+              color: colors.accent,
+            ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _PaySafeStatusChip extends StatelessWidget {
+  const _PaySafeStatusChip({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = OrbiTheme.uiOf(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.28)),
+      ),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: colors.textPrimary,
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+}
+
+class _PaySafeActionButton extends StatelessWidget {
+  const _PaySafeActionButton({
+    required this.width,
+    required this.label,
+    required this.onPressed,
+    this.filled = false,
+    this.tonal = false,
+  });
+
+  final double width;
+  final String label;
+  final VoidCallback? onPressed;
+  final bool filled;
+  final bool tonal;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = ButtonStyle(
+      minimumSize: WidgetStateProperty.all(Size.zero),
+      padding: WidgetStateProperty.all(
+        const EdgeInsets.symmetric(horizontal: 6),
+      ),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      visualDensity: VisualDensity.compact,
+    );
+    final child = FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        textAlign: TextAlign.center,
+      ),
+    );
+    if (filled) {
+      return SizedBox(
+        width: width,
+        height: 44,
+        child: FilledButton(
+          onPressed: onPressed,
+          style: style,
+          child: child,
+        ),
+      );
+    }
+    if (tonal) {
+      return SizedBox(
+        width: width,
+        height: 44,
+        child: FilledButton.tonal(
+          onPressed: onPressed,
+          style: style,
+          child: child,
+        ),
+      );
+    }
+    return SizedBox(
+      width: width,
+      height: 44,
+      child: OutlinedButton(
+        onPressed: onPressed,
+        style: style,
+        child: child,
       ),
     );
   }

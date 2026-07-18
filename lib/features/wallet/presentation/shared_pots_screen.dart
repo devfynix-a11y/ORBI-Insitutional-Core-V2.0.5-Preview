@@ -9,12 +9,14 @@ import '../../../core/theme/orbi_theme.dart';
 import '../../../core/utils/amount_input_formatter.dart';
 import '../../../core/utils/backend_status_message.dart';
 import '../../../core/utils/money_format.dart';
+import '../../../core/widgets/money_text.dart';
 import '../../../core/widgets/orbi_amount_field.dart';
 import '../../../core/widgets/orbi_async_feedback.dart';
 import '../../../core/widgets/orbi_activity_card.dart';
 import '../../../core/widgets/orbi_background.dart';
 import '../../../core/widgets/orbi_brand_hero_card.dart';
 import '../../../core/widgets/orbi_state_card.dart';
+import '../../../core/widgets/security_otp_dialog.dart';
 import '../data/wealth_service.dart';
 import 'widgets/invitee_lookup_card.dart';
 import 'widgets/wealth_hero_card.dart';
@@ -79,27 +81,106 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
     }
   }
 
+  Future<void> _refreshSilently() async {
+    try {
+      final results = await Future.wait([
+        _service.listSharedPots(),
+        _service.listMySharedPotInvitations(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _pots = results[0];
+        _invitations = results[1];
+      });
+    } catch (e) {
+      if (!mounted) return;
+      final l10n = AppLocalizations.of(context)!;
+      setState(() {
+        _statusMessage = mapBackendStatusMessage(
+          e.toString(),
+          sw: l10n.isSw,
+          fallback: l10n.wealthSharedPotsLoadError,
+        );
+        _statusTone = OrbiStatusTone.error;
+      });
+    }
+  }
+
+  String _accessModelProductLabel(AppLocalizations l10n, String accessModel) {
+    switch (accessModel.toUpperCase()) {
+      case 'PRIVATE':
+        return l10n.pick(en: 'Personal Fungu', swText: 'Fungu Binafsi');
+      case 'ORG':
+        return l10n.pick(
+          en: 'Organization Fungu',
+          swText: 'Fungu la Taasisi',
+        );
+      default:
+        return l10n.pick(
+          en: 'Chama Fungu',
+          swText: 'Fungu la Chama',
+        );
+    }
+  }
+
   String _accessModelHelp(AppLocalizations l10n, String accessModel) {
     switch (accessModel.toUpperCase()) {
       case 'PRIVATE':
         return l10n.pick(
-          en: 'Private Fungu is controlled by the owner only. Invites are disabled and withdrawals are owner-only.',
+          en: 'Personal Fungu is controlled by you only. Invites are disabled and withdrawals are owner-only.',
           swText:
               'Fungu binafsi hudhibitiwa na mmiliki pekee. Mialiko imefungwa na kutoa fedha ni kwa mmiliki tu.',
         );
       case 'ORG':
         return l10n.pick(
-          en: 'Organisation Fungu is linked to your organisation and uses stricter approval governance.',
+          en: 'Organization Fungu is linked to your organization and uses stricter approval governance.',
           swText:
               'Fungu la taasisi huunganishwa na taasisi yako na hutumia idhini kali zaidi kabla ya kutoa fedha.',
         );
       default:
         return l10n.pick(
-          en: 'Invite-only Fungu is ideal for weddings, trips, projects, and group contributions. Owners or managers can withdraw; contributors can add money.',
+          en: 'Chama Fungu is ideal for groups, trips, projects, and quick shared contributions. Owners or managers can withdraw; contributors can add money.',
           swText:
-              'Fungu la mwaliko linafaa kwa harusi, safari, miradi na michango ya pamoja. Mmiliki au meneja anaweza kutoa; wachangiaji huongeza fedha.',
+              'Fungu la Chama linafaa kwa vikundi, safari, miradi na michango ya haraka ya pamoja. Mmiliki au meneja anaweza kutoa; wachangiaji huongeza fedha.',
         );
     }
+  }
+
+  String _potRoleLabel(AppLocalizations l10n, String role) {
+    switch (role.toUpperCase()) {
+      case 'OWNER':
+        return l10n.pick(en: 'Owner', swText: 'Mmiliki');
+      case 'MANAGER':
+        return l10n.pick(en: 'Manager', swText: 'Meneja');
+      case 'SIGNATORY':
+        return l10n.pick(en: 'Signatory', swText: 'Msaini');
+      case 'ACCOUNTANT':
+        return l10n.pick(en: 'Accountant', swText: 'Mhasibu');
+      case 'VIEWER':
+        return l10n.pick(en: 'Viewer', swText: 'Mtazamaji');
+      default:
+        return l10n.pick(en: 'Contributor', swText: 'Mchangiaji');
+    }
+  }
+
+  bool _canManagePotRole(String role) {
+    final normalized = role.toUpperCase();
+    return normalized == 'OWNER' || normalized == 'MANAGER';
+  }
+
+  bool _canViewPotGovernanceRole(String role) {
+    final normalized = role.toUpperCase();
+    return normalized == 'OWNER' ||
+        normalized == 'MANAGER' ||
+        normalized == 'SIGNATORY' ||
+        normalized == 'ACCOUNTANT';
+  }
+
+  bool _canContributePotRole(String role) {
+    final normalized = role.toUpperCase();
+    return normalized == 'OWNER' ||
+        normalized == 'MANAGER' ||
+        normalized == 'CONTRIBUTOR';
   }
 
   Future<void> _showInbox() async {
@@ -137,7 +218,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                       (pot['name'] ?? l10n.pick(en: 'Fungu', swText: 'Fungu'))
                           .toString(),
                   subtitle:
-                      '${(invite['role'] ?? 'CONTRIBUTOR').toString()} • ${(invite['status'] ?? 'PENDING').toString()}',
+                      '${_potRoleLabel(l10n, (invite['role'] ?? 'CONTRIBUTOR').toString())} • ${(invite['status'] ?? 'PENDING').toString()}',
                   pending: pending,
                   onAccept: () async {
                     Navigator.of(context).pop();
@@ -259,9 +340,8 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
     final targetController = TextEditingController();
     String accessModel = 'INVITE';
     String? formError;
-    bool submitting = false;
 
-    final created = await showModalBottomSheet<bool>(
+    final payload = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       isScrollControlled: true,
       builder: (sheetContext) {
@@ -357,33 +437,29 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                       items: [
                         DropdownMenuItem(
                           value: 'INVITE',
-                          child: Text(
-                            l10n.pick(
-                              en: 'Invite only',
-                              swText: 'Mwaliko pekee',
-                            ),
-                          ),
+                          child: Text(_accessModelProductLabel(l10n, 'INVITE')),
                         ),
                         DropdownMenuItem(
                           value: 'PRIVATE',
                           child: Text(
-                            l10n.pick(en: 'Private', swText: 'Binafsi'),
+                            _accessModelProductLabel(l10n, 'PRIVATE'),
                           ),
                         ),
                         DropdownMenuItem(
                           value: 'ORG',
                           child: Text(
-                            l10n.pick(en: 'Organisation', swText: 'Taasisi'),
+                            _accessModelProductLabel(l10n, 'ORG'),
                           ),
                         ),
                       ],
-                      onChanged: submitting
-                          ? null
-                          : (value) => setSheetState(
-                              () => accessModel = value ?? accessModel,
-                            ),
+                      onChanged: (value) => setSheetState(
+                        () => accessModel = value ?? accessModel,
+                      ),
                       decoration: InputDecoration(
-                        labelText: l10n.wealthAccessModel,
+                        labelText: l10n.pick(
+                          en: 'Fungu type',
+                          swText: 'Aina ya Fungu',
+                        ),
                         isDense: true,
                       ),
                     ),
@@ -396,68 +472,27 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                     SizedBox(
                       width: double.infinity,
                       child: FilledButton(
-                        onPressed: submitting
-                            ? null
-                            : () async {
-                                final name = nameController.text.trim();
-                                final target = AmountInputFormatter.tryParse(
-                                  targetController.text,
-                                );
-                                if (name.isEmpty) {
-                                  setSheetState(() {
-                                    formError = l10n.wealthEnterPotNameFirst;
-                                  });
-                                  return;
-                                }
-                                setSheetState(() {
-                                  submitting = true;
-                                  formError = null;
-                                });
-                                try {
-                                  await _service.createSharedPot({
-                                    'name': name,
-                                    'purpose': purposeController.text.trim(),
-                                    'target_amount': target,
-                                    'access_model': accessModel,
-                                  });
-                                  if (!sheetContext.mounted) return;
-                                  Navigator.of(sheetContext).pop(true);
-                                } catch (e) {
-                                  if (!sheetContext.mounted) return;
-                                  setSheetState(() {
-                                    formError = mapBackendStatusMessage(
-                                      e.toString(),
-                                      sw: l10n.isSw,
-                                      fallback: l10n.wealthCreateSharedPotError,
-                                    );
-                                    submitting = false;
-                                  });
-                                }
-                              },
-                        child: submitting
-                            ? Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2.2,
-                                      valueColor: AlwaysStoppedAnimation<Color>(
-                                        Theme.of(context).colorScheme.onPrimary,
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Text(l10n.wealthSaving),
-                                ],
-                              )
-                            : Text(
-                                l10n.pick(
-                                  en: 'Save Fungu',
-                                  swText: 'Hifadhi Fungu',
-                                ),
-                              ),
+                        onPressed: () {
+                          final name = nameController.text.trim();
+                          final target = AmountInputFormatter.tryParse(
+                            targetController.text,
+                          );
+                          if (name.isEmpty) {
+                            setSheetState(() {
+                              formError = l10n.wealthEnterPotNameFirst;
+                            });
+                            return;
+                          }
+                          Navigator.of(sheetContext).pop({
+                            'name': name,
+                            'purpose': purposeController.text.trim(),
+                            'target_amount': target,
+                            'access_model': accessModel,
+                          });
+                        },
+                        child: Text(
+                          l10n.pick(en: 'Save Fungu', swText: 'Hifadhi Fungu'),
+                        ),
                       ),
                     ),
                   ],
@@ -473,14 +508,18 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
     purposeController.dispose();
     targetController.dispose();
 
-    if (created == true) {
-      await _load();
-      if (!mounted) return;
-      setState(() {
-        _statusMessage = l10n.wealthSharedPotCreated;
-        _statusTone = OrbiStatusTone.success;
-      });
-    }
+    if (payload == null) return;
+    final created = await _loadBusyData<Map<String, dynamic>>(
+      l10n.pick(en: 'Creating Fungu...', swText: 'Tunaunda Fungu...'),
+      () => _service.createSharedPot(payload),
+    );
+    if (!mounted || created == null) return;
+    await _refreshSilently();
+    if (!mounted) return;
+    setState(() {
+      _statusMessage = l10n.wealthSharedPotCreated;
+      _statusTone = OrbiStatusTone.success;
+    });
   }
 
   Future<void> _showEditPotSheet(Map<String, dynamic> pot) async {
@@ -577,23 +616,18 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                       items: [
                         DropdownMenuItem(
                           value: 'INVITE',
-                          child: Text(
-                            l10n.pick(
-                              en: 'Invite only',
-                              swText: 'Mwaliko pekee',
-                            ),
-                          ),
+                          child: Text(_accessModelProductLabel(l10n, 'INVITE')),
                         ),
                         DropdownMenuItem(
                           value: 'PRIVATE',
                           child: Text(
-                            l10n.pick(en: 'Private', swText: 'Binafsi'),
+                            _accessModelProductLabel(l10n, 'PRIVATE'),
                           ),
                         ),
                         DropdownMenuItem(
                           value: 'ORG',
                           child: Text(
-                            l10n.pick(en: 'Organisation', swText: 'Taasisi'),
+                            _accessModelProductLabel(l10n, 'ORG'),
                           ),
                         ),
                       ],
@@ -601,9 +635,12 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                           ? null
                           : (value) => setSheetState(
                               () => accessModel = value ?? accessModel,
-                            ),
+                      ),
                       decoration: InputDecoration(
-                        labelText: l10n.wealthAccessModel,
+                        labelText: l10n.pick(
+                          en: 'Fungu type',
+                          swText: 'Aina ya Fungu',
+                        ),
                         isDense: true,
                       ),
                     ),
@@ -1243,24 +1280,23 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                         items: [
                           DropdownMenuItem(
                             value: 'MANAGER',
-                            child: Text(
-                              l10n.pick(en: 'Manager', swText: 'Meneja'),
-                            ),
+                            child: Text(_potRoleLabel(l10n, 'MANAGER')),
+                          ),
+                          DropdownMenuItem(
+                            value: 'SIGNATORY',
+                            child: Text(_potRoleLabel(l10n, 'SIGNATORY')),
+                          ),
+                          DropdownMenuItem(
+                            value: 'ACCOUNTANT',
+                            child: Text(_potRoleLabel(l10n, 'ACCOUNTANT')),
                           ),
                           DropdownMenuItem(
                             value: 'CONTRIBUTOR',
-                            child: Text(
-                              l10n.pick(
-                                en: 'Contributor',
-                                swText: 'Mchangiaji',
-                              ),
-                            ),
+                            child: Text(_potRoleLabel(l10n, 'CONTRIBUTOR')),
                           ),
                           DropdownMenuItem(
                             value: 'VIEWER',
-                            child: Text(
-                              l10n.pick(en: 'Viewer', swText: 'Mtazamaji'),
-                            ),
+                            child: Text(_potRoleLabel(l10n, 'VIEWER')),
                           ),
                         ],
                         onChanged: submitting
@@ -1380,6 +1416,8 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
   Future<void> _showMembersSheet(Map<String, dynamic> pot) async {
     final l10n = AppLocalizations.of(context)!;
     final ui = OrbiTheme.uiOf(context);
+    final potRole = (pot['my_role'] ?? 'CONTRIBUTOR').toString();
+    final canManageMembers = _canManagePotRole(potRole);
     final members = await _loadBusyData(
       l10n.wealthLoadingMembers,
       () => _service.listSharedPotMembers((pot['id'] ?? '').toString()),
@@ -1451,6 +1489,8 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                       final subtitle = (user['email'] ?? user['phone'] ?? '')
                           .toString();
                       final role = (member['role'] ?? 'CONTRIBUTOR').toString();
+                      final canRemoveMember =
+                          canManageMembers && role.toUpperCase() != 'OWNER';
                       final contributed = _money(
                         member['contributed_amount'],
                         pot['currency']?.toString(),
@@ -1516,7 +1556,29 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                                 ],
                               ),
                             ),
-                            _metaChip(context, role),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _metaChip(context, _potRoleLabel(l10n, role)),
+                                if (canRemoveMember) ...[
+                                  const SizedBox(width: 6),
+                                  IconButton(
+                                    tooltip: l10n.pick(
+                                      en: 'Remove member',
+                                      swText: 'Ondoa mwanachama',
+                                    ),
+                                    icon: const Icon(
+                                      Icons.person_remove_alt_1_outlined,
+                                    ),
+                                    color: Colors.redAccent,
+                                    onPressed: () async {
+                                      Navigator.of(sheetContext).pop();
+                                      await _removePotMember(pot, member);
+                                    },
+                                  ),
+                                ],
+                              ],
+                            ),
                           ],
                         ),
                       );
@@ -1528,6 +1590,108 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
         );
       },
     );
+  }
+
+  Future<void> _removePotMember(
+    Map<String, dynamic> pot,
+    Map<String, dynamic> member,
+  ) async {
+    final l10n = AppLocalizations.of(context)!;
+    final potId = (pot['id'] ?? '').toString();
+    final memberId = (member['id'] ?? '').toString();
+    if (potId.isEmpty || memberId.isEmpty) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          l10n.pick(en: 'Remove member?', swText: 'Ondoa mwanachama?'),
+        ),
+        content: Text(
+          l10n.pick(
+            en: 'This member will no longer see or use this Fungu.',
+            swText: 'Mwanachama huyu hataona wala kutumia Fungu hili tena.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(l10n.pick(en: 'Cancel', swText: 'Ghairi')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(l10n.pick(en: 'Remove', swText: 'Ondoa')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    final ok = await _loadBusyData<bool>(
+      l10n.pick(en: 'Removing member...', swText: 'Tunaondoa mwanachama...'),
+      () async {
+        await _service.removeSharedPotMember(potId, memberId);
+        return true;
+      },
+    );
+    if (!mounted || ok != true) return;
+    await _load();
+    if (!mounted) return;
+    setState(() {
+      _statusMessage = l10n.pick(
+        en: 'Member removed from this Fungu.',
+        swText: 'Mwanachama ameondolewa kwenye Fungu hili.',
+      );
+      _statusTone = OrbiStatusTone.success;
+    });
+  }
+
+  Future<void> _leavePot(Map<String, dynamic> pot) async {
+    final l10n = AppLocalizations.of(context)!;
+    final potId = (pot['id'] ?? '').toString();
+    if (potId.isEmpty) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          l10n.pick(en: 'Leave Fungu?', swText: 'Jiondoe kwenye Fungu?'),
+        ),
+        content: Text(
+          l10n.pick(
+            en: 'This Fungu will disappear from your list. You can only return through a new invitation.',
+            swText:
+                'Fungu hili litaondoka kwenye orodha yako. Utaweza kurudi kupitia mwaliko mpya tu.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(l10n.pick(en: 'Cancel', swText: 'Ghairi')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(l10n.pick(en: 'Leave', swText: 'Jiondoe')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    final result = await _loadBusyData<Map<String, dynamic>>(
+      l10n.pick(en: 'Leaving Fungu...', swText: 'Unajiondoa kwenye Fungu...'),
+      () => _service.leaveSharedPot(potId),
+    );
+    if (!mounted || result == null) return;
+    await _load();
+    if (!mounted) return;
+    setState(() {
+      _statusMessage = l10n.pick(
+        en: 'You have left this Fungu.',
+        swText: 'Umejiondoa kwenye Fungu hili.',
+      );
+      _statusTone = OrbiStatusTone.success;
+    });
   }
 
   Future<void> _showReportSheet(Map<String, dynamic> pot) async {
@@ -1566,9 +1730,9 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
         title: Text(l10n.pick(en: 'Archive Fungu?', swText: 'Hifadhi Fungu?')),
         content: Text(
           l10n.pick(
-            en: 'For safety, archiving requires OTP and 3 approvals. Once approved, it waits 24 hours before leaving the main list, and can still be cancelled during that time.',
+            en: 'If this Fungu has no balance, it leaves the main list and stays cancellable for 24 hours. Organization Fungu may require leadership approvals.',
             swText:
-                'Kwa usalama, kuhifadhi kunahitaji OTP na idhini 3. Baada ya kuidhinishwa, husubiri saa 24 kabla ya kutoka kwenye orodha kuu, na bado kuna nafasi ya kughairi ndani ya muda huo.',
+                'Kama Fungu hili halina salio, litatoka kwenye orodha kuu na kubaki linaweza kughairiwa ndani ya saa 24. Fungu la taasisi linaweza kuhitaji idhini za viongozi.',
           ),
         ),
         actions: [
@@ -1628,13 +1792,20 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
         ? Map<String, dynamic>.from(result['request'] as Map)
         : const <String, dynamic>{};
     final status = (request['status'] ?? '').toString().toUpperCase();
+    final requiresApproval = result['requires_approval'] == true;
     setState(() {
       _statusMessage = status == 'SCHEDULED'
-          ? l10n.pick(
-              en: 'Archive approved and scheduled. It can be cancelled within 24 hours.',
-              swText:
-                  'Ombi limeidhinishwa na kupangwa. Linaweza kughairiwa ndani ya saa 24.',
-            )
+          ? (requiresApproval
+                ? l10n.pick(
+                    en: 'Archive approved and scheduled. It can be cancelled within 24 hours.',
+                    swText:
+                        'Ombi limeidhinishwa na kupangwa. Linaweza kughairiwa ndani ya saa 24.',
+                  )
+                : l10n.pick(
+                    en: 'Fungu archived from the main list. You can cancel within 24 hours.',
+                    swText:
+                        'Fungu limetoka kwenye orodha kuu. Unaweza kughairi ndani ya saa 24.',
+                  ))
           : l10n.pick(
               en: 'Archive request sent. It now needs 3 approvals.',
               swText: 'Ombi la kuhifadhi limetumwa. Sasa linahitaji idhini 3.',
@@ -1645,53 +1816,20 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
 
   Future<String?> _promptArchiveOtp({required String contact}) async {
     final l10n = AppLocalizations.of(context)!;
-    final controller = TextEditingController();
-    final result = await showDialog<String>(
+    return showSecurityOtpDialog(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(l10n.pick(en: 'Confirm OTP', swText: 'Thibitisha OTP')),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              contact.isEmpty
-                  ? l10n.pick(
-                      en: 'Enter the OTP sent to your verified contact.',
-                      swText:
-                          'Weka OTP iliyotumwa kwenye mawasiliano yako yaliyothibitishwa.',
-                    )
-                  : l10n.pick(
-                      en: 'Enter the OTP sent to $contact.',
-                      swText: 'Weka OTP iliyotumwa kwenda $contact.',
-                    ),
+      title: l10n.pick(en: 'Confirm OTP', swText: 'Thibitisha OTP'),
+      helperText: contact.isEmpty
+          ? l10n.pick(
+              en: 'Enter the OTP sent to your verified contact.',
+              swText:
+                  'Weka OTP iliyotumwa kwenye mawasiliano yako yaliyothibitishwa.',
+            )
+          : l10n.pick(
+              en: 'Enter the OTP sent to $contact.',
+              swText: 'Weka OTP iliyotumwa kwenda $contact.',
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: controller,
-              autofocus: true,
-              keyboardType: TextInputType.number,
-              decoration: InputDecoration(
-                labelText: l10n.pick(en: 'OTP code', swText: 'Msimbo wa OTP'),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: Text(l10n.pick(en: 'Cancel', swText: 'Ghairi')),
-          ),
-          FilledButton(
-            onPressed: () =>
-                Navigator.of(dialogContext).pop(controller.text.trim()),
-            child: Text(l10n.pick(en: 'Verify', swText: 'Thibitisha')),
-          ),
-        ],
-      ),
     );
-    controller.dispose();
-    return result;
   }
 
   Future<void> _changePotState(
@@ -1722,7 +1860,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
     final numeric = amount is num
         ? amount.toDouble()
         : double.tryParse('${amount ?? 0}'.replaceAll(',', '')) ?? 0;
-    return formatAppBalanceAmount(
+    return formatFinancialMoney(
       numeric,
       (currency ?? 'TZS').toUpperCase(),
       locale: localeTag,
@@ -1732,6 +1870,14 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
   double _asDouble(dynamic value) {
     if (value is num) return value.toDouble();
     return double.tryParse('$value'.replaceAll(',', '').trim()) ?? 0;
+  }
+
+  String _formatPercent(double value) {
+    final safe = value.isFinite ? value.clamp(0, 100).toDouble() : 0.0;
+    if ((safe - safe.roundToDouble()).abs() < 0.05) {
+      return '${safe.round()}%';
+    }
+    return '${safe.toStringAsFixed(1)}%';
   }
 
   bool _isArchivedOrPendingArchive(Map<String, dynamic> pot) {
@@ -1962,8 +2108,12 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                   const SizedBox(height: 10),
                   ...activePots.map((pot) {
                     final role = (pot['my_role'] ?? 'OWNER').toString();
-                    final canWithdraw = role == 'OWNER' || role == 'MANAGER';
-                    final canInvite = role == 'OWNER' || role == 'MANAGER';
+                    final canManage = _canManagePotRole(role);
+                    final canGovern = _canViewPotGovernanceRole(role);
+                    final canContribute = _canContributePotRole(role);
+                    final isOwner = role.toUpperCase() == 'OWNER';
+                    final canLeave = !isOwner;
+                    final canWithdraw = canManage;
                     final currentAmount = _asDouble(pot['current_amount']);
                     final targetAmount = pot['target_amount'] == null
                         ? null
@@ -1971,6 +2121,9 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                     final progress = targetAmount == null || targetAmount <= 0
                         ? null
                         : (currentAmount / targetAmount).clamp(0.0, 1.0);
+                    final contributionPercent = progress == null
+                        ? null
+                        : _formatPercent(progress * 100);
                     final current = _money(
                       pot['current_amount'],
                       pot['currency']?.toString(),
@@ -2045,103 +2198,156 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                                   ),
                                 ),
                                 const SizedBox(width: 10),
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: [
-                                    Text(
-                                      current,
-                                      style: TextStyle(
-                                        color: ui.textPrimary,
+                                Flexible(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: [
+                                      MoneyText(
+                                        value: current,
+                                        textAlign: TextAlign.end,
+                                        mainFontSize: 16,
+                                        sideFontSize: 10,
                                         fontWeight: FontWeight.w900,
+                                        animateValue: false,
                                       ),
-                                    ),
-                                    if (target != null) ...[
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        'of $target',
-                                        style: TextStyle(
-                                          color: ui.textMuted,
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w700,
+                                      if (target != null) ...[
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          'of $target',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: ui.textMuted,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w700,
+                                          ),
                                         ),
-                                      ),
+                                      ],
                                     ],
-                                  ],
+                                  ),
                                 ),
-                                PopupMenuButton<String>(
-                                  onSelected: (value) {
-                                    if (value == 'contribute') {
-                                      _showContributeSheet(pot);
-                                    } else if (value == 'withdraw') {
-                                      _showWithdrawSheet(pot);
-                                    } else if (value == 'members') {
-                                      _showMembersSheet(pot);
-                                    } else if (value == 'report') {
-                                      _showReportSheet(pot);
-                                    } else if (value == 'share') {
-                                      _showInviteMemberSheet(pot);
-                                    } else if (value == 'edit') {
-                                      _showEditPotSheet(pot);
-                                    } else if (value == 'pause') {
-                                      _changePotState(pot, 'PAUSED');
-                                    } else if (value == 'activate') {
-                                      _changePotState(pot, 'ACTIVE');
-                                    } else if (value == 'archive') {
-                                      _requestArchivePot(pot);
-                                    }
-                                  },
-                                  itemBuilder: (context) => [
-                                    PopupMenuItem(
-                                      value: 'contribute',
-                                      child: Text(l10n.wealthContribute),
-                                    ),
-                                    PopupMenuItem(
-                                      value: 'members',
-                                      child: Text(l10n.wealthMembers),
-                                    ),
-                                    PopupMenuItem(
-                                      value: 'report',
-                                      child: Text(
-                                        l10n.pick(
-                                          en: 'Report',
-                                          swText: 'Ripoti',
+                                if (canContribute ||
+                                    canGovern ||
+                                    canManage ||
+                                    canLeave)
+                                  PopupMenuButton<String>(
+                                    onSelected: (value) {
+                                      if (value == 'contribute') {
+                                        _showContributeSheet(pot);
+                                      } else if (value == 'withdraw') {
+                                        _showWithdrawSheet(pot);
+                                      } else if (value == 'members') {
+                                        _showMembersSheet(pot);
+                                      } else if (value == 'report') {
+                                        _showReportSheet(pot);
+                                      } else if (value == 'share') {
+                                        _showInviteMemberSheet(pot);
+                                      } else if (value == 'edit') {
+                                        _showEditPotSheet(pot);
+                                      } else if (value == 'pause') {
+                                        _changePotState(pot, 'PAUSED');
+                                      } else if (value == 'activate') {
+                                        _changePotState(pot, 'ACTIVE');
+                                      } else if (value == 'archive') {
+                                        _requestArchivePot(pot);
+                                      } else if (value == 'leave') {
+                                        _leavePot(pot);
+                                      }
+                                    },
+                                    itemBuilder: (context) => [
+                                      if (canContribute)
+                                        PopupMenuItem(
+                                          value: 'contribute',
+                                          child: Text(l10n.wealthContribute),
                                         ),
-                                      ),
-                                    ),
-                                    if (canInvite)
-                                      PopupMenuItem(
-                                        value: 'share',
-                                        child: Text(l10n.wealthInviteMember),
-                                      ),
-                                    if (canWithdraw)
-                                      PopupMenuItem(
-                                        value: 'withdraw',
-                                        child: Text(l10n.wealthWithdraw),
-                                      ),
-                                    PopupMenuItem(
-                                      value: 'edit',
-                                      child: Text(l10n.commonEdit),
-                                    ),
-                                    PopupMenuItem(
-                                      value: status == 'ACTIVE'
-                                          ? 'pause'
-                                          : 'activate',
-                                      child: Text(
-                                        status == 'ACTIVE'
-                                            ? l10n.commonPause
-                                            : l10n.commonActivate,
-                                      ),
-                                    ),
-                                    PopupMenuItem(
-                                      value: 'archive',
-                                      child: Text(l10n.commonArchive),
-                                    ),
-                                  ],
-                                ),
+                                      if (canGovern)
+                                        PopupMenuItem(
+                                          value: 'members',
+                                          child: Text(l10n.wealthMembers),
+                                        ),
+                                      if (canGovern)
+                                        PopupMenuItem(
+                                          value: 'report',
+                                          child: Text(
+                                            l10n.pick(
+                                              en: 'Report',
+                                              swText: 'Ripoti',
+                                            ),
+                                          ),
+                                        ),
+                                      if (canManage)
+                                        PopupMenuItem(
+                                          value: 'share',
+                                          child: Text(l10n.wealthInviteMember),
+                                        ),
+                                      if (canWithdraw)
+                                        PopupMenuItem(
+                                          value: 'withdraw',
+                                          child: Text(l10n.wealthWithdraw),
+                                        ),
+                                      if (canManage)
+                                        PopupMenuItem(
+                                          value: 'edit',
+                                          child: Text(l10n.commonEdit),
+                                        ),
+                                      if (canManage)
+                                        PopupMenuItem(
+                                          value: status == 'ACTIVE'
+                                              ? 'pause'
+                                              : 'activate',
+                                          child: Text(
+                                            status == 'ACTIVE'
+                                                ? l10n.commonPause
+                                                : l10n.commonActivate,
+                                          ),
+                                        ),
+                                      if (canManage)
+                                        PopupMenuItem(
+                                          value: 'archive',
+                                          child: Text(l10n.commonArchive),
+                                        ),
+                                      if (canLeave)
+                                        PopupMenuItem(
+                                          value: 'leave',
+                                          child: Text(
+                                            l10n.pick(
+                                              en: 'Leave Fungu',
+                                              swText: 'Jiondoe kwenye Fungu',
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
                               ],
                             ),
                             if (progress != null) ...[
                               const SizedBox(height: 12),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      l10n.pick(
+                                        en: 'Contribution progress',
+                                        swText: 'Maendeleo ya michango',
+                                      ),
+                                      style: TextStyle(
+                                        color: ui.textMuted,
+                                        fontSize: 11.5,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                  Text(
+                                    contributionPercent ?? '0%',
+                                    style: TextStyle(
+                                      color: _sharedPotAccent,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
                               ClipRRect(
                                 borderRadius: BorderRadius.circular(999),
                                 child: LinearProgressIndicator(
@@ -2157,16 +2363,36 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                               spacing: 8,
                               runSpacing: 8,
                               children: [
-                                _metaChip(context, role),
-                                _metaChip(context, accessModel),
+                                _metaChip(context, _potRoleLabel(l10n, role)),
+                                _metaChip(
+                                  context,
+                                  isOwner
+                                      ? l10n.pick(
+                                          en: 'Created by you',
+                                          swText: 'Umeunda wewe',
+                                        )
+                                      : l10n.pick(
+                                          en: 'Invited',
+                                          swText: 'Umealikwa',
+                                        ),
+                                  accent: isOwner
+                                      ? const Color(0xFF10B981)
+                                      : const Color(0xFF3B82F6),
+                                ),
+                                _metaChip(
+                                  context,
+                                  _accessModelProductLabel(l10n, accessModel),
+                                ),
                                 _metaChip(context, status),
                               ],
                             ),
                             const SizedBox(height: 12),
-                            Row(
+                            Wrap(
+                              spacing: 10,
+                              runSpacing: 10,
                               children: [
-                                Expanded(
-                                  child: OutlinedButton.icon(
+                                if (canGovern)
+                                  OutlinedButton.icon(
                                     onPressed: () => _showMembersSheet(pot),
                                     icon: const Icon(
                                       Icons.group_outlined,
@@ -2174,10 +2400,8 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                                     ),
                                     label: Text(l10n.wealthMembers),
                                   ),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: FilledButton.icon(
+                                if (canContribute)
+                                  FilledButton.icon(
                                     onPressed: status == 'ACTIVE'
                                         ? () => _showContributeSheet(pot)
                                         : null,
@@ -2191,7 +2415,17 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                                       foregroundColor: Colors.white,
                                     ),
                                   ),
-                                ),
+                                if (canLeave)
+                                  OutlinedButton.icon(
+                                    onPressed: () => _leavePot(pot),
+                                    icon: const Icon(
+                                      Icons.logout_rounded,
+                                      size: 17,
+                                    ),
+                                    label: Text(
+                                      l10n.pick(en: 'Leave', swText: 'Jiondoe'),
+                                    ),
+                                  ),
                               ],
                             ),
                           ],
@@ -2208,21 +2442,26 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
     );
   }
 
-  Widget _metaChip(BuildContext context, String label) {
+  Widget _metaChip(BuildContext context, String label, {Color? accent}) {
     final ui = OrbiTheme.uiOf(context);
+    final chipColor = accent ?? ui.textMuted;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: ui.cardMuted.withValues(alpha: 0.72),
+        color: accent == null
+            ? ui.cardMuted.withValues(alpha: 0.72)
+            : chipColor.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: ui.border),
+        border: Border.all(
+          color: accent == null ? ui.border : chipColor.withValues(alpha: 0.32),
+        ),
       ),
       child: Text(
         label,
         style: TextStyle(
-          color: ui.textMuted,
+          color: accent == null ? ui.textMuted : chipColor,
           fontSize: 12,
-          fontWeight: FontWeight.w600,
+          fontWeight: accent == null ? FontWeight.w600 : FontWeight.w800,
         ),
       ),
     );

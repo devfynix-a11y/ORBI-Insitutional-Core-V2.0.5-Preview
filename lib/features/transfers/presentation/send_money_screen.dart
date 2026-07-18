@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:orbi_mobileapp/l10n/app_localizations.dart';
@@ -15,8 +17,9 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../core/config/app_config.dart';
+import '../../../core/device/device_info_service.dart';
 import '../../../core/network/orbi_request_headers.dart';
-import '../../../core/receipts/orbi_receipt_pdf_builder.dart';
+import '../../../core/receipts/orbi_receipt_image_pdf_builder.dart';
 import '../../../core/security/transaction_geo_context.dart';
 import '../../../core/security/device_fingerprint.dart';
 import '../../../core/session/activity_tracker.dart';
@@ -48,6 +51,7 @@ import '../../wallet/data/wallet_service.dart';
 import '../data/fx_quote_service.dart';
 import '../../payment/data/gateway_payment_models.dart';
 import '../../payment/data/gateway_payment_service.dart';
+import '../../shell/shell_navigation_signal.dart';
 
 class SendMoneyScreen extends StatefulWidget {
   const SendMoneyScreen({
@@ -445,6 +449,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
   final OtpAutoFillService _otpAutoFill = OtpAutoFillService();
   final Uuid _uuid = const Uuid();
   final String _fingerprint = DeviceFingerprint.generate();
+  Future<Map<String, dynamic>>? _deviceDiagnosticsFuture;
 
   _TransferMode _mode = _TransferMode.internalP2P;
   _ExternalTransferRail _externalRail = _ExternalTransferRail.bank;
@@ -569,46 +574,49 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     }
   }
 
-  bool get _hasLiveSessionContext {
-    final auth = context.read<AuthController>();
-    return auth.isAuthenticated ||
-        auth.currentSession != null ||
-        auth.session.isNotEmpty;
+  String get _sessionExpiredLoginMessage {
+    return _isSw
+        ? 'Muda wa kikao chako umeisha. Tafadhali ingia tena.'
+        : 'Your session has expired. Please log in again.';
   }
 
-  String get _sessionVerificationRetryMessage {
-    return _isSw
-        ? 'Hatukuweza kuthibitisha kikao chako kwa sasa. Tafadhali jaribu tena.'
-        : 'We could not confirm your session right now. Please try again.';
+  Future<void> _forceLoginAgainForExpiredSession({
+    bool showDialog = false,
+  }) async {
+    if (!mounted) return;
+    final auth = context.read<AuthController>();
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    final message = _sessionExpiredLoginMessage;
+
+    if (showDialog) {
+      await OrbiErrorDialog.show(
+        context: context,
+        title: _isSw ? 'Kikao kimeisha' : 'Session expired',
+        message: message,
+        icon: Icons.lock_clock_rounded,
+        actionLabel: _isSw ? 'Ingia tena' : 'Log in again',
+        barrierDismissible: false,
+      );
+    }
+
+    await auth.logout();
+    if (!mounted) return;
+    navigator.pushNamedAndRemoveUntil('/', (route) => false);
+    messenger.showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.orange),
+    );
   }
 
   Future<String?> _requestTransferAccessToken({
     bool showDialogOnFailure = false,
   }) async {
     final auth = context.read<AuthController>();
-    final hadSessionBeforeCheck = _hasLiveSessionContext;
     final token = await auth.getValidAccessToken(expireSessionIfMissing: false);
     if (!mounted) return null;
     if (token != null && token.isNotEmpty) return token;
 
-    final message = hadSessionBeforeCheck
-        ? _sessionVerificationRetryMessage
-        : AppLocalizations.of(context)!.sendMoneySessionExpiredMessage;
-
-    if (showDialogOnFailure) {
-      if (hadSessionBeforeCheck) {
-        await OrbiErrorDialog.show(
-          context: context,
-          title: _isSw ? 'Kikao hakijathibitishwa' : 'Session not verified',
-          message: message,
-          icon: Icons.shield_outlined,
-        );
-      } else {
-        await OrbiErrorDialog.showSessionExpired(context);
-      }
-    } else {
-      _showSnack(message);
-    }
+    await _forceLoginAgainForExpiredSession(showDialog: showDialogOnFailure);
     return null;
   }
 
@@ -618,9 +626,11 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
   }) {
     final message = UserFacingError.from(error, fallback: fallback);
     final lower = message.toLowerCase();
-    if (_hasLiveSessionContext &&
-        (lower.contains('session expired') || lower.contains('log in again'))) {
-      return _sessionVerificationRetryMessage;
+    if (lower.contains('session expired') ||
+        lower.contains('log in again') ||
+        lower.contains('unauthorized') ||
+        lower.contains('jwt')) {
+      return _sessionExpiredLoginMessage;
     }
     return message;
   }
@@ -631,7 +641,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
       _sourceWalletError = null;
     });
     try {
-      final wallets = await _walletService.getWallets();
+      final wallets = await _walletService.getWallets(forceRefresh: true);
       if (!mounted) return;
       setState(() {
         _backendWallets = wallets;
@@ -805,9 +815,42 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
   }
 
   String _walletId(Map<String, dynamic> wallet) {
-    final raw = _pickString([wallet['wallet_id'], wallet['id']]);
-    if (raw.startsWith('goal::')) return raw;
-    return _safeDatabaseIdentifier(raw);
+    final candidates = _walletIdentifierCandidates(wallet);
+    for (final candidate in candidates) {
+      if (candidate.startsWith('goal::')) return candidate;
+    }
+    for (final candidate in candidates) {
+      final uuid = _safeUuid(candidate);
+      if (uuid.isNotEmpty) return uuid;
+    }
+    return '';
+  }
+
+  List<String> _walletIdentifierCandidates(Map<String, dynamic> wallet) {
+    final metadata = _walletMetadata(wallet);
+    return [
+      wallet['id'],
+      wallet['wallet_id'],
+      wallet['walletId'],
+      wallet['wallet_uuid'],
+      wallet['walletUuid'],
+      wallet['source_wallet_id'],
+      wallet['sourceWalletId'],
+      wallet['operating_wallet_id'],
+      wallet['operatingWalletId'],
+      metadata['id'],
+      metadata['wallet_id'],
+      metadata['walletId'],
+      metadata['wallet_uuid'],
+      metadata['walletUuid'],
+      metadata['source_wallet_id'],
+      metadata['sourceWalletId'],
+      metadata['operating_wallet_id'],
+      metadata['operatingWalletId'],
+    ]
+        .map(_safeDatabaseIdentifier)
+        .where((value) => value.isNotEmpty)
+        .toList(growable: false);
   }
 
   String _walletName(Map<String, dynamic> wallet) {
@@ -1295,14 +1338,14 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     for (final goal in goals) {
       final goalId = _pickString([goal['id'], goal['goalId'], goal['goal_id']]);
       if (goalId.isEmpty) continue;
-      final sourceWalletId = _pickString([
+      final sourceWalletId = _safeUuid(_pickString([
         goal['sourceWalletId'],
         goal['source_wallet_id'],
         goal['walletId'],
         goal['wallet_id'],
         goal['operating_wallet_id'],
         goal['operatingWalletId'],
-      ]);
+      ]));
       items.add({
         'wallet_id': 'goal::$goalId',
         'name': _pickString([goal['name'], goal['title']]),
@@ -1345,11 +1388,11 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
   String _transferSourceWalletId(Map<String, dynamic> wallet) {
     if (!_isGoalSourceWallet(wallet)) return _walletId(wallet);
     final metadata = _walletMetadata(wallet);
-    final sourceWalletId = _pickString([
+    final sourceWalletId = _safeUuid(_pickString([
       metadata['source_wallet_id'],
       wallet['source_wallet_id'],
       wallet['sourceWalletId'],
-    ]);
+    ]));
     if (sourceWalletId.isNotEmpty) return sourceWalletId;
     return _resolveOperatingWalletId();
   }
@@ -1396,9 +1439,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     if (token == null || token.isEmpty) {
       if (!_isLookupStillCurrent(query, generation)) return;
       setState(() {
-        _lookupError = _hasLiveSessionContext
-            ? _sessionVerificationRetryMessage
-            : AppLocalizations.of(context)!.sendMoneySessionExpiredMessage;
+        _lookupError = _sessionExpiredLoginMessage;
         _lookupLoading = false;
       });
       return;
@@ -1689,6 +1730,15 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     return raw;
   }
 
+  String _safeUuid(dynamic value) {
+    final raw = _safeDatabaseIdentifier(value);
+    if (raw.isEmpty) return '';
+    final uuidPattern = RegExp(
+      r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+    );
+    return uuidPattern.hasMatch(raw) ? raw : '';
+  }
+
   InputDecoration _fieldDecoration({
     required String label,
     required String hint,
@@ -1860,7 +1910,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     }
 
     final effectiveWalletId = _effectiveInternalWalletId();
-    if (effectiveWalletId.isEmpty) {
+    if (_safeUuid(effectiveWalletId).isEmpty) {
       _showSnack(
         _isSw
             ? 'Walleti ya kutumia haijapatikana. Tafadhali refresh akaunti yako kisha jaribu tena.'
@@ -1899,10 +1949,22 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
         'description': _internalNoteController.text.trim(),
         if ((_selectedInternalCategoryId ?? '').isNotEmpty)
           'categoryId': _selectedInternalCategoryId,
+        if ((_selectedInternalCategoryId ?? '').isNotEmpty)
+          'category_id': _selectedInternalCategoryId,
+        if ((_selectedInternalCategoryId ?? '').isNotEmpty)
+          'budget_category_id': _selectedInternalCategoryId,
         'metadata': {
           'category': 'Transfer',
           if ((_selectedInternalCategoryId ?? '').isNotEmpty)
             'category_id': _selectedInternalCategoryId,
+          if ((_selectedInternalCategoryId ?? '').isNotEmpty)
+            'budget_category_id': _selectedInternalCategoryId,
+          if ((_selectedInternalCategoryId ?? '').isNotEmpty)
+            'budget_spend_context': {
+              'category_id': _selectedInternalCategoryId,
+              'source': 'send_money',
+              'mode': 'internal_transfer',
+            },
           if (_internalNoteController.text.trim().isNotEmpty)
             'notes': _internalNoteController.text.trim(),
         },
@@ -1959,6 +2021,10 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
       await _openPreviewSheet(preview);
     } on TransactionGeoException catch (e) {
       if (!mounted) return;
+      _traceTxApi(
+        'transaction geo failure',
+        extra: {'failure_category': 'geo', 'error': e.message},
+      );
       setState(() => _isPreviewing = false);
       await _showLocationRequiredDialog(e.message);
     } catch (e) {
@@ -1996,6 +2062,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
   Future<Map<String, dynamic>> _withRequiredTransactionGeo(
     Map<String, dynamic> payload, {
     bool allowNetworkFallback = false,
+    String stage = 'preview',
   }) async {
     final geoMetadata = await TransactionGeoContext.requiredMetadata(
       allowNetworkFallback: allowNetworkFallback,
@@ -2003,10 +2070,93 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     final metadata = payload['metadata'] is Map
         ? Map<String, dynamic>.from(payload['metadata'] as Map)
         : <String, dynamic>{};
-    return {
+    return _withTransactionDiagnostics({
       ...payload,
       'metadata': TransactionGeoContext.mergeInto(metadata, geoMetadata),
+    }, stage: stage);
+  }
+
+  Future<Map<String, dynamic>> _withTransactionDiagnostics(
+    Map<String, dynamic> payload, {
+    required String stage,
+  }) async {
+    final metadata = payload['metadata'] is Map
+        ? Map<String, dynamic>.from(payload['metadata'] as Map)
+        : <String, dynamic>{};
+    final existing = metadata['clientDiagnostics'] is Map
+        ? Map<String, dynamic>.from(metadata['clientDiagnostics'] as Map)
+        : <String, dynamic>{};
+    metadata['clientDiagnostics'] = {
+      ...existing,
+      ...await _buildTransactionDiagnostics(stage: stage, payload: payload),
     };
+    return {...payload, 'metadata': metadata};
+  }
+
+  Future<Map<String, dynamic>> _buildTransactionDiagnostics({
+    required String stage,
+    required Map<String, dynamic> payload,
+  }) async {
+    final device = await _loadDeviceDiagnostics();
+    final metadata = payload['metadata'] is Map
+        ? Map<String, dynamic>.from(payload['metadata'] as Map)
+        : <String, dynamic>{};
+    final geo = metadata['geo'] is Map
+        ? Map<String, dynamic>.from(metadata['geo'] as Map)
+        : <String, dynamic>{};
+    final risk = metadata['riskContext'] is Map
+        ? Map<String, dynamic>.from(metadata['riskContext'] as Map)
+        : <String, dynamic>{};
+    final time = metadata['clientTimeContext'] is Map
+        ? Map<String, dynamic>.from(metadata['clientTimeContext'] as Map)
+        : TransactionGeoContext.buildClientTimeContext();
+    return {
+      'clientTraceId': _uuid.v4(),
+      'stage': stage,
+      'capturedAtUtc': DateTime.now().toUtc().toIso8601String(),
+      'transferMode': _mode.name,
+      'externalRail': _externalRail.name,
+      'amountPresent': payload['amount'] != null,
+      'currencyPresent': _pickString([payload['currency']]).isNotEmpty,
+      'quoteIdPresent': _pickString([payload['quoteId'], payload['quote_id']])
+          .isNotEmpty,
+      'quoteHashPresent':
+          _pickString([payload['quoteHash'], payload['quote_hash']])
+              .isNotEmpty,
+      'sourceWalletPresent':
+          _pickString([
+            payload['source_wallet_id'],
+            payload['sourceWalletId'],
+            payload['sourceWallet'],
+          ]).isNotEmpty,
+      'targetWalletPresent':
+          _pickString([
+            payload['target_wallet_id'],
+            payload['targetWalletId'],
+            payload['recipient_customer_id'],
+            payload['recipient_id'],
+          ]).isNotEmpty,
+      'geoSource': _pickString([geo['source']]),
+      'geoPrecision': _pickString([geo['precision']]),
+      'geoFallback': risk['locationFallback'] == true,
+      'geoFallbackReason': _pickString([risk['locationFallbackReason']]),
+      'locationAgeSeconds': risk['locationAgeSeconds'],
+      'networkPublicIpPresent':
+          _pickString([risk['networkPublicIp'], geo['publicIp']]).isNotEmpty,
+      'timezoneOffset': _pickString([time['timezone_offset']]),
+      'deviceModel': _pickString([device['deviceModel'], device['model']]),
+      'devicePlatform': _pickString([device['platform']]),
+      'sdkInt': device['sdkInt'],
+      'appVersion': AppConfig.appVersion,
+    }..removeWhere((_, value) {
+        if (value == null) return true;
+        if (value is String && value.trim().isEmpty) return true;
+        return false;
+      });
+  }
+
+  Future<Map<String, dynamic>> _loadDeviceDiagnostics() {
+    return _deviceDiagnosticsFuture ??= DeviceInfoService.buildPayload();
   }
 
   String get _localeTag {
@@ -2018,8 +2168,14 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
 
   Future<_TransactionPreviewData> _fetchTransactionPreview(
     String token,
-    Map<String, dynamic> payload,
+    Map<String, dynamic> rawPayload,
   ) async {
+    final payload = _sanitizeFinancialSourceWalletFields(rawPayload);
+    final sourceWalletId = _canonicalSourceWalletIdFromPayload(payload);
+    if (_pickString([payload['type']]) == 'INTERNAL_TRANSFER' &&
+        sourceWalletId.isEmpty) {
+      throw StateError('SOURCE_WALLET_UUID_REQUIRED');
+    }
     final l10n = AppLocalizations.of(context)!;
     final endpoints = _transactionApiEndpoints('/transactions/preview');
     http.Response? res;
@@ -2030,6 +2186,13 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
         'POST /transactions/preview',
         uri: endpoint,
         requestBody: payload,
+        extra: {
+          'source_wallet_uuid_valid': sourceWalletId.isNotEmpty,
+          if (sourceWalletId.isNotEmpty)
+            'source_wallet_uuid_tail': sourceWalletId.substring(
+              sourceWalletId.length - 6,
+            ),
+        },
       );
       http.Response attempt;
       try {
@@ -2047,15 +2210,34 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
         _traceTxApi(
           'POST /transactions/preview transient failure',
           uri: endpoint,
-          extra: {'error': e.message},
+          extra: {
+            'failure_category': _classifyTransactionFailure(error: e.message),
+            'error': e.message,
+          },
         );
         continue;
       }
+      final failureCategory = attempt.statusCode >= 200 &&
+              attempt.statusCode < 300
+          ? null
+          : _classifyTransactionFailure(
+              statusCode: attempt.statusCode,
+              responseBody: attempt.body,
+            );
       _traceTxApi(
         'POST /transactions/preview response',
         uri: endpoint,
         statusCode: attempt.statusCode,
         responseBody: attempt.body,
+        extra: failureCategory == null
+            ? null
+            : {
+                'failure_category': failureCategory,
+                if (failureCategory == 'backend_validation')
+                  'validation_snapshot': _transactionValidationSnapshot(
+                    payload,
+                  ),
+              },
       );
       if (attempt.statusCode >= 200 && attempt.statusCode < 300) {
         res = attempt;
@@ -2595,6 +2777,204 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     debugPrint('🧾 TX_DEBUG ${parts.join(' | ')}');
   }
 
+  String _classifyTransactionFailure({
+    int? statusCode,
+    String? responseBody,
+    String? error,
+  }) {
+    final haystack =
+        '${responseBody ?? ''} ${error ?? ''}'.trim().toLowerCase();
+    if (haystack.contains('geo') ||
+        haystack.contains('location') ||
+        haystack.contains('gps')) {
+      return 'geo';
+    }
+    if (haystack.contains('quote_payload_mismatch') ||
+        haystack.contains('quote_signature_invalid') ||
+        haystack.contains('quote_not_settleable') ||
+        haystack.contains('quote') && haystack.contains('preview')) {
+      return 'quote';
+    }
+    if (haystack.contains('session') ||
+        haystack.contains('jwt') ||
+        haystack.contains('unauthorized') ||
+        statusCode == 401 ||
+        statusCode == 403) {
+      return 'session';
+    }
+    if (haystack.contains('lock_timeout') ||
+        haystack.contains('concurrent_request') ||
+        haystack.contains('unable to acquire resources') ||
+        haystack.contains('under high load') ||
+        statusCode == 409 ||
+        statusCode == 423 ||
+        statusCode == 429) {
+      return 'backend_lock';
+    }
+    if (haystack.contains('validation') ||
+        haystack.contains('payload') ||
+        haystack.contains('required') ||
+        statusCode == 400 ||
+        statusCode == 422) {
+      return 'backend_validation';
+    }
+    if (haystack.contains('network') ||
+        haystack.contains('timeout') ||
+        haystack.contains('socket') ||
+        haystack.contains('host lookup') ||
+        statusCode == 408 ||
+        statusCode == 502 ||
+        statusCode == 503 ||
+        statusCode == 504) {
+      return 'network';
+    }
+    if (statusCode != null && statusCode >= 500) {
+      return 'backend_unavailable';
+    }
+    return 'unknown';
+  }
+
+  Map<String, dynamic> _sanitizeFinancialSourceWalletFields(
+    Map<String, dynamic> payload,
+  ) {
+    final sanitized = _deepCopyMap(payload);
+    final canonicalSourceWalletId = _canonicalSourceWalletIdFromPayload(
+      sanitized,
+    );
+
+    sanitized.remove('sourceWalletId');
+    sanitized.remove('source_wallet_id');
+    sanitized.remove('wallet_id');
+
+    if (canonicalSourceWalletId.isNotEmpty) {
+      sanitized['sourceWalletId'] = canonicalSourceWalletId;
+      sanitized['source_wallet_id'] = canonicalSourceWalletId;
+      sanitized['wallet_id'] = canonicalSourceWalletId;
+      _writeSourceWalletIdIntoContext(
+        sanitized['source_wallet'],
+        canonicalSourceWalletId,
+      );
+      _writeSourceWalletIdIntoContext(
+        sanitized['source_wallet_details'],
+        canonicalSourceWalletId,
+      );
+      _writeSourceWalletIdIntoContext(
+        sanitized['source_wallet_context'],
+        canonicalSourceWalletId,
+      );
+    } else {
+      _removeInvalidSourceWalletIdsFromContext(sanitized['source_wallet']);
+      _removeInvalidSourceWalletIdsFromContext(
+        sanitized['source_wallet_details'],
+      );
+      _removeInvalidSourceWalletIdsFromContext(
+        sanitized['source_wallet_context'],
+      );
+    }
+
+    return sanitized;
+  }
+
+  String _canonicalSourceWalletIdFromPayload(Map<String, dynamic> payload) {
+    final candidates = <dynamic>[
+      payload['sourceWalletId'],
+      payload['source_wallet_id'],
+      payload['wallet_id'],
+      ..._sourceWalletContextCandidates(payload['source_wallet']),
+      ..._sourceWalletContextCandidates(payload['source_wallet_details']),
+      ..._sourceWalletContextCandidates(payload['source_wallet_context']),
+    ];
+    for (final candidate in candidates) {
+      final uuid = _safeUuid(candidate);
+      if (uuid.isNotEmpty) return uuid;
+    }
+    return '';
+  }
+
+  List<dynamic> _sourceWalletContextCandidates(dynamic value) {
+    if (value is! Map) return const [];
+    final map = Map<String, dynamic>.from(value);
+    return [
+      map['wallet_id'],
+      map['walletId'],
+      map['sourceWalletId'],
+      map['source_wallet_id'],
+      map['selected_wallet_id'],
+    ];
+  }
+
+  void _writeSourceWalletIdIntoContext(dynamic value, String walletId) {
+    if (value is! Map || walletId.isEmpty) return;
+    value['wallet_id'] = walletId;
+    value['sourceWalletId'] = walletId;
+    value['source_wallet_id'] = walletId;
+    if (_safeUuid(value['selected_wallet_id']).isEmpty) {
+      value.remove('selected_wallet_id');
+    }
+  }
+
+  void _removeInvalidSourceWalletIdsFromContext(dynamic value) {
+    if (value is! Map) return;
+    for (final key in [
+      'wallet_id',
+      'walletId',
+      'sourceWalletId',
+      'source_wallet_id',
+      'selected_wallet_id',
+    ]) {
+      if (_safeUuid(value[key]).isEmpty) {
+        value.remove(key);
+      }
+    }
+  }
+
+  Map<String, dynamic> _transactionValidationSnapshot(
+    Map<String, dynamic> payload,
+  ) {
+    final metadata = payload['metadata'] is Map
+        ? Map<String, dynamic>.from(payload['metadata'] as Map)
+        : <String, dynamic>{};
+    final diagnostics = metadata['clientDiagnostics'] is Map
+        ? Map<String, dynamic>.from(metadata['clientDiagnostics'] as Map)
+        : <String, dynamic>{};
+    return {
+      'type': _pickString([payload['type']]),
+      'amountType': payload['amount']?.runtimeType.toString(),
+      'amountPresent': payload['amount'] != null,
+      'currency': _pickString([payload['currency']]),
+      'descriptionLength': _pickString([payload['description']]).length,
+      'hasQuoteId': _pickString([payload['quoteId'], payload['quote_id']])
+          .isNotEmpty,
+      'hasQuoteHash':
+          _pickString([payload['quoteHash'], payload['quote_hash']])
+              .isNotEmpty,
+      'hasRecipientCustomerId':
+          _pickString([payload['recipient_customer_id']]).isNotEmpty,
+      'hasRecipientId': _pickString([payload['recipientId']]).isNotEmpty,
+      'hasSourceWalletId':
+          _pickString([payload['sourceWalletId'], payload['source_wallet_id']])
+              .isNotEmpty,
+      'sourceWalletUuidValid':
+          _canonicalSourceWalletIdFromPayload(payload).isNotEmpty,
+      if (_canonicalSourceWalletIdFromPayload(payload).isNotEmpty)
+        'sourceWalletUuidTail': _canonicalSourceWalletIdFromPayload(
+          payload,
+        ).substring(_canonicalSourceWalletIdFromPayload(payload).length - 6),
+      'metadataKeys': metadata.keys.toList()..sort(),
+      if (diagnostics.isNotEmpty)
+        'diagnostics': {
+          'stage': diagnostics['stage'],
+          'geoSource': diagnostics['geoSource'],
+          'geoPrecision': diagnostics['geoPrecision'],
+          'currencyPresent': diagnostics['currencyPresent'],
+          'sourceWalletPresent': diagnostics['sourceWalletPresent'],
+          'targetWalletPresent': diagnostics['targetWalletPresent'],
+          'quoteIdPresent': diagnostics['quoteIdPresent'],
+          'quoteHashPresent': diagnostics['quoteHashPresent'],
+        },
+    }..removeWhere((_, value) => value == null);
+  }
+
   String _safeTxJsonEncode(dynamic value) {
     try {
       return jsonEncode(value);
@@ -2756,26 +3136,39 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     if (mounted) {
       setState(() => _isSubmittingInternal = true);
     }
+    String? settlementToken;
+    _PendingSettleAttempt? settlementAttempt;
+    Map<String, dynamic>? settlementPayload;
     try {
       final token = await _requestTransferAccessToken();
       if (!mounted) return false;
       if (token == null || token.isEmpty) {
         throw StateError('TRANSFER_AUTH_TOKEN_UNAVAILABLE');
       }
+      settlementToken = token;
 
       final payload = _buildInternalSettlePayload(preview);
+      settlementPayload = payload;
       final attempt = _resolvePendingAttempt(payload, external: false);
+      settlementAttempt = attempt;
       final response = await _submitTransactionWith2Fa(
         token,
         payload,
         idempotencyKey: attempt.idempotencyKey,
+        onChallengeVerified: () {
+          if (!mounted) return;
+          setState(() => _isSubmittingInternal = true);
+        },
       );
       final verifiedResponse = await _awaitInternalSettlement(token, response);
       _clearPendingAttempt(external: false);
       if (!mounted) return false;
       final settlementStatus = _settlementStatus(verifiedResponse);
       final isPending = !_isFinalSettlementSuccess(settlementStatus);
-      setState(() => _isSubmittingInternal = false);
+      final successTitle = AppLocalizations.of(
+        context,
+      )!.sendMoneyTransactionSuccessfulTitle;
+      await _dismissTransferOverlay();
       await _showSettleResultDialog(
         success: true,
         pending: isPending,
@@ -2783,7 +3176,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
             ? (_isSw
                   ? 'Transfer inalindwa na inakamilishwa'
                   : 'Transfer secured and processing')
-            : AppLocalizations.of(context)!.sendMoneyTransactionSuccessfulTitle,
+            : successTitle,
         message: isPending
             ? (_isSw
                   ? 'Fedha zimehifadhiwa salama kwenye PaySafe. ORBI itaendelea kukamilisha transfer hii bila kukata fedha mara mbili.'
@@ -2794,6 +3187,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
       );
       if (mounted) {
         _resetInternalForm();
+        unawaited(_loadBudgetCategories());
       }
       return true;
     } catch (e) {
@@ -2802,18 +3196,80 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
       }
       if (!mounted) return false;
       if (e is TransactionGeoException) {
-        setState(() => _isSubmittingInternal = false);
+        _traceTxApi(
+          'transaction settle geo failure',
+          extra: {'failure_category': 'geo', 'error': e.message},
+        );
+        await _dismissTransferOverlay();
         await _showLocationRequiredDialog(e.message);
+        return false;
+      }
+      if (_isPendingSettlementConfirmation(e)) {
+        final successTitle = AppLocalizations.of(
+          context,
+        )!.sendMoneyTransactionSuccessfulTitle;
+        final failedTitle = AppLocalizations.of(
+          context,
+        )!.sendMoneyTransactionFailedTitle;
+        final verified = await _awaitSettlementStatusByQuote(
+          settlementToken,
+          quoteId: preview.quoteId,
+          idempotencyKey: settlementAttempt?.idempotencyKey,
+        );
+        if (verified != null) {
+          final settlementStatus = _settlementStatus(verified);
+          if (_isFinalSettlementSuccess(settlementStatus)) {
+            _clearPendingAttempt(external: false);
+            await _dismissTransferOverlay();
+            await _showSettleResultDialog(
+              success: true,
+              title: successTitle,
+              message: _settleSuccessMessage(verified, external: false),
+              response: verified,
+              requestPayload: settlementPayload,
+            );
+            if (mounted) {
+              _resetInternalForm();
+              unawaited(_loadBudgetCategories());
+            }
+            return true;
+          }
+          if (_isFinalSettlementFailure(settlementStatus)) {
+            _clearPendingAttempt(external: false);
+            await _dismissTransferOverlay();
+            await _showSettleResultDialog(
+              success: false,
+              title: failedTitle,
+              message: _settlementFailureMessage(verified),
+            );
+            return false;
+          }
+        }
+        final pendingTitle = _isSw
+            ? 'Transfer inahakikiwa'
+            : 'Transfer confirmation pending';
+        final pendingMessage = _pendingSettlementMessage(e);
+        await _dismissTransferOverlay();
+        await _showSettleResultDialog(
+          success: true,
+          pending: true,
+          title: pendingTitle,
+          message: pendingMessage,
+          requestPayload: _buildInternalSettlePayload(preview),
+        );
         return false;
       }
       final sourceError = _normalizeTransferErrorMessage(
         e,
         fallback: AppLocalizations.of(context)!.sendMoneySubmitFailedMessage,
       );
-      setState(() => _isSubmittingInternal = false);
+      final failedTitle = AppLocalizations.of(
+        context,
+      )!.sendMoneyTransactionFailedTitle;
+      await _dismissTransferOverlay();
       await _showSettleResultDialog(
         success: false,
-        title: AppLocalizations.of(context)!.sendMoneyTransactionFailedTitle,
+        title: failedTitle,
         message: sourceError,
       );
       return false;
@@ -2828,6 +3284,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     String token,
     Map<String, dynamic> payload, {
     required String idempotencyKey,
+    VoidCallback? onChallengeVerified,
   }) async {
     try {
       return await _submitTransactionForReview(
@@ -2842,6 +3299,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
           'Transaction verification was cancelled. Please try again.',
         );
       }
+      onChallengeVerified?.call();
       final controlId = challenge.controlId.trim();
       if (controlId.isEmpty) {
         throw Exception(
@@ -2912,6 +3370,118 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
       }
     }
 
+    return response;
+  }
+
+  Future<Map<String, dynamic>?> _awaitSettlementStatusByQuote(
+    String? token, {
+    required String? quoteId,
+    required String? idempotencyKey,
+  }) async {
+    final authToken = token?.trim() ?? '';
+    final normalizedQuoteId = quoteId?.trim() ?? '';
+    final normalizedIdempotencyKey = idempotencyKey?.trim() ?? '';
+    if (authToken.isEmpty ||
+        (normalizedQuoteId.isEmpty && normalizedIdempotencyKey.isEmpty)) {
+      return null;
+    }
+
+    final query = Uri(
+      queryParameters: {
+        if (normalizedQuoteId.isNotEmpty) 'quoteId': normalizedQuoteId,
+        if (normalizedIdempotencyKey.isNotEmpty)
+          'idempotencyKey': normalizedIdempotencyKey,
+      },
+    ).query;
+
+    for (var attempt = 0; attempt < 10; attempt++) {
+      await Future<void>.delayed(
+        Duration(milliseconds: attempt < 2 ? 700 : 1400),
+      );
+
+      for (final endpoint in _transactionApiEndpoints(
+        '/transactions/settlement-status?$query',
+      )) {
+        try {
+          final result = await http
+              .get(endpoint, headers: _headers(authToken))
+              .timeout(const Duration(seconds: 8));
+          _traceTxApi(
+            'GET /transactions/settlement-status response',
+            uri: endpoint,
+            statusCode: result.statusCode,
+            responseBody: result.body,
+            extra: result.statusCode >= 200 && result.statusCode < 300
+                ? null
+                : {
+                    'failure_category': _classifyTransactionFailure(
+                      statusCode: result.statusCode,
+                      responseBody: result.body,
+                    ),
+                  },
+          );
+          if (result.statusCode == 404) continue;
+          if (result.statusCode < 200 || result.statusCode >= 300) continue;
+
+          final parsed = _tryParseJsonMap(result.body);
+          final data = parsed?['data'];
+          if (data is! Map) continue;
+
+          final response = _settlementStatusResponseFromQuote(
+            Map<String, dynamic>.from(data),
+          );
+          final status = _settlementStatus(response);
+          if (_isFinalSettlementSuccess(status) ||
+              _isFinalSettlementFailure(status)) {
+            return response;
+          }
+        } on TimeoutException {
+          continue;
+        } on SocketException {
+          continue;
+        } on http.ClientException {
+          continue;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  Map<String, dynamic> _settlementStatusResponseFromQuote(
+    Map<String, dynamic> data,
+  ) {
+    final settlementResult = data['settlementResult'] is Map
+        ? Map<String, dynamic>.from(data['settlementResult'] as Map)
+        : <String, dynamic>{};
+    final transaction = data['transaction'] is Map
+        ? Map<String, dynamic>.from(data['transaction'] as Map)
+        : <String, dynamic>{};
+    final status = _pickString([
+      transaction['status'],
+      settlementResult['status'],
+      data['status'],
+      data['quoteStatus'],
+    ]).toLowerCase();
+
+    final response = settlementResult.isNotEmpty
+        ? Map<String, dynamic>.from(settlementResult)
+        : <String, dynamic>{};
+    final nestedData = response['data'] is Map
+        ? Map<String, dynamic>.from(response['data'] as Map)
+        : <String, dynamic>{};
+    if (transaction.isNotEmpty) {
+      nestedData['transaction'] = transaction;
+    }
+    nestedData['status'] = status;
+    nestedData['quoteId'] = data['quoteId'];
+    nestedData['idempotencyKey'] = data['idempotencyKey'];
+    nestedData['transactionId'] = data['transactionId'];
+    response['data'] = nestedData;
+    response['status'] = status;
+    response['success'] = _isFinalSettlementSuccess(status) ||
+        response['success'] == true ||
+        nestedData['success'] == true;
     return response;
   }
 
@@ -3005,6 +3575,11 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     _TransactionChallengeRequiredException challenge,
   ) async {
     final l10n = AppLocalizations.of(context)!;
+    final verificationSuccessMessage = l10n.sendMoneyVerificationSuccessMessage;
+    final invalidCodeMessage = l10n.otpInvalidCodeMessage;
+    // The OTP sheet must sit above the transfer UI without the global loading
+    // scrim intercepting taps. The submit retry restores the loader afterwards.
+    await _dismissTransferOverlay();
     final requestId = challenge.requestId.trim();
     if (requestId.isEmpty) {
       throw Exception(
@@ -3027,10 +3602,10 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
       try {
         await _verifyChallengeOtp(token, requestId, otp);
         if (!mounted) return true;
-        _showSnack(l10n.sendMoneyVerificationSuccessMessage);
+        _showSnack(verificationSuccessMessage);
         return true;
       } catch (e) {
-        hint = UserFacingError.from(e, fallback: l10n.otpInvalidCodeMessage);
+        hint = UserFacingError.from(e, fallback: invalidCodeMessage);
         if (attempt == 3) {
           throw Exception(hint);
         }
@@ -3179,10 +3754,19 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
 
   Future<Map<String, dynamic>> _submitTransactionForReview(
     String token,
-    Map<String, dynamic> payload, {
+    Map<String, dynamic> rawPayload, {
     required String idempotencyKey,
   }) async {
-    final endpoints = _transactionApiEndpoints('/transactions/settle');
+    final payload = _sanitizeFinancialSourceWalletFields(rawPayload);
+    final sourceWalletId = _canonicalSourceWalletIdFromPayload(payload);
+    if (_pickString([payload['type']]) == 'INTERNAL_TRANSFER' &&
+        sourceWalletId.isEmpty) {
+      throw StateError('SOURCE_WALLET_UUID_REQUIRED');
+    }
+    // Settlement is a financial write. Do not fail over by POSTing the same
+    // intent to a second route, because the first route may still complete in
+    // the background and the duplicate can return CONCURRENT_REQUEST.
+    final endpoints = [_primaryTransactionApiEndpoint('/transactions/settle')];
     http.Response? res;
     http.Response? lastFailure;
     _TransientNetworkException? transientFailure;
@@ -3191,6 +3775,13 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
         'POST /transactions/settle',
         uri: endpoint,
         requestBody: payload,
+        extra: {
+          'source_wallet_uuid_valid': sourceWalletId.isNotEmpty,
+          if (sourceWalletId.isNotEmpty)
+            'source_wallet_uuid_tail': sourceWalletId.substring(
+              sourceWalletId.length - 6,
+            ),
+        },
       );
       http.Response attempt;
       try {
@@ -3205,15 +3796,34 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
         _traceTxApi(
           'POST /transactions/settle transient failure',
           uri: endpoint,
-          extra: {'error': e.message},
+          extra: {
+            'failure_category': _classifyTransactionFailure(error: e.message),
+            'error': e.message,
+          },
         );
         continue;
       }
+      final failureCategory = attempt.statusCode >= 200 &&
+              attempt.statusCode < 300
+          ? null
+          : _classifyTransactionFailure(
+              statusCode: attempt.statusCode,
+              responseBody: attempt.body,
+            );
       _traceTxApi(
         'POST /transactions/settle response',
         uri: endpoint,
         statusCode: attempt.statusCode,
         responseBody: attempt.body,
+        extra: failureCategory == null
+            ? null
+            : {
+                'failure_category': failureCategory,
+                if (failureCategory == 'backend_validation')
+                  'validation_snapshot': _transactionValidationSnapshot(
+                    payload,
+                  ),
+              },
       );
       if (attempt.statusCode >= 200 && attempt.statusCode < 300) {
         res = attempt;
@@ -3232,8 +3842,8 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
           _transactionStageUnavailableMessage(
             stage: _isSw ? 'review ya muamala' : 'transaction review',
             safeResult: _isSw
-                ? 'Hakuna uthibitisho uliopokelewa, hivyo app haijachukulia muamala kama umefanikiwa.'
-                : 'No confirmation was received, so the app did not treat the transfer as successful.',
+                ? 'Ombi limeshatumwa; tunahakiki hali yake bila kurudia muamala.'
+                : 'The request was submitted; ORBI is verifying its final state without resubmitting it.',
           ),
         );
       }
@@ -3638,6 +4248,15 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     return candidates;
   }
 
+  Uri _primaryTransactionApiEndpoint(String path) {
+    final endpoints = _transactionApiEndpoints(path);
+    if (endpoints.isEmpty) {
+      final cleanPath = path.startsWith('/') ? path : '/$path';
+      return Uri.parse('${AppConfig.apiUrl}$cleanPath');
+    }
+    return endpoints.first;
+  }
+
   String _transactionStageUnavailableMessage({
     required String stage,
     required String safeResult,
@@ -3843,6 +4462,9 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     final receiptRows = success
         ? _buildReceiptRows(response: response, requestPayload: requestPayload)
         : const <MapEntry<String, String>>[];
+    final receiptPreviewKey = GlobalKey();
+    final isSwahili =
+        Localizations.localeOf(context).languageCode.toLowerCase() == 'sw';
 
     await showDialog<void>(
       context: context,
@@ -3908,7 +4530,27 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
                   ),
                   if (success && receiptRows.isNotEmpty) ...[
                     const SizedBox(height: 14),
-                    _receiptCard(receiptRows),
+                    TweenAnimationBuilder<double>(
+                      tween: Tween(begin: 0, end: 1),
+                      curve: Curves.easeOutCubic,
+                      duration: const Duration(milliseconds: 420),
+                      builder: (context, value, child) {
+                        return Opacity(
+                          opacity: value,
+                          child: Transform.translate(
+                            offset: Offset(0, (1 - value) * 18),
+                            child: Transform.scale(
+                              scale: 0.96 + (value * 0.04),
+                              child: child,
+                            ),
+                          ),
+                        );
+                      },
+                      child: RepaintBoundary(
+                        key: receiptPreviewKey,
+                        child: _receiptCard(receiptRows),
+                      ),
+                    ),
                   ],
                   const SizedBox(height: 14),
                   SizedBox(
@@ -3927,23 +4569,39 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
                                     await _printReceipt(
                                       rows: receiptRows,
                                       title: title,
+                                      previewKey: receiptPreviewKey,
                                     );
                                   },
                                   icon: const Icon(
                                     Icons.print_rounded,
                                     size: 18,
                                   ),
-                                  label: Text(
-                                    AppLocalizations.of(
-                                      context,
-                                    )!.actionPrintReceipt,
+                                  label: Text(isSwahili ? 'Chapisha' : 'Print'),
+                                ),
+                              if (success && receiptRows.isNotEmpty)
+                                const SizedBox(height: 10),
+                              if (success && receiptRows.isNotEmpty)
+                                OutlinedButton.icon(
+                                  onPressed: () async {
+                                    await _shareReceipt(
+                                      rows: receiptRows,
+                                      title: title,
+                                      previewKey: receiptPreviewKey,
+                                    );
+                                  },
+                                  icon: const Icon(
+                                    Icons.ios_share_rounded,
+                                    size: 18,
                                   ),
+                                  label: Text(isSwahili ? 'Shiriki' : 'Share'),
                                 ),
                               if (success && receiptRows.isNotEmpty)
                                 const SizedBox(height: 10),
                               ElevatedButton(
-                                onPressed: () =>
-                                    Navigator.of(dialogContext).pop(),
+                                onPressed: () => _finishSettleResult(
+                                  dialogContext,
+                                  success: success,
+                                ),
                                 child: Text(
                                   success
                                       ? AppLocalizations.of(context)!.actionDone
@@ -3964,25 +4622,43 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
                                     await _printReceipt(
                                       rows: receiptRows,
                                       title: title,
+                                      previewKey: receiptPreviewKey,
                                     );
                                   },
                                   icon: const Icon(
                                     Icons.print_rounded,
                                     size: 18,
                                   ),
-                                  label: Text(
-                                    AppLocalizations.of(
-                                      context,
-                                    )!.actionPrintReceipt,
+                                  label: Text(isSwahili ? 'Chapisha' : 'Print'),
+                                ),
+                              ),
+                            if (success && receiptRows.isNotEmpty)
+                              const SizedBox(width: 10),
+                            if (success && receiptRows.isNotEmpty)
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: () async {
+                                    await _shareReceipt(
+                                      rows: receiptRows,
+                                      title: title,
+                                      previewKey: receiptPreviewKey,
+                                    );
+                                  },
+                                  icon: const Icon(
+                                    Icons.ios_share_rounded,
+                                    size: 18,
                                   ),
+                                  label: Text(isSwahili ? 'Shiriki' : 'Share'),
                                 ),
                               ),
                             if (success && receiptRows.isNotEmpty)
                               const SizedBox(width: 10),
                             Expanded(
                               child: ElevatedButton(
-                                onPressed: () =>
-                                    Navigator.of(dialogContext).pop(),
+                                onPressed: () => _finishSettleResult(
+                                  dialogContext,
+                                  success: success,
+                                ),
                                 child: Text(
                                   success
                                       ? AppLocalizations.of(context)!.actionDone
@@ -4021,25 +4697,6 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
         : <String, dynamic>{};
     final req = requestPayload ?? const <String, dynamic>{};
 
-    final controlId = _pickString([
-      response?['controlId'],
-      response?['control_id'],
-      response?['referenceId'],
-      response?['reference_id'],
-      data['controlId'],
-      data['control_id'],
-      data['referenceId'],
-      data['reference_id'],
-      tx['controlId'],
-      tx['control_id'],
-      tx['referenceId'],
-      tx['reference_id'],
-      req['referenceId'],
-      req['reference_id'],
-      req['controlId'],
-      req['control_id'],
-    ]);
-
     final currency = _pickString([
       tx['currency'],
       breakdown['currency'],
@@ -4067,24 +4724,22 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
                   sourceWallet['wallet_id'],
                 ])
               : '');
+    final transactionId = _pickString([
+      tx['id'],
+      tx['transaction_id'],
+      data['transaction_id'],
+      response?['transactionId'],
+      response?['transaction_id'],
+      tx['reference'],
+      tx['transaction_reference'],
+      response?['referenceId'],
+      response?['reference_id'],
+    ]);
 
     return [
       MapEntry(
         AppLocalizations.of(context)!.sendMoneyReceiptTransactionId,
-        _pickString([tx['id'], tx['transaction_id'], tx['reference']]),
-      ),
-      MapEntry(
-        AppLocalizations.of(context)!.sendMoneyReceiptReference,
-        _pickString([
-          tx['reference'],
-          tx['transaction_reference'],
-          tx['transaction_id'],
-          tx['id'],
-        ]),
-      ),
-      MapEntry(
-        AppLocalizations.of(context)!.sendMoneyReceiptControlId,
-        controlId,
+        transactionId,
       ),
       MapEntry(
         AppLocalizations.of(context)!.sendMoneyReceiptStatus,
@@ -4220,151 +4875,314 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
 
   Widget _receiptCard(List<MapEntry<String, String>> rows) {
     final ui = OrbiTheme.uiOf(context);
+    final l10n = AppLocalizations.of(context)!;
     final barcodeValue = _receiptBarcodeValue(rows);
     const receiptPaper = Color(0xFFFFFFFF);
-    const receiptInk = Color(0xFF163126);
-    const receiptMutedInk = Color(0xFF5E7268);
-    const receiptBorder = Color(0xFF2E8B57);
+    const receiptInk = Color(0xFF1A2332);
+    const receiptMutedInk = Color(0xFF64748B);
+    const receiptBorder = Color(0xFF2563EB);
+    const receiptSoft = Color(0xFFEFF6FF);
+    const receiptLine = Color(0xFFE2E8F0);
+
+    String lookup(List<String> labels) {
+      final keys = labels.map((label) => label.toLowerCase().trim()).toList();
+      for (final row in rows) {
+        final label = row.key.toLowerCase().trim();
+        if (keys.any((key) => label == key || label.contains(key))) {
+          return row.value.trim();
+        }
+      }
+      return '';
+    }
+
+    bool isDetailRow(MapEntry<String, String> row) {
+      final label = row.key.toLowerCase().trim();
+      final hidden = [
+        l10n.sendMoneyReceiptTotal,
+        l10n.sendMoneyReceiptAmount,
+        l10n.sendMoneyReceiptStatus,
+      ].map((value) => value.toLowerCase().trim());
+      return row.value.trim().isNotEmpty &&
+          !hidden.any((value) => label == value || label.contains(value));
+    }
+
+    final amount = lookup([
+      l10n.sendMoneyReceiptTotal,
+      l10n.sendMoneyReceiptAmount,
+      'total',
+      'amount',
+    ]);
+    final status = lookup([l10n.sendMoneyReceiptStatus, 'status']);
+    final normalizedStatus = status.toLowerCase();
+    final statusColor =
+        normalizedStatus.contains('fail') ||
+            normalizedStatus.contains('cancel') ||
+            normalizedStatus.contains('decline')
+        ? const Color(0xFFDC2626)
+        : normalizedStatus.contains('pending') ||
+              normalizedStatus.contains('process')
+        ? const Color(0xFFD97706)
+        : const Color(0xFF16A34A);
+    final details = rows.where(isDetailRow).toList(growable: false);
+
     return Center(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 360),
-        child: ClipPath(
-          clipper: const _ReceiptZigZagClipper(),
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(14, 16, 14, 14),
-            decoration: BoxDecoration(
-              color: receiptPaper,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: receiptBorder, width: 1.1),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Center(
-                  child: Column(
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(999),
-                        child: const OrbiLogoV2(
-                          width: 40,
-                          showWord: false,
-                          color: receiptInk,
-                        ),
+        constraints: const BoxConstraints(maxWidth: 390),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+          decoration: BoxDecoration(
+            color: receiptPaper,
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: receiptLine),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x1A0F172A),
+                blurRadius: 28,
+                offset: Offset(0, 18),
+              ),
+            ],
+          ),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: Center(
+                    child: Opacity(
+                      opacity: 0.035,
+                      child: Image.asset(
+                        'assets/images/brand/orbi-logo-v2-black.png',
+                        width: 270,
+                        height: 270,
+                        fit: BoxFit.contain,
+                        color: Colors.black,
                       ),
-                      const SizedBox(height: 10),
-                      const Text(
-                        'TRANSACTION RECEIPT',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: receiptInk,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 11.5,
-                        ),
-                      ),
-                      const SizedBox(height: 3),
-                      const Text(
-                        'Orbi Financial Technologies\n'
-                        'P.O. BOX 02, Dar es Salaam, Tanzania\n'
-                        'Main Branch, Kariakoo Alikoma-Magira Street, Block No 123, Second Floor\n'
-                        'Tel +255764258114',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: receiptMutedInk,
-                          fontSize: 9,
-                          fontWeight: FontWeight.w500,
-                          height: 1.35,
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
-                const SizedBox(height: 10),
-                const Divider(color: receiptBorder, height: 1),
-                const SizedBox(height: 9),
-                ...rows.map(
-                  (row) => Padding(
-                    padding: const EdgeInsets.only(bottom: 7),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Image.asset(
+                    'assets/images/brand/orbi-logo-v2-black.png',
+                    width: 112,
+                    height: 44,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, _, _) => const OrbiLogoV2(
+                      width: 112,
+                      color: Colors.black,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'SECURE PAYMENT RECEIPT',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: receiptMutedInk,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 11,
+                      letterSpacing: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 7,
+                    ),
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: statusColor.withValues(alpha: 0.55),
+                      ),
+                    ),
+                    child: Text(
+                      status.isEmpty ? 'Completed' : status,
+                      style: TextStyle(
+                        color: statusColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 22,
+                    ),
+                    decoration: BoxDecoration(
+                      color: receiptSoft,
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(color: const Color(0xFFBFDBFE)),
+                    ),
+                    child: Column(
                       children: [
-                        SizedBox(
-                          width: 122,
+                        const Text(
+                          'AMOUNT',
+                          style: TextStyle(
+                            color: receiptMutedInk,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 1.7,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
                           child: Text(
-                            row.key.toUpperCase(),
-                            textAlign: TextAlign.start,
+                            amount.isEmpty ? '-' : amount,
+                            textAlign: TextAlign.center,
                             style: const TextStyle(
-                              color: receiptMutedInk,
-                              fontSize: 9.5,
-                              fontWeight: FontWeight.w700,
+                              color: receiptInk,
+                              fontSize: 38,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: -1.2,
                             ),
                           ),
                         ),
-                        const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 6),
-                          child: Text(
-                            ':',
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 15,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: receiptPaper,
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: receiptBorder),
+                          ),
+                          child: const Text(
+                            'TRANSACTION RECEIPT',
                             style: TextStyle(
-                              color: receiptInk,
-                              fontSize: 10.5,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: Text(
-                            row.value,
-                            textAlign: TextAlign.start,
-                            style: const TextStyle(
-                              color: receiptInk,
-                              fontSize: 10.5,
-                              fontWeight: FontWeight.w600,
+                              color: receiptBorder,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
                             ),
                           ),
                         ),
                       ],
                     ),
                   ),
-                ),
-                const SizedBox(height: 8),
-                Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 280),
-                    child: _barcodeStrip(
-                      barcodeValue,
-                      ui: ui.copyWith(
-                        card: receiptPaper,
-                        borderStrong: receiptBorder,
-                        textPrimary: receiptInk,
+                  const SizedBox(height: 14),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: receiptLine),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'TRANSACTION DETAILS',
+                          style: TextStyle(
+                            color: receiptMutedInk,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 1,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        ...details.map(
+                          (row) => Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                SizedBox(
+                                  width: 110,
+                                  child: Text(
+                                    row.key,
+                                    style: const TextStyle(
+                                      color: receiptMutedInk,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    row.value,
+                                    textAlign: TextAlign.end,
+                                    style: const TextStyle(
+                                      color: receiptInk,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: receiptSoft,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: const Color(0xFFBFDBFE)),
+                    ),
+                    child: Column(
+                    children: [
+                      _barcodeStrip(
+                        barcodeValue,
+                        ui: ui.copyWith(
+                          card: receiptPaper,
+                          borderStrong: receiptBorder,
+                          textPrimary: receiptInk,
+                        ),
                       ),
-                    ),
+                      const SizedBox(height: 7),
+                      Text(
+                        barcodeValue,
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: receiptMutedInk,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-                const SizedBox(height: 4),
-                Center(
-                  child: Text(
-                    barcodeValue,
-                    style: const TextStyle(
-                      color: receiptMutedInk,
-                      fontSize: 9.5,
-                      fontWeight: FontWeight.w600,
-                    ),
                   ),
-                ),
-                const SizedBox(height: 8),
-                const Center(
-                  child: Text(
+                  const SizedBox(height: 12),
+                  const Text(
                     'Thank you for choosing ORBI. We value your trust.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: receiptBorder,
-                      fontSize: 9.5,
-                      fontWeight: FontWeight.w700,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
-                ),
-              ],
-            ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'If this transaction does not match your records, contact +255764258114 or support@orbifinancial.com.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: receiptMutedInk.withValues(alpha: 0.85),
+                      fontSize: 8.8,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
       ),
@@ -4374,15 +5192,12 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
   Future<void> _printReceipt({
     required List<MapEntry<String, String>> rows,
     required String title,
+    required GlobalKey previewKey,
   }) async {
     try {
-      final logoBytes = await _loadReceiptLogoBytes();
-      final pdf = await OrbiReceiptPdfBuilder.build(
-        rows: rows,
-        heading: title,
-        logoBytes: logoBytes,
-        barcodeValue: _receiptBarcodeValue(rows),
-        primaryRowMode: OrbiReceiptPrimaryRowMode.lastMoney,
+      final receiptBytes = await _captureReceiptPreview(previewKey);
+      final pdf = await OrbiReceiptImagePdfBuilder.build(
+        receiptPngBytes: receiptBytes,
       );
       await Printing.layoutPdf(onLayout: (_) async => pdf);
     } catch (e) {
@@ -4393,15 +5208,57 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     }
   }
 
-  Future<Uint8List?> _loadReceiptLogoBytes() async {
+  Future<void> _shareReceipt({
+    required List<MapEntry<String, String>> rows,
+    required String title,
+    required GlobalKey previewKey,
+  }) async {
     try {
-      final data = await rootBundle.load(
-        'assets/images/brand/orbi-logo-v2-black.png',
+      final receiptBytes = await _captureReceiptPreview(previewKey);
+      final pdf = await OrbiReceiptImagePdfBuilder.build(
+        receiptPngBytes: receiptBytes,
       );
-      return data.buffer.asUint8List();
-    } catch (_) {
-      return null;
+      final txId = _receiptBarcodeValue(rows);
+      final safeId = txId.replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '_');
+      await Printing.sharePdf(
+        bytes: pdf,
+        filename:
+            'orbi_receipt_${safeId.isEmpty ? DateTime.now().millisecondsSinceEpoch : safeId}.pdf',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      _showSnack(
+        UserFacingError.from(e, fallback: 'Unable to share receipt right now.'),
+      );
     }
+  }
+
+  void _finishSettleResult(BuildContext dialogContext, {required bool success}) {
+    Navigator.of(dialogContext).pop();
+    if (!success) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ShellNavigationSignal.goHome();
+      if (!mounted) return;
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    });
+  }
+
+  Future<Uint8List> _captureReceiptPreview(GlobalKey previewKey) async {
+    final context = previewKey.currentContext;
+    if (context == null) {
+      throw StateError('Receipt preview is not ready yet.');
+    }
+    final boundary = context.findRenderObject();
+    if (boundary is! RenderRepaintBoundary) {
+      throw StateError('Receipt preview could not be captured.');
+    }
+    final image = await boundary.toImage(pixelRatio: 3);
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    image.dispose();
+    if (byteData == null) {
+      throw StateError('Receipt preview produced no image data.');
+    }
+    return byteData.buffer.asUint8List();
   }
 
   Map<String, dynamic> _buildInternalSettlePayload(
@@ -4464,7 +5321,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
         ? _buildSourceContext(walletId: operatingWalletId)
         : {
             'selection': sourceWallet,
-            if (walletId.isNotEmpty) 'wallet_id': walletId,
+            if (_safeUuid(walletId).isNotEmpty) 'wallet_id': _safeUuid(walletId),
             if (walletName.isNotEmpty) 'wallet_name': walletName,
           };
     final effectiveWalletId = sourceWallet == 'internal'
@@ -4507,6 +5364,8 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
         'category': journeyCategory,
         if ((_selectedExternalCategoryId ?? '').isNotEmpty)
           'category_id': _selectedExternalCategoryId,
+        if ((_selectedExternalCategoryId ?? '').isNotEmpty)
+          'budget_category_id': _selectedExternalCategoryId,
         'external_rail': _externalRailPrefix(_externalRail),
         if (provider.isNotEmpty) 'provider': provider,
         if (providerLabel.isNotEmpty) 'provider_label': providerLabel,
@@ -4533,10 +5392,14 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
       'source_wallet': sourceWallet,
       if ((_selectedExternalCategoryId ?? '').isNotEmpty)
         'categoryId': _selectedExternalCategoryId,
-      if (effectiveWalletId.isNotEmpty) 'sourceWalletId': effectiveWalletId,
+      if ((_selectedExternalCategoryId ?? '').isNotEmpty)
+        'category_id': _selectedExternalCategoryId,
+      if ((_selectedExternalCategoryId ?? '').isNotEmpty)
+        'budget_category_id': _selectedExternalCategoryId,
       'source_wallet_details': sourceWalletDetails,
       'source_wallet_context': {
-        if (effectiveWalletId.isNotEmpty) 'wallet_id': effectiveWalletId,
+        if (_safeUuid(effectiveWalletId).isNotEmpty)
+          'wallet_id': _safeUuid(effectiveWalletId),
         'wallet_type': externalWalletType,
         'selection': sourceWallet,
       },
@@ -4707,7 +5570,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
 
   Map<String, dynamic> _buildSourceContext({required String walletId}) {
     final user = _currentUserContext();
-    final safeWalletId = _safeDatabaseIdentifier(walletId);
+    final safeWalletId = _safeUuid(walletId);
     return {
       'selection': 'OPERATING_WALLET',
       if (safeWalletId.isNotEmpty) 'wallet_id': safeWalletId,
@@ -4719,7 +5582,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
   Map<String, dynamic> _buildInternalSourcePayloadParts() {
     final selected = _selectedInternalSourceWallet();
     if (selected != null) {
-      final walletId = _transferSourceWalletId(selected);
+      final walletId = _safeUuid(_transferSourceWalletId(selected));
       final walletType = _internalSubWalletType(selected);
       final goalId = _goalIdFromSourceWallet(selected);
       final walletName = _walletName(selected);
@@ -4767,7 +5630,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
 
   Map<String, dynamic> _buildSourceTopLevelFields({required String walletId}) {
     final user = _currentUserContext();
-    final safeWalletId = _safeDatabaseIdentifier(walletId);
+    final safeWalletId = _safeUuid(walletId);
     return {
       if (safeWalletId.isNotEmpty) 'sourceWalletId': safeWalletId,
       if (safeWalletId.isNotEmpty) 'source_wallet_id': safeWalletId,
@@ -4789,7 +5652,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
         .toList();
     for (final wallet in internalWallets) {
       if (_isLikelyOperatingWallet(wallet)) {
-        final id = _walletId(wallet);
+        final id = _safeUuid(_walletId(wallet));
         if (id.isNotEmpty) return id;
       }
     }
@@ -5127,8 +5990,23 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
   }
 
   String _payloadSignature(Map<String, dynamic> payload) {
-    final normalized = _normalizeJson(payload);
+    final normalized = _normalizeJson(_stripVolatileDiagnostics(payload));
     return jsonEncode(normalized);
+  }
+
+  dynamic _stripVolatileDiagnostics(dynamic value) {
+    if (value is Map) {
+      final result = <String, dynamic>{};
+      value.forEach((key, child) {
+        if (key == 'clientDiagnostics') return;
+        result[key.toString()] = _stripVolatileDiagnostics(child);
+      });
+      return result;
+    }
+    if (value is List) {
+      return value.map(_stripVolatileDiagnostics).toList();
+    }
+    return value;
   }
 
   dynamic _normalizeJson(dynamic value) {
@@ -5186,6 +6064,36 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     return error is _TransientNetworkException ||
         error is _TransientSettleException ||
         error is _ChallengeCancelledException;
+  }
+
+  bool _isPendingSettlementConfirmation(Object error) {
+    return error is _TransientNetworkException ||
+        error is _TransientSettleException;
+  }
+
+  String _pendingSettlementMessage(Object error) {
+    final detail = _normalizeTransferErrorMessage(
+      error,
+      fallback: _isSw
+          ? 'Hatukupokea uthibitisho wa mwisho kutoka server.'
+          : 'The app did not receive final confirmation from the server.',
+    );
+    return _isSw
+        ? '$detail Tafadhali fungua Transaction History au refresh akaunti yako kabla ya kujaribu tena, ili kuepuka kutuma muamala mara mbili.'
+        : '$detail Please check Transaction History or refresh your account before trying again, so the transfer is not sent twice.';
+  }
+
+  Future<void> _dismissTransferOverlay() async {
+    if (!mounted) return;
+    if (_isPreviewing || _isSubmittingInternal || _isSubmittingExternal) {
+      setState(() {
+        _isPreviewing = false;
+        _isSubmittingInternal = false;
+        _isSubmittingExternal = false;
+      });
+    }
+    await WidgetsBinding.instance.endOfFrame;
+    await Future<void>.delayed(const Duration(milliseconds: 80));
   }
 
   void _resetInternalForm() {
@@ -5363,12 +6271,18 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     if (!unlocked) return;
 
     setState(() => _isSubmittingExternal = true);
+    String? settlementToken;
+    _PendingSettleAttempt? settlementAttempt;
+    Map<String, dynamic>? settlementPayload;
     try {
+      settlementToken = token;
+      final externalPayload = _buildExternalSettlePayload()
+        ..['currency'] = transferCurrency;
       final payload = await _withRequiredTransactionGeo(
-        _buildExternalSettlePayload(),
+        externalPayload,
         allowNetworkFallback: false,
+        stage: 'preview_external',
       );
-      payload['currency'] = transferCurrency;
       final preview = await _fetchTransactionPreview(token, payload);
       payload['quoteId'] = preview.quoteId;
       payload['quoteHash'] = preview.quoteHash;
@@ -5384,26 +6298,34 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
           'total': preview.totalAmount,
         },
       };
-      final attempt = _resolvePendingAttempt(payload, external: true);
+      settlementPayload = payload;
+      final attempt = _resolvePendingAttempt(settlementPayload, external: true);
+      settlementAttempt = attempt;
       final response = await _submitTransactionWith2Fa(
         token,
-        payload,
+        settlementPayload,
         idempotencyKey: attempt.idempotencyKey,
+        onChallengeVerified: () {
+          if (!mounted) return;
+          setState(() => _isSubmittingExternal = true);
+        },
       );
       _clearPendingAttempt(external: true);
       if (!mounted) return;
-      setState(() => _isSubmittingExternal = false);
+      final successTitle = AppLocalizations.of(
+        context,
+      )!.sendMoneyTransactionSuccessfulTitle;
+      await _dismissTransferOverlay();
       await _showSettleResultDialog(
         success: true,
-        title: AppLocalizations.of(
-          context,
-        )!.sendMoneyTransactionSuccessfulTitle,
+        title: successTitle,
         message: _settleSuccessMessage(response, external: true),
         response: response,
-        requestPayload: payload,
+        requestPayload: settlementPayload,
       );
       if (mounted) {
         _resetExternalForm();
+        unawaited(_loadBudgetCategories());
       }
     } catch (e) {
       if (!_shouldKeepPendingAttempt(e)) {
@@ -5411,8 +6333,67 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
       }
       if (!mounted) return;
       if (e is TransactionGeoException) {
-        setState(() => _isSubmittingExternal = false);
+        _traceTxApi(
+          'external transaction geo failure',
+          extra: {'failure_category': 'geo', 'error': e.message},
+        );
+        await _dismissTransferOverlay();
         await _showLocationRequiredDialog(e.message);
+        return;
+      }
+      if (_isPendingSettlementConfirmation(e)) {
+        final successTitle = AppLocalizations.of(
+          context,
+        )!.sendMoneyTransactionSuccessfulTitle;
+        final failedTitle = AppLocalizations.of(
+          context,
+        )!.sendMoneyTransactionFailedTitle;
+        final verified = await _awaitSettlementStatusByQuote(
+          settlementToken,
+          quoteId: _pickString([settlementPayload?['quoteId']]),
+          idempotencyKey: settlementAttempt?.idempotencyKey,
+        );
+        if (verified != null) {
+          final settlementStatus = _settlementStatus(verified);
+          if (_isFinalSettlementSuccess(settlementStatus)) {
+            _clearPendingAttempt(external: true);
+            await _dismissTransferOverlay();
+            await _showSettleResultDialog(
+              success: true,
+              title: successTitle,
+              message: _settleSuccessMessage(verified, external: true),
+              response: verified,
+              requestPayload: settlementPayload,
+            );
+            if (mounted) {
+              _resetExternalForm();
+              unawaited(_loadBudgetCategories());
+            }
+            return;
+          }
+          if (_isFinalSettlementFailure(settlementStatus)) {
+            _clearPendingAttempt(external: true);
+            await _dismissTransferOverlay();
+            await _showSettleResultDialog(
+              success: false,
+              title: failedTitle,
+              message: _settlementFailureMessage(verified),
+            );
+            return;
+          }
+        }
+        final pendingTitle = _isSw
+            ? 'Muamala unahakikiwa'
+            : 'Transaction confirmation pending';
+        final pendingMessage = _pendingSettlementMessage(e);
+        await _dismissTransferOverlay();
+        await _showSettleResultDialog(
+          success: true,
+          pending: true,
+          title: pendingTitle,
+          message: pendingMessage,
+          requestPayload: settlementPayload,
+        );
         return;
       }
       final sourceError = _normalizeTransferErrorMessage(
@@ -5421,10 +6402,13 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
           context,
         )!.sendMoneyExternalSubmitFailedMessage,
       );
-      setState(() => _isSubmittingExternal = false);
+      final failedTitle = AppLocalizations.of(
+        context,
+      )!.sendMoneyTransactionFailedTitle;
+      await _dismissTransferOverlay();
       await _showSettleResultDialog(
         success: false,
-        title: AppLocalizations.of(context)!.sendMoneyTransactionFailedTitle,
+        title: failedTitle,
         message: sourceError,
       );
     } finally {
@@ -8883,37 +9867,3 @@ class _RecipientSearchInputFormatter extends TextInputFormatter {
   }
 }
 
-class _ReceiptZigZagClipper extends CustomClipper<Path> {
-  const _ReceiptZigZagClipper();
-
-  @override
-  Path getClip(Size size) {
-    const zigZagHeight = 6.0;
-    const zigZagWidth = 12.0;
-    final path = Path();
-    final height = size.height;
-    final width = size.width;
-
-    path.moveTo(0, zigZagHeight);
-    var x = 0.0;
-    while (x < width) {
-      path.lineTo(x + zigZagWidth / 2, 0);
-      path.lineTo(x + zigZagWidth, zigZagHeight);
-      x += zigZagWidth;
-    }
-
-    path.lineTo(width, height - zigZagHeight);
-    x = width;
-    while (x > 0) {
-      path.lineTo(x - zigZagWidth / 2, height);
-      path.lineTo(x - zigZagWidth, height - zigZagHeight);
-      x -= zigZagWidth;
-    }
-
-    path.close();
-    return path;
-  }
-
-  @override
-  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
-}

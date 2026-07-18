@@ -421,7 +421,7 @@ class _NetWorthHeroCard extends StatelessWidget {
                     height: ringHostHeight,
                     width: ringHostHeight - (extraCompact ? 8 : 12),
                     child: Stack(
-                      alignment: Alignment.topCenter,
+                      alignment: Alignment.center,
                       children: [
                         if (isDark)
                           Positioned.fill(
@@ -442,56 +442,55 @@ class _NetWorthHeroCard extends StatelessWidget {
                                   : (compact ? 0.9 : 1.0),
                             ),
                           ),
-                        Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: OrbiWealthRing(
-                            size: ringSize,
-                            duration: const Duration(milliseconds: 1050),
-                            separatorColor: ringSurfaceColor,
-                            segments: segments.isEmpty
-                                ? [
-                                    OrbiWealthRingSegment(
-                                      value: internalBalanceTotal <= 0
-                                          ? 1.0
-                                          : internalBalanceTotal,
-                                      color: ui.accent,
-                                      label: sw
-                                          ? 'Salio la ndani'
-                                          : 'Internal balance',
-                                    ),
-                                  ]
-                                : segments,
-                            center: Padding(
-                              padding: EdgeInsets.all(
-                                extraCompact ? 18.0 : 22.0,
-                              ),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    sw ? 'Jumla ya salio' : 'Total balance',
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      color: Colors.white.withValues(
-                                        alpha: isDark ? 0.68 : 0.92,
-                                      ),
-                                      fontSize: extraCompact ? 9.6 : 10.2,
-                                      fontWeight: FontWeight.w800,
-                                      letterSpacing: 0.2,
-                                    ),
+                        OrbiWealthRing(
+                          size: ringSize,
+                          duration: const Duration(milliseconds: 1050),
+                          separatorColor: ringSurfaceColor,
+                          segments: segments.isEmpty
+                              ? [
+                                  OrbiWealthRingSegment(
+                                    value: internalBalanceTotal <= 0
+                                        ? 1.0
+                                        : internalBalanceTotal,
+                                    color: ui.accent,
+                                    label: sw
+                                        ? 'Salio la ndani'
+                                        : 'Internal balance',
                                   ),
-                                  const SizedBox(height: 3),
-                                  _HomeBalanceDisplay(
-                                    amount: internalBalanceTotal,
-                                    mainFontSize: extraCompact ? 26.0 : 30.0,
-                                    sideFontSize: extraCompact ? 10.4 : 11.2,
-                                    mainColor: Colors.white,
-                                    sideColor: Colors.white.withValues(
-                                      alpha: 0.74,
+                                ]
+                              : segments,
+                          center: SizedBox(
+                            width: ringSize * 0.62,
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Text(
+                                  sw ? 'Jumla ya salio' : 'Total balance',
+                                  textAlign: TextAlign.center,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(
+                                      alpha: isDark ? 0.68 : 0.92,
                                     ),
+                                    fontSize: extraCompact ? 9.2 : 9.8,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 0.2,
                                   ),
-                                ],
-                              ),
+                                ),
+                                const SizedBox(height: 3),
+                                _HomeBalanceDisplay(
+                                  amount: internalBalanceTotal,
+                                  mainFontSize: extraCompact ? 24.0 : 28.0,
+                                  sideFontSize: extraCompact ? 9.8 : 10.8,
+                                  mainColor: Colors.white,
+                                  sideColor: Colors.white.withValues(
+                                    alpha: 0.74,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),
@@ -825,12 +824,17 @@ class _SmartCarouselLayerState extends State<_SmartCarouselLayer> {
               : 'Track services, requests, and important tasks here.',
         ),
         const SizedBox(height: 12),
-        Listener(
+        Builder(
+          builder: (context) {
+            final textScale = MediaQuery.textScalerOf(context).scale(1);
+            final cardHeight =
+                184.0 + ((textScale - 1.0) * 44.0).clamp(0.0, 34.0);
+            return Listener(
           onPointerDown: (_) => setState(() => _pauseAutoSlide = true),
           onPointerUp: (_) => setState(() => _pauseAutoSlide = false),
           onPointerCancel: (_) => setState(() => _pauseAutoSlide = false),
           child: SizedBox(
-            height: 166,
+            height: cardHeight,
             child: PageView.builder(
               controller: _controller,
               itemCount: cards.length,
@@ -843,6 +847,8 @@ class _SmartCarouselLayerState extends State<_SmartCarouselLayer> {
               ),
             ),
           ),
+        );
+          },
         ),
         const SizedBox(height: 10),
         Row(
@@ -952,7 +958,7 @@ class _FinancialJourneyLayerState extends State<_FinancialJourneyLayer> {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          '${snapshot.activeGoals} Active Goals  •  ${snapshot.sharedPots} Shared Pots  •  ${snapshot.activeBudgets} Budgets',
+                          '${snapshot.activeGoals} Active Goals  •  ${snapshot.sharedPots} Fungu  •  ${snapshot.activeBudgets} Mezani',
                           style: TextStyle(color: ui.textMuted, fontSize: 12.5),
                         ),
                       ],
@@ -980,9 +986,9 @@ class _FinancialJourneyLayerState extends State<_FinancialJourneyLayer> {
                 children: [
                   _JourneyBlock(title: 'Goals', items: snapshot.goalItems),
                   const SizedBox(height: 12),
-                  _JourneyBlock(title: 'Budgets', items: snapshot.budgetItems),
+                  _JourneyBlock(title: 'Mezani', items: snapshot.budgetItems),
                   const SizedBox(height: 12),
-                  _JourneyBlock(title: 'Pots', items: snapshot.potItems),
+                  _JourneyBlock(title: 'Fungu', items: snapshot.potItems),
                   const SizedBox(height: 12),
                   _JourneyBlock(
                     title: 'Upcoming Commitments',
@@ -1072,7 +1078,7 @@ _SmartCardDisplay _localizedSmartCard(
       status = sw ? 'Angalia' : 'Watch';
       supporting = _friendlyDashboardDate(supporting, sw);
     case SmartCarouselCardType.sharedPot:
-      title = sw ? 'Kibubu cha pamoja' : 'Shared pot';
+      title = 'Fungu';
       status = sw ? 'Pamoja' : 'Shared';
       supporting = _localizeProgressText(supporting, sw);
     case SmartCarouselCardType.offlineTransaction:
@@ -1205,7 +1211,7 @@ class _SmartCard extends StatelessWidget {
     final display = _localizedSmartCard(context, card, sw);
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 15),
+      padding: const EdgeInsets.fromLTRB(14, 13, 14, 12),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
@@ -1263,8 +1269,8 @@ class _SmartCard extends StatelessWidget {
               Row(
                 children: [
                   Container(
-                    width: 40,
-                    height: 40,
+                    width: 36,
+                    height: 36,
                     decoration: BoxDecoration(
                       color: ui.accent.withValues(alpha: 0.14),
                       borderRadius: BorderRadius.circular(14),
@@ -1274,7 +1280,7 @@ class _SmartCard extends StatelessWidget {
                     ),
                     child: Icon(card.icon, color: ui.accent),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 10),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1283,18 +1289,18 @@ class _SmartCard extends StatelessWidget {
                           display.title,
                           style: TextStyle(
                             color: ui.textMuted,
-                            fontSize: 11.4,
+                            fontSize: 10.8,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
-                        const SizedBox(height: 2),
+                        const SizedBox(height: 1),
                         Text(
                           display.headline,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: ui.textPrimary,
-                            fontSize: 15.5,
+                            fontSize: 14.6,
                             fontWeight: FontWeight.w900,
                             letterSpacing: -0.1,
                           ),
@@ -1305,30 +1311,32 @@ class _SmartCard extends StatelessWidget {
                   _Tag(text: display.status),
                 ],
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 10),
               Text(
                 display.supporting,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: ui.textPrimary,
-                  fontSize: 17,
+                  fontSize: 14.4,
                   fontWeight: FontWeight.w800,
-                  height: 1.15,
+                  height: 1.14,
                 ),
               ),
               if (display.amount.isNotEmpty) ...[
-                const SizedBox(height: 6),
+                const SizedBox(height: 4),
                 Text(
                   display.amount,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: ui.textMuted,
-                    fontSize: 12.2,
+                    fontSize: 11.5,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
               ],
-              const Spacer(),
+              const SizedBox(height: 10),
               Row(
                 children: [
                   Expanded(

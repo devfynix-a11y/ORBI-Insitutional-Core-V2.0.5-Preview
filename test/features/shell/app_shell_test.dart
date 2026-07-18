@@ -253,7 +253,11 @@ class _FakeDashboardController extends DashboardController {
   String? get error => null;
 
   @override
-  Future<void> fetchDashboardData(String token) async {}
+  Future<void> fetchDashboardData(
+    String token, {
+    Duration optionalTimeout = const Duration(seconds: 8),
+    Duration requiredTimeout = const Duration(seconds: 12),
+  }) async {}
 }
 
 class _FakeProfileController extends ProfileController {

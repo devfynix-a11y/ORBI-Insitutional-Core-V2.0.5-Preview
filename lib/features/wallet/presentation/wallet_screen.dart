@@ -179,7 +179,7 @@ class _WalletScreenBodyState extends State<_WalletScreenBody> {
         expireSessionIfMissing: false,
       );
       if (token == null || token.trim().isEmpty) {
-        throw Exception('We could not confirm your session right now.');
+        throw Exception('Your session has expired. Please log in again.');
       }
       try {
         final summary = await _wealthService.getSummary();

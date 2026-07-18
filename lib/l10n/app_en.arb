@@ -931,7 +931,7 @@
   "@sendMoneySearchRecipientMessage": {},
   "sendMoneyEnterValidAmountMessage": "Enter a valid amount",
   "@sendMoneyEnterValidAmountMessage": {},
-  "sendMoneySessionExpiredMessage": "Session expired. Please login again.",
+  "sendMoneySessionExpiredMessage": "Your session has expired. Please log in again.",
   "@sendMoneySessionExpiredMessage": {},
   "sendMoneyTransferBlockedMessage": "This transfer is blocked for safety.",
   "@sendMoneyTransferBlockedMessage": {},
@@ -1249,7 +1249,7 @@
       }
     }
   },
-  "transactionsSessionExpiredMessage": "Session expired. Please login again.",
+  "transactionsSessionExpiredMessage": "Your session has expired. Please log in again.",
   "@transactionsSessionExpiredMessage": {},
   "transactionsFetchFailedMessage": "Unable to fetch transactions right now.",
   "@transactionsFetchFailedMessage": {},

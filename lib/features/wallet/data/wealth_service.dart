@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../../core/network/api_client.dart';
 
@@ -6,6 +7,7 @@ class WealthService {
   WealthService([ApiClient? client]) : _dio = (client ?? ApiClient()).client;
 
   final Dio _dio;
+  static const Uuid _uuid = Uuid();
 
   Future<Map<String, dynamic>> getSummary() async {
     final response = await _get('/wealth/summary');
@@ -76,7 +78,7 @@ class WealthService {
       };
     } on DioException catch (error) {
       if (error.response?.statusCode == 404) return null;
-      throw Exception(_extractDioMessage(error));
+      throw WealthServiceException(_extractDioMessage(error));
     }
   }
 
@@ -184,7 +186,7 @@ class WealthService {
     String potId,
     Map<String, dynamic> payload,
   ) async {
-    final response = await _post(
+    final response = await _postWithIdempotency(
       '/wealth/shared-pots/$potId/contribute',
       payload,
     );
@@ -195,7 +197,7 @@ class WealthService {
     String potId,
     Map<String, dynamic> payload,
   ) async {
-    final response = await _post(
+    final response = await _postWithIdempotency(
       '/wealth/shared-pots/$potId/withdraw',
       payload,
     );
@@ -241,7 +243,7 @@ class WealthService {
           data['error']?.toString().toUpperCase() == 'SECURITY_CHALLENGE') {
         return Map<String, dynamic>.from(data);
       }
-      throw Exception(_extractDioMessage(error));
+      throw WealthServiceException(_extractDioMessage(error));
     }
   }
 
@@ -261,6 +263,18 @@ class WealthService {
       response.data,
       keys: const ['members', 'items', 'results'],
     );
+  }
+
+  Future<void> removeSharedPotMember(String potId, String memberId) async {
+    await _delete('/wealth/shared-pots/$potId/members/$memberId');
+  }
+
+  Future<Map<String, dynamic>> leaveSharedPot(String potId) async {
+    final response = await _post(
+      '/wealth/shared-pots/$potId/leave',
+      const <String, dynamic>{},
+    );
+    return _extractItem(response.data);
   }
 
   Future<Map<String, dynamic>> getSharedPotReport(
@@ -326,6 +340,17 @@ class WealthService {
     return _extractItem(response.data);
   }
 
+  Future<Map<String, dynamic>> allocateSharedBudget(
+    String budgetId,
+    Map<String, dynamic> payload,
+  ) async {
+    final response = await _postWithIdempotency(
+      '/wealth/shared-budgets/$budgetId/allocate',
+      payload,
+    );
+    return _extractItem(response.data);
+  }
+
   Future<List<Map<String, dynamic>>> listSharedBudgetMembers(
     String budgetId,
   ) async {
@@ -334,6 +359,21 @@ class WealthService {
       response.data,
       keys: const ['members', 'items', 'results'],
     );
+  }
+
+  Future<void> removeSharedBudgetMember(
+    String budgetId,
+    String memberId,
+  ) async {
+    await _delete('/wealth/shared-budgets/$budgetId/members/$memberId');
+  }
+
+  Future<Map<String, dynamic>> leaveSharedBudget(String budgetId) async {
+    final response = await _post(
+      '/wealth/shared-budgets/$budgetId/leave',
+      const <String, dynamic>{},
+    );
+    return _extractItem(response.data);
   }
 
   Future<List<Map<String, dynamic>>> listSharedBudgetTransactions(
@@ -434,7 +474,7 @@ class WealthService {
     String budgetId,
     Map<String, dynamic> payload,
   ) async {
-    final response = await _post(
+    final response = await _postWithIdempotency(
       '/wealth/shared-budgets/$budgetId/spend/settle',
       payload,
     );
@@ -468,7 +508,7 @@ class WealthService {
     try {
       return await _dio.get(path);
     } on DioException catch (error) {
-      throw Exception(_extractDioMessage(error));
+      throw WealthServiceException(_extractDioMessage(error));
     }
   }
 
@@ -479,7 +519,32 @@ class WealthService {
     try {
       return await _dio.post(path, data: payload);
     } on DioException catch (error) {
-      throw Exception(_extractDioMessage(error));
+      throw WealthServiceException(_extractDioMessage(error));
+    }
+  }
+
+  Future<Response<dynamic>> _postWithIdempotency(
+    String path,
+    Map<String, dynamic> payload,
+  ) async {
+    final idempotencyKey = _uuid.v4();
+    try {
+      return await _dio.post(
+        path,
+        data: {
+          ...payload,
+          'idempotencyKey': idempotencyKey,
+          'idempotency_key': idempotencyKey,
+        },
+        options: Options(
+          headers: {
+            'Idempotency-Key': idempotencyKey,
+            'x-idempotency-key': idempotencyKey,
+          },
+        ),
+      );
+    } on DioException catch (error) {
+      throw WealthServiceException(_extractDioMessage(error));
     }
   }
 
@@ -490,7 +555,7 @@ class WealthService {
     try {
       return await _dio.patch(path, data: payload);
     } on DioException catch (error) {
-      throw Exception(_extractDioMessage(error));
+      throw WealthServiceException(_extractDioMessage(error));
     }
   }
 
@@ -498,13 +563,32 @@ class WealthService {
     try {
       await _dio.delete(path);
     } on DioException catch (error) {
-      throw Exception(_extractDioMessage(error));
+      throw WealthServiceException(_extractDioMessage(error));
     }
   }
 
   String _extractDioMessage(DioException error) {
     final data = error.response?.data;
     if (data is Map) {
+      final details = data['details'];
+      if (details is List && details.isNotEmpty) {
+        final first = details.first;
+        if (first is Map) {
+          final detailMessage = _pickFirstString([
+            first['message'],
+            first['code'],
+            first['error'],
+          ]);
+          if (detailMessage != null) {
+            final path = first['path'];
+            if (path is List && path.isNotEmpty) {
+              return '${path.join('.')}: $detailMessage';
+            }
+            return detailMessage;
+          }
+        }
+      }
+
       final direct = _pickFirstString([
         data['error'],
         data['message'],
@@ -594,4 +678,13 @@ class WealthService {
     }
     return raw;
   }
+}
+
+class WealthServiceException implements Exception {
+  const WealthServiceException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
 }

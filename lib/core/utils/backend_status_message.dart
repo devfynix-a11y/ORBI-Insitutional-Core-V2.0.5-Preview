@@ -4,7 +4,10 @@ String mapBackendStatusMessage(
   String? fallback,
 }) {
   final normalized = raw.trim().replaceFirst(
-    RegExp(r'^(Exception|Error):\s*', caseSensitive: false),
+    RegExp(
+      r'^(_?Exception|Error|DioException|FormatException|StateError|TypeError):\s*',
+      caseSensitive: false,
+    ),
     '',
   );
   final upper = normalized.toUpperCase();
@@ -278,37 +281,37 @@ String mapBackendStatusMessage(
   }
   if (upper.contains('SHARED_POT_ACCESS_DENIED')) {
     return pick(
-      'You do not have access to this shared pot.',
-      'Huna ruhusa ya kutumia shared pot hii.',
+      'You do not have access to this Fungu.',
+      'Huna ruhusa ya kutumia Fungu hili.',
     );
   }
   if (upper.contains('SHARED_POT_CONTRIBUTION_DENIED')) {
     return pick(
-      'Your role cannot contribute to this shared pot.',
-      'Role yako hairuhusu kuchangia kwenye shared pot hii.',
+      'Your role cannot contribute to this Fungu.',
+      'Role yako hairuhusu kuchangia kwenye Fungu hili.',
     );
   }
   if (upper.contains('SHARED_POT_WITHDRAW_DENIED')) {
     return pick(
-      'Only the pot owner or manager can withdraw from this shared pot.',
-      'Mmiliki au meneja wa pot pekee ndiye anaweza kutoa fedha kwenye shared pot hii.',
+      'Only the Fungu owner or manager can withdraw from this Fungu.',
+      'Mmiliki au meneja wa Fungu pekee ndiye anaweza kutoa fedha kwenye Fungu hili.',
     );
   }
   if (upper.contains('SHARED_POT_ORG_REQUIRED')) {
     return pick(
-      'Organisation Fungu requires your account to be linked to an organisation.',
+      'Organization Fungu requires your account to be linked to an organization.',
       'Fungu la taasisi linahitaji akaunti yako iwe imeunganishwa na taasisi.',
     );
   }
   if (upper.contains('SHARED_POT_PRIVATE_INVITES_DISABLED')) {
     return pick(
-      'Private Fungu does not allow member invitations.',
+      'Personal Fungu does not allow member invitations.',
       'Fungu binafsi haliruhusu kualika wanachama.',
     );
   }
   if (upper.contains('SHARED_POT_ORG_MEMBER_REQUIRED')) {
     return pick(
-      'Only users from the same organisation can join this Fungu.',
+      'Only users from the same organization can join this Fungu.',
       'Ni watumiaji wa taasisi hiyo hiyo pekee wanaoweza kujiunga na Fungu hili.',
     );
   }
@@ -383,8 +386,8 @@ String mapBackendStatusMessage(
   }
   if (upper.contains('INSUFFICIENT_POT_FUNDS')) {
     return pick(
-      'This shared pot does not have enough money for that withdrawal.',
-      'Shared pot hii haina fedha za kutosha kwa kutoa kiasi hicho.',
+      'This Fungu does not have enough money for that withdrawal.',
+      'Fungu hili halina fedha za kutosha kwa kutoa kiasi hicho.',
     );
   }
   if (upper.contains('USER_NOT_FOUND')) {
@@ -395,14 +398,14 @@ String mapBackendStatusMessage(
   }
   if (upper.contains('OWNER_ALREADY_MEMBER')) {
     return pick(
-      'That person already owns this shared pot.',
-      'Mtu huyo tayari ni mmiliki wa shared pot hii.',
+      'That person already owns this Fungu.',
+      'Mtu huyo tayari ni mmiliki wa Fungu hili.',
     );
   }
   if (upper.contains('SHARED_POT_MEMBER_ALREADY_EXISTS')) {
     return pick(
-      'That user is already a member of this shared pot.',
-      'Mtumiaji huyo tayari ni mwanachama wa shared pot hii.',
+      'That user is already a member of this Fungu.',
+      'Mtumiaji huyo tayari ni mwanachama wa Fungu hili.',
     );
   }
   if (upper.contains('SHARED_POT_INVITE_ALREADY_PENDING')) {
@@ -440,8 +443,8 @@ String mapBackendStatusMessage(
         'PGRST',
       ])) {
     return pick(
-      'Shared pot details could not be loaded right now. Please refresh and try again.',
-      'Taarifa za shared pot hazikuweza kupakiwa sasa. Tafadhali pakia upya kisha jaribu tena.',
+      'Fungu details could not be loaded right now. Please refresh and try again.',
+      'Taarifa za Fungu hazikuweza kupakiwa sasa. Tafadhali pakia upya kisha jaribu tena.',
     );
   }
 
@@ -455,6 +458,38 @@ String mapBackendStatusMessage(
     return pick(
       'Your role cannot spend from this shared budget.',
       'Role yako hairuhusu kutumia fedha za shared budget hii.',
+    );
+  }
+  if (upper.contains('SHARED_BUDGET_FUNDS_REQUIRED')) {
+    return pick(
+      'This Meza has no allocated funds. Allocate funds before spending.',
+      'Meza hii haina fedha zilizotengwa. Weka fedha kwanza.',
+    );
+  }
+  if (upper.contains('SHARED_BUDGET_ALLOCATE_DENIED')) {
+    return pick(
+      'Only the owner or manager can allocate funds to this Meza.',
+      'Ni mmiliki au meneja pekee anaweza kuweka fedha kwenye Meza hii.',
+    );
+  }
+  if (upper.contains('SHARED_BUDGET_ALLOCATION_LIMIT_EXCEEDED')) {
+    return pick(
+      'This allocation is above the Meza limit.',
+      'Kiasi hiki cha kuweka fedha kimezidi kikomo cha Meza.',
+    );
+  }
+  if (upper.contains('SHARED_BUDGET_NOT_FOUND')) {
+    return pick(
+      'This Meza could not be found. Please refresh and try again.',
+      'Meza hii haijapatikana. Tafadhali pakia upya kisha jaribu tena.',
+    );
+  }
+  if (upper.contains('INVALID UUID') ||
+      upper.contains('INVALID_FORMAT') ||
+      upper.contains('VALIDATION_FAILED')) {
+    return pick(
+      'Some request details are not valid. Please refresh and try again.',
+      'Baadhi ya taarifa za ombi si sahihi. Tafadhali pakia upya kisha jaribu tena.',
     );
   }
   if (upper.contains('SHARED_BUDGET_LIMIT_EXCEEDED')) {

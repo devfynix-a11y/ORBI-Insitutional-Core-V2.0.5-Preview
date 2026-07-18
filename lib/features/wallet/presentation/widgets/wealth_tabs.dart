@@ -228,8 +228,8 @@ class WealthMainSectionsCard extends StatelessWidget {
                 icon: Icons.trending_up_rounded,
                 title: sw ? 'Growth' : 'Growth',
                 message: sw
-                    ? 'Goals na shared pots.'
-                    : 'Goals and shared pots.',
+                    ? 'Goals na Fungu.'
+                    : 'Goals and Fungu.',
                 actionLabel: sw ? 'Growth' : 'Growth',
                 onTap: onOpenGoals,
               ),
@@ -390,7 +390,7 @@ class WealthGrowthTab extends StatelessWidget {
             children: [
               _Header(
                 title: sw ? 'Akiba' : 'Savings',
-                subtitle: sw ? 'Goals na Fungu.' : 'Goals and shared pots.',
+                subtitle: sw ? 'Goals na Fungu.' : 'Goals and Fungu.',
               ),
               const SizedBox(height: 14),
               _MiniSummaryRow(

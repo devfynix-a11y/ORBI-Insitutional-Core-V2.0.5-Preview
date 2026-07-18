@@ -4,17 +4,31 @@ class AppRuntimeCache {
   AppRuntimeCache._();
 
   static Map<String, dynamic>? _profile;
+  static Map<String, dynamic>? _dashboardPayload;
   static List<Map<String, dynamic>>? _wallets;
   static List<Map<String, dynamic>>? _recentTransactions;
+  static List<Map<String, dynamic>>? _goals;
+  static List<Map<String, dynamic>>? _categories;
+  static List<Map<String, dynamic>>? _tasks;
   static String _currency = '';
+  static DateTime? _dashboardCachedAt;
   static DateTime? _walletsCachedAt;
   static DateTime? _transactionsCachedAt;
 
+  static const Duration dashboardTtl = Duration(seconds: 30);
   static const Duration walletsTtl = Duration(minutes: 2);
   static const Duration transactionsTtl = Duration(seconds: 45);
 
   static Map<String, dynamic>? get profile =>
       _profile == null ? null : Map<String, dynamic>.from(_profile!);
+
+  static Map<String, dynamic>? get freshDashboardPayload {
+    final cached = _dashboardPayload;
+    final cachedAt = _dashboardCachedAt;
+    if (cached == null || cachedAt == null) return null;
+    if (DateTime.now().difference(cachedAt) > dashboardTtl) return null;
+    return Map<String, dynamic>.from(cached);
+  }
 
   static List<Map<String, dynamic>>? get freshWallets {
     final cached = _wallets;
@@ -32,11 +46,79 @@ class AppRuntimeCache {
     return cached.map((item) => Map<String, dynamic>.from(item)).toList();
   }
 
+  static List<Map<String, dynamic>>? get goals {
+    if (freshDashboardPayload == null) return null;
+    return _goals?.map((item) => Map<String, dynamic>.from(item)).toList();
+  }
+
+  static List<Map<String, dynamic>>? get categories {
+    if (freshDashboardPayload == null) return null;
+    return _categories?.map((item) => Map<String, dynamic>.from(item)).toList();
+  }
+
+  static List<Map<String, dynamic>>? get tasks {
+    if (freshDashboardPayload == null) return null;
+    return _tasks?.map((item) => Map<String, dynamic>.from(item)).toList();
+  }
+
   static String get currency => _currency;
 
   static void rememberProfile(Map<String, dynamic> profile) {
     _profile = Map<String, dynamic>.from(profile);
     _rememberCurrencyFrom(_profile!);
+  }
+
+  static void rememberDashboardPayload(Map<String, dynamic> payload) {
+    _dashboardPayload = Map<String, dynamic>.from(payload);
+    _dashboardCachedAt = DateTime.now();
+    _rememberCurrencyFrom(_dashboardPayload!);
+
+    final profile = _firstMap([
+      payload['profile'],
+      payload['user'],
+      payload['account'],
+    ]);
+    if (profile != null) rememberProfile(profile);
+
+    final wallets = _firstListOfMaps([
+      payload['wallets'],
+      payload['accounts'],
+      payload['walletAccounts'],
+      payload['wallet_accounts'],
+    ]);
+    if (wallets.isNotEmpty) rememberWallets(wallets);
+
+    final transactions = _firstListOfMaps([
+      payload['transactions'],
+      payload['recentTransactions'],
+      payload['recent_transactions'],
+      payload['history'],
+    ]);
+    if (transactions.isNotEmpty) rememberRecentTransactions(transactions);
+
+    final goals = _firstListOfMaps([
+      payload['goals'],
+      payload['savingGoals'],
+      payload['saving_goals'],
+    ]);
+    if (goals.isNotEmpty) _goals = goals;
+
+    final categories = _firstListOfMaps([
+      payload['categories'],
+      payload['budgets'],
+      payload['budgetCategories'],
+      payload['budget_categories'],
+    ]);
+    if (categories.isNotEmpty) _categories = categories;
+
+    final tasks = _firstListOfMaps([
+      payload['tasks'],
+      payload['upcomingBills'],
+      payload['upcoming_bills'],
+      payload['billReserves'],
+      payload['bill_reserves'],
+    ]);
+    if (tasks.isNotEmpty) _tasks = tasks;
   }
 
   static void rememberSession(Map<String, dynamic> session) {
@@ -79,11 +161,36 @@ class AppRuntimeCache {
 
   static void clear() {
     _profile = null;
+    _dashboardPayload = null;
     _wallets = null;
     _recentTransactions = null;
+    _goals = null;
+    _categories = null;
+    _tasks = null;
     _currency = '';
+    _dashboardCachedAt = null;
     _walletsCachedAt = null;
     _transactionsCachedAt = null;
+  }
+
+  static Map<String, dynamic>? _firstMap(List<dynamic> values) {
+    for (final value in values) {
+      if (value is Map) return Map<String, dynamic>.from(value);
+    }
+    return null;
+  }
+
+  static List<Map<String, dynamic>> _firstListOfMaps(List<dynamic> values) {
+    for (final value in values) {
+      if (value is List) {
+        final items = value
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList(growable: false);
+        if (items.isNotEmpty) return items;
+      }
+    }
+    return const <Map<String, dynamic>>[];
   }
 
   static void _rememberCurrencyFrom(Map<String, dynamic> source) {

@@ -648,6 +648,12 @@ class ReportPdfBuilder {
   }) {
     final resource = _extractResource(report, fallbackTitle: 'ORBI', sw: sw);
     final type = report['report_type']?.toString().toUpperCase() ?? '';
+    final balances = ReportUtils.from(
+      report['balance_snapshot'] ??
+          report['balances'] ??
+          report['wallet_summary'] ??
+          report['balanceSummary'],
+    );
     final entries = <List<String>>[];
 
     void add(String key, String en, String swText, {bool money = false}) {
@@ -718,23 +724,41 @@ class ReportPdfBuilder {
     }
 
     addFirst(
-      ['money_in', 'external_in', 'total_in'],
+      ['total_credit', 'credit_total', 'money_in', 'external_in', 'total_in'],
       'Money in',
       'Pesa zilizoingia',
       money: true,
     );
     addFirst(
-      ['money_out', 'external_out', 'total_out'],
+      ['total_debit', 'debit_total', 'money_out', 'external_out', 'total_out'],
       'Money out',
-      'Pesa zilizotoka nje',
+      'Pesa zilizotoka',
       money: true,
     );
     addFirst(
-      ['internal_movements', 'internal_movement_total', 'internal_total'],
-      'Internal movements',
-      'Mizunguko ya ndani',
+      ['available_balance', 'availableBalance'],
+      'Available balance',
+      'Salio linalotumika',
       money: true,
     );
+    if (!entries.any(
+      (entry) =>
+          entry.first == (sw ? 'Salio linalotumika' : 'Available balance'),
+    )) {
+      final availableBalance = ReportUtils.firstNonNull([
+        balances['available_balance'],
+        balances['availableBalance'],
+      ]);
+      if (availableBalance != null) {
+        entries.add([
+          sw ? 'Salio linalotumika' : 'Available balance',
+          ReportUtils.displayMoney(
+            availableBalance,
+            currency: resource.currency,
+          ),
+        ]);
+      }
+    }
     add('net', 'Net movement', 'Mabadiliko halisi', money: true);
     add('transaction_count', 'Transactions', 'Miamala');
     return entries.isEmpty

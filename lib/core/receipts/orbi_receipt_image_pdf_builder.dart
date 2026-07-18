@@ -14,12 +14,12 @@ class OrbiReceiptImagePdfBuilder {
       pw.Page(
         pageTheme: const pw.PageTheme(
           pageFormat: PdfPageFormat.a4,
-          margin: pw.EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+          margin: pw.EdgeInsets.symmetric(horizontal: 14, vertical: 18),
         ),
         build: (context) {
           return pw.Center(
             child: pw.Container(
-              constraints: const pw.BoxConstraints(maxWidth: 460),
+              constraints: const pw.BoxConstraints(maxWidth: 560),
               child: pw.Image(image, fit: pw.BoxFit.contain),
             ),
           );

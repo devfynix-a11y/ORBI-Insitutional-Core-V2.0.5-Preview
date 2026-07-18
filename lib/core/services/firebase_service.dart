@@ -2,6 +2,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
 import '../config/app_config.dart';
@@ -278,6 +279,60 @@ class FirebaseService {
       );
     } catch (e) {
       debugPrint('❌ [FCM] Failed to show foreground notification: $e');
+    }
+  }
+
+  Future<void> showRealtimeNotification({
+    required String id,
+    required String title,
+    required String body,
+    String? category,
+    Map<String, dynamic> data = const <String, dynamic>{},
+  }) async {
+    if (!_localNotificationsReady) {
+      await _initializeLocalNotifications();
+    }
+    final prefs = await NotificationPreferencesService.instance.load();
+    if (!prefs.pushNotificationsEnabled ||
+        !prefs.allowsCategory(category?.toString())) {
+      debugPrint(
+        '🔕 [Realtime] Suppressed local notification due to preferences: '
+        '$category',
+      );
+      return;
+    }
+
+    if (title.trim().isEmpty && body.trim().isEmpty) return;
+
+    try {
+      await _localNotifications.show(
+        id.hashCode,
+        title.trim().isEmpty ? 'ORBI' : title.trim(),
+        body.trim(),
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            _foregroundChannel.id,
+            _foregroundChannel.name,
+            channelDescription: _foregroundChannel.description,
+            importance: Importance.max,
+            priority: Priority.high,
+            playSound: true,
+            enableVibration: true,
+            ticker: 'ORBI alert',
+            visibility: NotificationVisibility.public,
+            icon: _androidNotificationIcon,
+          ),
+          iOS: const DarwinNotificationDetails(
+            presentAlert: true,
+            presentBadge: true,
+            presentSound: true,
+            interruptionLevel: InterruptionLevel.timeSensitive,
+          ),
+        ),
+        payload: data.isEmpty ? null : jsonEncode(data),
+      );
+    } catch (e) {
+      debugPrint('❌ [Realtime] Failed to show local notification: $e');
     }
   }
 

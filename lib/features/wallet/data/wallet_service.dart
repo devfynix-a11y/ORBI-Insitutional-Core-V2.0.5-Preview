@@ -4,13 +4,11 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/config/app_config.dart';
-import '../../../core/session/session_manager.dart';
 import '../../../core/state/app_runtime_cache.dart';
 
 class WalletService {
   static const Duration _requestTimeout = Duration(seconds: 15);
   final Dio _dio = ApiClient().client;
-  final SessionManager _session = SessionManager();
 
   Future<Map<String, dynamic>> getProfile() async {
     final response = await _dio.get(AppConfig.endpoints['profile']!);
@@ -41,19 +39,6 @@ class WalletService {
         }
       } on DioException {
         // Try next fallback endpoint.
-      }
-    }
-
-    // Fallback: use wallets returned in signup/login payload and saved in session profile.
-    final profile = await _session.getStoredProfile();
-    if (profile != null) {
-      final cachedWallets = _extractWalletsFromPayload(
-        profile,
-        includeEscrow: false,
-      );
-      if (cachedWallets.isNotEmpty) {
-        AppRuntimeCache.rememberWallets(cachedWallets);
-        return cachedWallets;
       }
     }
 
@@ -166,7 +151,11 @@ class WalletService {
       for (final item in source.whereType<Map>()) {
         final normalized = _normalizeWalletMap(Map<String, dynamic>.from(item));
         if (!includeEscrow && _isEscrowWallet(normalized)) continue;
-        final id = (normalized['wallet_id'] ?? normalized['id'] ?? '')
+        final id = (normalized['canonical_wallet_id'] ??
+                normalized['wallet_uuid'] ??
+                normalized['id'] ??
+                normalized['wallet_id'] ??
+                '')
             .toString()
             .trim();
         final dedupeKey = id.isEmpty
@@ -215,7 +204,21 @@ class WalletService {
         ? Map<String, dynamic>.from(metadata)
         : <String, dynamic>{};
 
-    normalized['wallet_id'] ??= normalized['id'];
+    final canonicalWalletId = _canonicalWalletId(normalized, metadataMap);
+    if (canonicalWalletId.isNotEmpty) {
+      normalized['canonical_wallet_id'] = canonicalWalletId;
+      normalized['wallet_uuid'] = canonicalWalletId;
+      normalized['walletUuid'] = canonicalWalletId;
+      normalized['id'] = canonicalWalletId;
+      if (!_isUuid(normalized['wallet_id'])) {
+        normalized['wallet_id'] = canonicalWalletId;
+      }
+      if (!_isUuid(normalized['walletId'])) {
+        normalized['walletId'] = canonicalWalletId;
+      }
+    } else {
+      normalized['wallet_id'] ??= normalized['id'];
+    }
     normalized['wallet_type'] ??=
         normalized['type'] ??
         normalized['vault_role'] ??
@@ -251,6 +254,46 @@ class WalletService {
       normalized['metadata'] = metadataMap;
     }
     return normalized;
+  }
+
+  String _canonicalWalletId(
+    Map<String, dynamic> wallet,
+    Map<String, dynamic> metadata,
+  ) {
+    for (final value in [
+      wallet['canonical_wallet_id'],
+      wallet['wallet_uuid'],
+      wallet['walletUuid'],
+      wallet['id'],
+      wallet['wallet_id'],
+      wallet['walletId'],
+      wallet['source_wallet_id'],
+      wallet['sourceWalletId'],
+      wallet['operating_wallet_id'],
+      wallet['operatingWalletId'],
+      metadata['canonical_wallet_id'],
+      metadata['wallet_uuid'],
+      metadata['walletUuid'],
+      metadata['id'],
+      metadata['wallet_id'],
+      metadata['walletId'],
+      metadata['source_wallet_id'],
+      metadata['sourceWalletId'],
+      metadata['operating_wallet_id'],
+      metadata['operatingWalletId'],
+    ]) {
+      final raw = value is String ? value.trim() : '';
+      if (_isUuid(raw)) return raw;
+    }
+    return '';
+  }
+
+  bool _isUuid(dynamic value) {
+    final raw = value is String ? value.trim() : '';
+    if (raw.isEmpty) return false;
+    return RegExp(
+      r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+    ).hasMatch(raw);
   }
 
   Map<String, dynamic> _walletMetadata(Map<String, dynamic> wallet) {

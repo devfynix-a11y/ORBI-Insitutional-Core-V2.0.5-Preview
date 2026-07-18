@@ -1374,7 +1374,7 @@ class AppLocalizationsSw extends AppLocalizations {
 
   @override
   String get sendMoneySessionExpiredMessage =>
-      'Muda wa kikao umekwisha. Tafadhali ingia tena.';
+      'Muda wa kikao chako umeisha. Tafadhali ingia tena.';
 
   @override
   String get sendMoneyTransferBlockedMessage =>
@@ -1800,7 +1800,7 @@ class AppLocalizationsSw extends AppLocalizations {
 
   @override
   String get transactionsSessionExpiredMessage =>
-      'Muda wa kikao umekwisha. Tafadhali ingia tena.';
+      'Muda wa kikao chako umeisha. Tafadhali ingia tena.';
 
   @override
   String get transactionsFetchFailedMessage =>
@@ -2428,7 +2428,7 @@ class AppLocalizationsSw extends AppLocalizations {
 
   @override
   String get sessionExpiredLoginMessage =>
-      'Muda wa kikao umekwisha. Tafadhali ingia tena.';
+      'Muda wa kikao chako umeisha. Tafadhali ingia tena.';
 
   @override
   String get otpEnterCodeLabel => 'Weka msimbo wa OTP';

@@ -2561,7 +2561,7 @@ abstract class AppLocalizations {
   /// No description provided for @sendMoneySessionExpiredMessage.
   ///
   /// In en, this message translates to:
-  /// **'Session expired. Please login again.'**
+  /// **'Your session has expired. Please log in again.'**
   String get sendMoneySessionExpiredMessage;
 
   /// No description provided for @sendMoneyTransferBlockedMessage.
@@ -3287,7 +3287,7 @@ abstract class AppLocalizations {
   /// No description provided for @transactionsSessionExpiredMessage.
   ///
   /// In en, this message translates to:
-  /// **'Session expired. Please login again.'**
+  /// **'Your session has expired. Please log in again.'**
   String get transactionsSessionExpiredMessage;
 
   /// No description provided for @transactionsFetchFailedMessage.

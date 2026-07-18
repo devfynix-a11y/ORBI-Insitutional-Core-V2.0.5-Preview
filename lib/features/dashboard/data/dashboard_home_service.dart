@@ -101,7 +101,7 @@ class DashboardHomeService {
             token: token,
             fingerprint: _fingerprint,
           ),
-        );
+        ).timeout(const Duration(seconds: 6));
         if (response.statusCode < 200 || response.statusCode >= 300) continue;
         final body = jsonDecode(response.body);
         final list = _extractList(body, keys);
@@ -125,7 +125,7 @@ class DashboardHomeService {
             token: token,
             fingerprint: _fingerprint,
           ),
-        );
+        ).timeout(const Duration(seconds: 6));
         if (response.statusCode < 200 || response.statusCode >= 300) continue;
         final body = jsonDecode(response.body);
         dynamic data = body;

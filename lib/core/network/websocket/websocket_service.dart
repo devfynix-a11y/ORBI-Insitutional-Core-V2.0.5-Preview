@@ -17,8 +17,9 @@ class WebSocketService {
   static const int _maxReconnectAttempts = 20;
   static const Duration _initialReconnectDelay = Duration(seconds: 1);
   static const Duration _maxReconnectDelay = Duration(seconds: 30);
-  static const Duration _heartbeatInterval = Duration(seconds: 25);
-  static const Duration _staleConnectionThreshold = Duration(seconds: 75);
+  static const Duration _heartbeatInterval = Duration(seconds: 5);
+  static const Duration _nativePingInterval = Duration(seconds: 10);
+  static const Duration _staleConnectionThreshold = Duration(seconds: 20);
   Timer? _reconnectTimer;
   Timer? _heartbeatTimer;
   DateTime? _lastActivityAt;
@@ -167,6 +168,7 @@ class WebSocketService {
     final socket = await WebSocket.connect(
       uri.toString(),
     ).timeout(const Duration(seconds: 15));
+    socket.pingInterval = _nativePingInterval;
     return IOWebSocketChannel(socket);
   }
 
@@ -214,6 +216,7 @@ class WebSocketService {
   void _scheduleReconnect() {
     if (_manualDisconnect || _isDisposed) return;
     if (_reconnectAttempts >= _maxReconnectAttempts) return;
+    _reconnectTimer?.cancel();
 
     final exponentialMs =
         _initialReconnectDelay.inMilliseconds * (1 << _reconnectAttempts);
@@ -226,6 +229,28 @@ class WebSocketService {
       _reconnectAttempts++;
       unawaited(_establishConnection());
     });
+  }
+
+  void ensureConnected() {
+    if (_isDisposed || _manualDisconnect) return;
+    if (_baseUrl == null || _token == null || _token!.isEmpty) return;
+
+    final now = DateTime.now();
+    final isStale = _lastActivityAt == null ||
+        now.difference(_lastActivityAt!) > _staleConnectionThreshold;
+    if (_isConnected && _channel != null && !isStale) return;
+
+    _stopHeartbeat();
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _channel?.sink.close();
+    _channel = null;
+    _isConnected = false;
+    _lastActivityAt = null;
+    _reconnectAttempts = 0;
+    _connectionSerial++;
+    _clientTraceId = _buildTraceId(_connectionSerial);
+    unawaited(_establishConnection());
   }
 
   void _startHeartbeat() {
@@ -253,6 +278,15 @@ class WebSocketService {
           jsonEncode({
             'event': 'PING',
             'timestamp': now.millisecondsSinceEpoch,
+            if (_clientTraceId != null) 'trace': _clientTraceId,
+            if (_userId != null && _userId!.isNotEmpty) 'userId': _userId,
+            'capabilities': const [
+              'balances',
+              'notifications',
+              'account_status',
+              'session',
+              'risk',
+            ],
           }),
         );
       } catch (_) {

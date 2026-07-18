@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import '../../../core/config/app_config.dart';
 import '../../../core/network/orbi_request_headers.dart';
 import '../../../core/security/device_fingerprint.dart';
+import '../../../core/state/app_runtime_cache.dart';
 import '../../../core/utils/user_facing_error.dart';
 import '../data/dashboard_home_service.dart';
 import '../data/financial_insights.dart';
@@ -101,13 +102,20 @@ class DashboardController extends ChangeNotifier {
     );
   }
 
-  Future<void> fetchDashboardData(String token) async {
+  Future<void> fetchDashboardData(
+    String token, {
+    Duration optionalTimeout = const Duration(seconds: 8),
+    Duration requiredTimeout = const Duration(seconds: 12),
+  }) async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
-      final data = await _fetchDashboardPayload(token);
+      final data = await _fetchDashboardPayload(
+        token,
+        requestTimeout: requiredTimeout,
+      );
       final rawTransactions = _extractListFromPayload(
         data['transactions'],
         const ['transactions', 'items', 'results', 'rows', 'history'],
@@ -133,14 +141,44 @@ class DashboardController extends ChangeNotifier {
       _allocateGoalAndBudgetBalances();
 
       final supplementResults = await Future.wait<dynamic>([
-        _homeService.fetchSharedPots(token),
-        _homeService.fetchSharedBudgets(token),
-        _homeService.fetchUpcomingBills(token),
+        _guardedDashboardFetch<List<Map<String, dynamic>>>(
+          'shared_pots',
+          () => _homeService.fetchSharedPots(token),
+          const <Map<String, dynamic>>[],
+          timeout: optionalTimeout,
+        ),
+        _guardedDashboardFetch<List<Map<String, dynamic>>>(
+          'shared_budgets',
+          () => _homeService.fetchSharedBudgets(token),
+          const <Map<String, dynamic>>[],
+          timeout: optionalTimeout,
+        ),
+        _guardedDashboardFetch<List<Map<String, dynamic>>>(
+          'upcoming_bills',
+          () => _homeService.fetchUpcomingBills(token),
+          const <Map<String, dynamic>>[],
+          timeout: optionalTimeout,
+        ),
         rawTransactions.isNotEmpty
             ? Future<List<Map<String, dynamic>>>.value(rawTransactions)
-            : _homeService.fetchRecentTransactions(token),
-        _homeService.fetchMerchantRecommendations(token),
-        _homeService.fetchNetWorthSummary(token),
+            : _guardedDashboardFetch<List<Map<String, dynamic>>>(
+                'recent_transactions',
+                () => _homeService.fetchRecentTransactions(token),
+                const <Map<String, dynamic>>[],
+                timeout: optionalTimeout,
+              ),
+        _guardedDashboardFetch<List<Map<String, dynamic>>>(
+          'merchant_recommendations',
+          () => _homeService.fetchMerchantRecommendations(token),
+          const <Map<String, dynamic>>[],
+          timeout: optionalTimeout,
+        ),
+        _guardedDashboardFetch<Map<String, dynamic>>(
+          'net_worth',
+          () => _homeService.fetchNetWorthSummary(token),
+          const <String, dynamic>{},
+          timeout: optionalTimeout,
+        ),
       ]);
 
       _sharedPots = List<Map<String, dynamic>>.from(
@@ -164,7 +202,12 @@ class DashboardController extends ChangeNotifier {
         supplementResults[5] as Map,
       );
 
-      _insights = await _insightsService.fetch(token);
+      _insights = await _guardedDashboardFetch<FinancialInsights>(
+        'insights',
+        () => _insightsService.fetch(token),
+        const FinancialInsights.empty(),
+        timeout: optionalTimeout,
+      );
       _changePercent =
           _firstNonNullDouble([
             netWorthSummary['monthly_change_percent'],
@@ -241,7 +284,13 @@ class DashboardController extends ChangeNotifier {
     }
   }
 
-  Future<Map<String, dynamic>> _fetchDashboardPayload(String token) async {
+  Future<Map<String, dynamic>> _fetchDashboardPayload(
+    String token, {
+    required Duration requestTimeout,
+  }) async {
+    final cached = AppRuntimeCache.freshDashboardPayload;
+    if (cached != null && cached.isNotEmpty) return cached;
+
     final endpoints = [
       Uri.parse('$baseUrl/api/v1/dashboard'),
       Uri.parse('$baseUrl/api/v1/user/dashboard'),
@@ -250,14 +299,18 @@ class DashboardController extends ChangeNotifier {
     final failures = <String>[];
     for (final endpoint in endpoints) {
       try {
-        final response = await http.get(endpoint, headers: _headers(token));
+        final response = await http
+            .get(endpoint, headers: _headers(token))
+            .timeout(requestTimeout);
         if (response.statusCode >= 200 && response.statusCode < 300) {
           final body = jsonDecode(response.body);
           final data = body is Map<String, dynamic>
               ? body['data'] ?? body
               : body;
           if (data is Map) {
-            return _normalizeMap(Map<dynamic, dynamic>.from(data));
+            final normalized = _normalizeMap(Map<dynamic, dynamic>.from(data));
+            AppRuntimeCache.rememberDashboardPayload(normalized);
+            return normalized;
           }
         } else {
           failures.add('${endpoint.path}: ${response.statusCode}');
@@ -271,6 +324,20 @@ class DashboardController extends ChangeNotifier {
           ? 'No dashboard endpoint responded.'
           : 'Dashboard endpoints failed. ${failures.join(' | ')}',
     );
+  }
+
+  Future<T> _guardedDashboardFetch<T>(
+    String label,
+    Future<T> Function() fetch,
+    T fallback, {
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    try {
+      return await fetch().timeout(timeout);
+    } catch (error) {
+      debugPrint('⚠️ Dashboard optional fetch failed [$label]: $error');
+      return fallback;
+    }
   }
 
   void _applyWallets(List<Map<String, dynamic>> wallets) {
@@ -616,8 +683,8 @@ class DashboardController extends ChangeNotifier {
       cards.add(
         SmartCarouselCardData(
           type: SmartCarouselCardType.sharedPot,
-          title: 'Shared Pot',
-          headline: (sharedPot['name'] ?? 'Shared pot').toString(),
+          title: 'Fungu',
+          headline: (sharedPot['name'] ?? 'Fungu').toString(),
           supportingText: target > 0
               ? '${((current / target).clamp(0.0, 1.0) * 100).round()}% funded'
               : 'Active balance',
@@ -828,7 +895,7 @@ class DashboardController extends ChangeNotifier {
           pot['target_amount'] ?? pot['goal_amount'] ?? pot['limit'],
         );
         return JourneyItem(
-          title: (pot['name'] ?? 'Shared pot').toString(),
+          title: (pot['name'] ?? 'Fungu').toString(),
           detail: amount > 0 ? 'Balance in motion' : 'Ready to fund',
           progress: target <= 0 ? 0.45 : (amount / target).clamp(0.0, 1.0),
         );

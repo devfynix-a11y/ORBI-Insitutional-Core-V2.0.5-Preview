@@ -941,7 +941,7 @@
   "@sendMoneySearchRecipientMessage": {},
   "sendMoneyEnterValidAmountMessage": "Weka kiasi sahihi",
   "@sendMoneyEnterValidAmountMessage": {},
-  "sendMoneySessionExpiredMessage": "Muda wa kikao umekwisha. Tafadhali ingia tena.",
+  "sendMoneySessionExpiredMessage": "Muda wa kikao chako umeisha. Tafadhali ingia tena.",
   "@sendMoneySessionExpiredMessage": {},
   "sendMoneyTransferBlockedMessage": "Uhamisho huu umezuiwa kwa usalama.",
   "@sendMoneyTransferBlockedMessage": {},
@@ -1259,7 +1259,7 @@
       }
     }
   },
-  "transactionsSessionExpiredMessage": "Muda wa kikao umekwisha. Tafadhali ingia tena.",
+  "transactionsSessionExpiredMessage": "Muda wa kikao chako umeisha. Tafadhali ingia tena.",
   "@transactionsSessionExpiredMessage": {},
   "transactionsFetchFailedMessage": "Imeshindikana kupata miamala kwa sasa.",
   "@transactionsFetchFailedMessage": {},
@@ -1727,7 +1727,7 @@
   "@settingsProfilePhotoUpdatedMessage": {},
   "settingsProfilePhotoFailedMessage": "Imeshindikana kupakia picha",
   "@settingsProfilePhotoFailedMessage": {},
-  "sessionExpiredLoginMessage": "Muda wa kikao umekwisha. Tafadhali ingia tena.",
+  "sessionExpiredLoginMessage": "Muda wa kikao chako umeisha. Tafadhali ingia tena.",
   "@sessionExpiredLoginMessage": {},
   "otpEnterCodeLabel": "Weka msimbo wa OTP",
   "@otpEnterCodeLabel": {},

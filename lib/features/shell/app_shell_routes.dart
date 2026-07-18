@@ -84,6 +84,12 @@ extension on _AppShellState {
                       const MerchantScreen(),
                     )
                   : null,
+              onBusinessDesk: auth.organizationId.trim().isNotEmpty
+                  ? () => _launchAdvancedHubAction(
+                      sheetContext,
+                      const EnterpriseDashboardScreen(),
+                    )
+                  : null,
             );
           },
         );

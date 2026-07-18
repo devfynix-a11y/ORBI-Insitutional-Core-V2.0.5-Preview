@@ -19,6 +19,7 @@ class AdvancedHubSheet extends StatelessWidget {
     this.onCurrencyExchange,
     this.onAgentDesk,
     this.onMerchantDesk,
+    this.onBusinessDesk,
   });
 
   final VoidCallback onSend;
@@ -34,6 +35,7 @@ class AdvancedHubSheet extends StatelessWidget {
   final VoidCallback? onCurrencyExchange;
   final VoidCallback? onAgentDesk;
   final VoidCallback? onMerchantDesk;
+  final VoidCallback? onBusinessDesk;
 
   String _t(BuildContext context, String en, String sw) {
     return Localizations.localeOf(context).languageCode.toLowerCase() == 'sw'
@@ -99,14 +101,14 @@ class AdvancedHubSheet extends StatelessWidget {
         items: [
           _HubItem(
             icon: Icons.groups_2_outlined,
-            label: _t(context, 'Shared Pot', 'Shared Pot'),
+            label: _t(context, 'Fungu', 'Fungu'),
             color: const Color(0xFF0EA5A4),
             onTap: onSharedPot,
             assetPath: 'assets/icons/shared pot.svg',
           ),
           _HubItem(
             icon: Icons.account_tree_outlined,
-            label: _t(context, 'Shared Budget', 'Shared Budget'),
+            label: _t(context, 'Mezani', 'Mezani'),
             color: const Color(0xFF2563EB),
             onTap: onSharedBudget,
             assetPath: 'assets/icons/shared budget.svg',
@@ -133,16 +135,23 @@ class AdvancedHubSheet extends StatelessWidget {
           if (onAgentDesk != null)
             _HubItem(
               icon: Icons.storefront_outlined,
-              label: _t(context, 'Agent Desk', 'Dawati la wakala'),
+              label: _t(context, 'Agent', 'Wakala'),
               color: const Color(0xFFF97316),
               onTap: onAgentDesk!,
             ),
           if (onMerchantDesk != null)
             _HubItem(
               icon: Icons.point_of_sale_outlined,
-              label: _t(context, 'Merchant Desk', 'Dawati la merchant'),
+              label: _t(context, 'Merchant', 'Mfanyabiashara'),
               color: const Color(0xFFDC2626),
               onTap: onMerchantDesk!,
+            ),
+          if (onBusinessDesk != null)
+            _HubItem(
+              icon: Icons.business_center_outlined,
+              label: _t(context, 'Organization', 'Organization'),
+              color: const Color(0xFF0EA5A4),
+              onTap: onBusinessDesk!,
             ),
         ],
       ),
@@ -176,7 +185,7 @@ class AdvancedHubSheet extends StatelessWidget {
               ),
               const SizedBox(height: 14),
               Text(
-                _t(context, 'Premium Services', 'Huduma Zilizo Boreshwa'),
+                _t(context, 'Services and Tasks', 'Huduma na Kazi'),
                 style: TextStyle(
                   color: ui.textPrimary,
                   fontSize: 18,
@@ -256,7 +265,8 @@ class _SectionBlock extends StatelessWidget {
         const spacing = 8.0;
         final availableWidth =
             (width - ((crossAxisCount - 1) * spacing)) / crossAxisCount;
-        final itemWidth = availableWidth.clamp(78.0, 92.0);
+        final itemWidth = availableWidth.clamp(82.0, 104.0);
+        final itemHeight = (itemWidth * 1.08).clamp(90.0, 108.0);
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -278,6 +288,7 @@ class _SectionBlock extends StatelessWidget {
                 for (final item in section.items)
                   SizedBox(
                     width: itemWidth,
+                    height: itemHeight,
                     child: _MenuGridTile(item: item),
                   ),
               ],
@@ -297,88 +308,101 @@ class _MenuGridTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ui = OrbiTheme.uiOf(context);
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: item.onTap,
-        borderRadius: BorderRadius.circular(18),
-        splashColor: item.color.withValues(alpha: 0.10),
-        highlightColor: item.color.withValues(alpha: 0.05),
-        child: AspectRatio(
-          aspectRatio: 1,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 160),
-            curve: Curves.easeOutCubic,
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(
-                color: item.color.withValues(alpha: 0.16),
-                width: 1,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 88;
+        final iconSize = compact ? 34.0 : 38.0;
+        final iconRadius = compact ? 12.0 : 14.0;
+        return Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: item.onTap,
+            borderRadius: BorderRadius.circular(18),
+            splashColor: item.color.withValues(alpha: 0.10),
+            highlightColor: item.color.withValues(alpha: 0.05),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              curve: Curves.easeOutCubic,
+              padding: EdgeInsets.symmetric(
+                horizontal: compact ? 5 : 7,
+                vertical: compact ? 7 : 9,
               ),
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Color.alphaBlend(
-                    item.color.withValues(alpha: 0.05),
-                    ui.card.withValues(alpha: 0.60),
-                  ),
-                  Color.alphaBlend(
-                    item.color.withValues(alpha: 0.025),
-                    ui.cardMuted.withValues(alpha: 0.24),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: item.color.withValues(alpha: 0.16),
+                  width: 1,
+                ),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color.alphaBlend(
+                      item.color.withValues(alpha: 0.05),
+                      ui.card.withValues(alpha: 0.60),
+                    ),
+                    Color.alphaBlend(
+                      item.color.withValues(alpha: 0.025),
+                      ui.cardMuted.withValues(alpha: 0.24),
+                    ),
+                  ],
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: item.color.withValues(alpha: 0.08),
+                    blurRadius: 14,
+                    offset: const Offset(0, 6),
                   ),
                 ],
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: item.color.withValues(alpha: 0.08),
-                  blurRadius: 14,
-                  offset: const Offset(0, 6),
-                ),
-              ],
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: item.color.withValues(alpha: 0.11),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: item.assetPath == null
-                      ? Icon(item.icon, color: item.color, size: 21)
-                      : Padding(
-                          padding: const EdgeInsets.all(8),
-                          child: SvgPicture.asset(
-                            item.assetPath!,
-                            colorFilter: ColorFilter.mode(
-                              item.color,
-                              BlendMode.srcIn,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    width: iconSize,
+                    height: iconSize,
+                    decoration: BoxDecoration(
+                      color: item.color.withValues(alpha: 0.11),
+                      borderRadius: BorderRadius.circular(iconRadius),
+                    ),
+                    child: item.assetPath == null
+                        ? Icon(
+                            item.icon,
+                            color: item.color,
+                            size: compact ? 19 : 21,
+                          )
+                        : Padding(
+                            padding: EdgeInsets.all(compact ? 7 : 8),
+                            child: SvgPicture.asset(
+                              item.assetPath!,
+                              colorFilter: ColorFilter.mode(
+                                item.color,
+                                BlendMode.srcIn,
+                              ),
                             ),
                           ),
-                        ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  item.label,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: ui.textPrimary,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                    height: 1.15,
                   ),
-                ),
-              ],
+                  SizedBox(height: compact ? 6 : 8),
+                  Flexible(
+                    child: Text(
+                      item.label,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: ui.textPrimary,
+                        fontSize: compact ? 10.2 : 11,
+                        fontWeight: FontWeight.w600,
+                        height: 1.08,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }

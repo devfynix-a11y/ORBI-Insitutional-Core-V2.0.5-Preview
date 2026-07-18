@@ -462,20 +462,31 @@ class _ReportPreviewCard extends StatelessWidget {
 
   Widget _summaryStrip(String currency) {
     final summary = ReportUtils.from(report['summary']);
+    final balances = ReportUtils.from(
+      report['balance_snapshot'] ??
+          report['balances'] ??
+          report['wallet_summary'] ??
+          report['balanceSummary'],
+    );
     final moneyIn = ReportUtils.firstNonNull([
+      summary['total_credit'],
+      summary['credit_total'],
       summary['money_in'],
       summary['external_in'],
       summary['total_in'],
     ]);
     final moneyOut = ReportUtils.firstNonNull([
+      summary['total_debit'],
+      summary['debit_total'],
       summary['money_out'],
       summary['external_out'],
       summary['total_out'],
     ]);
-    final internalMovements = ReportUtils.firstNonNull([
-      summary['internal_movements'],
-      summary['internal_movement_total'],
-      summary['internal_total'],
+    final availableBalance = ReportUtils.firstNonNull([
+      summary['available_balance'],
+      summary['availableBalance'],
+      balances['available_balance'],
+      balances['availableBalance'],
     ]);
     final items = <MapEntry<String, String>>[
       MapEntry(
@@ -489,12 +500,12 @@ class _ReportPreviewCard extends StatelessWidget {
         ReportUtils.displayMoney(moneyIn, currency: currency),
       ),
       MapEntry(
-        sw ? 'Pesa zilizotoka nje' : 'Money out',
+        sw ? 'Pesa zilizotoka' : 'Money out',
         ReportUtils.displayMoney(moneyOut, currency: currency),
       ),
       MapEntry(
-        sw ? 'Mizunguko ya ndani' : 'Internal movements',
-        ReportUtils.displayMoney(internalMovements, currency: currency),
+        sw ? 'Salio linalotumika' : 'Available balance',
+        ReportUtils.displayMoney(availableBalance, currency: currency),
       ),
     ];
     return Row(
@@ -662,13 +673,7 @@ class _ReportPreviewCard extends StatelessWidget {
       ReportUtils.firstNonNull([
         balances['inside_orbi_total'],
         balances['total_inside_orbi'],
-        balances['main_balance'],
       ]),
-    );
-    add(
-      'Available balance',
-      'Salio linalotumika',
-      balances['available_balance'],
     );
     add(
       'PaySafe / escrow',

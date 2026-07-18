@@ -7,6 +7,7 @@ import '../../../core/theme/orbi_theme.dart';
 import '../../../core/utils/amount_input_formatter.dart';
 import '../../../core/utils/backend_status_message.dart';
 import '../../../core/utils/money_format.dart';
+import '../../../core/widgets/money_text.dart';
 import '../../../core/widgets/orbi_amount_field.dart';
 import '../../../core/widgets/orbi_async_feedback.dart';
 import '../../../core/widgets/orbi_activity_card.dart';
@@ -142,16 +143,20 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
     return double.tryParse('${value ?? 0}'.replaceAll(',', '')) ?? 0;
   }
 
+  String _formatPercent(double value) {
+    final safe = value.isFinite ? value.clamp(0, 100).toDouble() : 0.0;
+    if ((safe - safe.roundToDouble()).abs() < 0.05) {
+      return '${safe.round()}%';
+    }
+    return '${safe.toStringAsFixed(1)}%';
+  }
+
   String _money(dynamic amount, String currency) {
     final locale = Localizations.localeOf(context);
     final localeTag = locale.countryCode == null || locale.countryCode!.isEmpty
         ? locale.languageCode
         : '${locale.languageCode}_${locale.countryCode}';
-    return formatAppBalanceAmount(
-      _asDouble(amount),
-      currency,
-      locale: localeTag,
-    );
+    return formatFinancialMoney(_asDouble(amount), currency, locale: localeTag);
   }
 
   Map<String, dynamic> _asMap(dynamic value) {
@@ -208,6 +213,18 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
     }
   }
 
+  bool _canManageBudgetRole(String role) {
+    final normalized = role.toUpperCase();
+    return normalized == 'OWNER' || normalized == 'MANAGER';
+  }
+
+  bool _canSpendBudgetRole(String role) {
+    final normalized = role.toUpperCase();
+    return normalized == 'OWNER' ||
+        normalized == 'MANAGER' ||
+        normalized == 'SPENDER';
+  }
+
   String _approvalLabel(String value) {
     return value.toUpperCase() == 'REVIEW'
         ? _text('Needs approval', 'Inahitaji idhini')
@@ -245,67 +262,70 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
           ? ''
           : AmountInputFormatter.format('${_asDouble(budget['budget_limit'])}'),
     );
+    final autoAmountController = TextEditingController(
+      text: budget == null || _asDouble(budget['auto_allocate_amount']) <= 0
+          ? ''
+          : AmountInputFormatter.format(
+              '${_asDouble(budget['auto_allocate_amount'])}',
+            ),
+    );
+    final autoThresholdController = TextEditingController(
+      text: budget == null || _asDouble(budget['auto_allocate_threshold']) <= 0
+          ? ''
+          : AmountInputFormatter.format(
+              '${_asDouble(budget['auto_allocate_threshold'])}',
+            ),
+    );
     var period = (budget?['period_type'] ?? 'MONTHLY').toString().toUpperCase();
     var approvalMode = (budget?['approval_mode'] ?? 'AUTO')
         .toString()
         .toUpperCase();
+    var autoAllocate = budget?['auto_allocate_enabled'] == true;
+    var autoAllocateMode = (budget?['auto_allocate_mode'] ?? 'MANUAL')
+        .toString()
+        .toUpperCase();
+    if (!['MANUAL', 'FIXED', 'PERCENT'].contains(autoAllocateMode)) {
+      autoAllocateMode = 'MANUAL';
+    }
     var status = (budget?['status'] ?? 'ACTIVE').toString().toUpperCase();
-    var submitting = false;
 
-    await showModalBottomSheet<void>(
+    final payload = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
-            Future<void> save() async {
-              if (!(formKey.currentState?.validate() ?? false) || submitting) {
+            void save() {
+              if (!(formKey.currentState?.validate() ?? false)) {
                 return;
               }
-              setSheetState(() => submitting = true);
-              try {
-                final payload = <String, dynamic>{
-                  'name': nameController.text.trim(),
-                  'purpose': purposeController.text.trim().isEmpty
-                      ? null
-                      : purposeController.text.trim(),
-                  'budget_limit': AmountInputFormatter.tryParse(
-                    limitController.text,
-                  )!,
-                  'period_type': period,
-                  'approval_mode': approvalMode,
-                  if (isEdit) 'status': status,
-                };
-                if (isEdit) {
-                  await _service.updateSharedBudget(
-                    budget['id'].toString(),
-                    payload,
-                  );
-                } else {
-                  await _service.createSharedBudget(payload);
-                }
-                if (!sheetContext.mounted) return;
-                Navigator.of(sheetContext).pop();
-                _showStatus(
-                  _text(
-                    isEdit
-                        ? 'Shared budget updated.'
-                        : 'Shared budget created.',
-                    isEdit
-                        ? 'Shared budget imesasishwa.'
-                        : 'Shared budget imeundwa.',
-                  ),
-                  error: false,
-                );
-                await _refresh();
-              } catch (error) {
-                _showStatus(error.toString(), error: true);
-              } finally {
-                if (sheetContext.mounted) {
-                  setSheetState(() => submitting = false);
-                }
-              }
+              Navigator.of(sheetContext).pop(<String, dynamic>{
+                'name': nameController.text.trim(),
+                'purpose': purposeController.text.trim().isEmpty
+                    ? null
+                    : purposeController.text.trim(),
+                'budget_limit': AmountInputFormatter.tryParse(
+                  limitController.text,
+                )!,
+                'auto_allocate_enabled': autoAllocate,
+                'auto_allocate_mode': autoAllocate
+                    ? autoAllocateMode == 'MANUAL'
+                          ? 'FIXED'
+                          : autoAllocateMode
+                    : 'MANUAL',
+                'auto_allocate_amount':
+                    AmountInputFormatter.tryParse(autoAmountController.text) ??
+                    0,
+                'auto_allocate_threshold':
+                    AmountInputFormatter.tryParse(
+                      autoThresholdController.text,
+                    ) ??
+                    0,
+                'period_type': period,
+                'approval_mode': approvalMode,
+                if (isEdit) 'status': status,
+              });
             }
 
             return _BottomSheetFrame(
@@ -396,6 +416,79 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
                       onChanged: (value) =>
                           setSheetState(() => approvalMode = value ?? 'AUTO'),
                     ),
+                    const SizedBox(height: 12),
+                    SwitchListTile.adaptive(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(
+                        _text(
+                          'Auto allocate when funded balance is low',
+                          'Auto allocate salio la Mezani likishuka',
+                        ),
+                      ),
+                      subtitle: Text(
+                        _text(
+                          'Uses allocation rules to top up this Mezani after new income.',
+                          'Itatumia allocation rules kuongeza fedha baada ya kipato kipya.',
+                        ),
+                      ),
+                      value: autoAllocate,
+                      onChanged: (value) => setSheetState(() {
+                        autoAllocate = value;
+                        if (value && autoAllocateMode == 'MANUAL') {
+                          autoAllocateMode = 'FIXED';
+                        }
+                      }),
+                    ),
+                    if (autoAllocate) ...[
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        initialValue: autoAllocateMode == 'MANUAL'
+                            ? 'FIXED'
+                            : autoAllocateMode,
+                        decoration: InputDecoration(
+                          labelText: _text(
+                            'Allocation method',
+                            'Njia ya allocation',
+                          ),
+                        ),
+                        items: [
+                          DropdownMenuItem(
+                            value: 'FIXED',
+                            child: Text(_text('Fixed amount', 'Kiasi maalum')),
+                          ),
+                          DropdownMenuItem(
+                            value: 'PERCENT',
+                            child: Text(
+                              _text('Percent of income', 'Asilimia ya kipato'),
+                            ),
+                          ),
+                        ],
+                        onChanged: (value) => setSheetState(
+                          () => autoAllocateMode = value ?? 'FIXED',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      OrbiAmountField(
+                        controller: autoAmountController,
+                        inputFormatters: [AmountInputFormatter()],
+                        label: autoAllocateMode == 'PERCENT'
+                            ? _text('Percent value', 'Thamani ya asilimia')
+                            : _text('Top-up amount', 'Kiasi cha kuongeza'),
+                        currency: autoAllocateMode == 'PERCENT'
+                            ? '%'
+                            : (budget?['currency'] ?? 'TZS').toString(),
+                      ),
+                      const SizedBox(height: 12),
+                      OrbiAmountField(
+                        controller: autoThresholdController,
+                        inputFormatters: [AmountInputFormatter()],
+                        label: _text(
+                          'Top up when available is below',
+                          'Ongeza likishuka chini ya',
+                        ),
+                        currency: (budget?['currency'] ?? 'TZS').toString(),
+                      ),
+                    ],
                     if (isEdit) ...[
                       const SizedBox(height: 12),
                       DropdownButtonFormField<String>(
@@ -425,12 +518,8 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
                     SizedBox(
                       width: double.infinity,
                       child: FilledButton(
-                        onPressed: submitting ? null : save,
-                        child: Text(
-                          submitting
-                              ? _text('Saving...', 'Inahifadhi...')
-                              : _text('Save budget', 'Hifadhi budget'),
-                        ),
+                        onPressed: save,
+                        child: Text(_text('Save budget', 'Hifadhi budget')),
                       ),
                     ),
                   ],
@@ -440,6 +529,124 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
           },
         );
       },
+    );
+
+    nameController.dispose();
+    purposeController.dispose();
+    limitController.dispose();
+    autoAmountController.dispose();
+    autoThresholdController.dispose();
+
+    if (payload == null) return;
+    final result = await _loadBusyData<Map<String, dynamic>>(
+      _text('Saving Mezani...', 'Inahifadhi Mezani...'),
+      () => isEdit
+          ? _service.updateSharedBudget(budget['id'].toString(), payload)
+          : _service.createSharedBudget(payload),
+    );
+    if (!mounted || result == null) return;
+    await _refresh();
+    if (!mounted) return;
+    _showStatus(
+      _text(
+        isEdit ? 'Mezani updated.' : 'Mezani created.',
+        isEdit ? 'Mezani imesasishwa.' : 'Mezani imeundwa.',
+      ),
+      error: false,
+    );
+  }
+
+  Future<void> _openAllocateSheet(Map<String, dynamic> budget) async {
+    final formKey = GlobalKey<FormState>();
+    final amountController = TextEditingController();
+    final noteController = TextEditingController();
+    final currency = (budget['currency'] ?? 'TZS').toString();
+
+    final payload = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        void save() {
+          if (!(formKey.currentState?.validate() ?? false)) return;
+          Navigator.of(sheetContext).pop({
+            'amount': AmountInputFormatter.tryParse(amountController.text)!,
+            'currency': currency,
+            'note': noteController.text.trim().isEmpty
+                ? null
+                : noteController.text.trim(),
+          });
+        }
+
+        return _BottomSheetFrame(
+          child: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _SheetTitle(
+                  title: _text('Allocate funds', 'Weka fedha Mezani'),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _text(
+                    'Money moves from your Operating Wallet into this Mezani reserve.',
+                    'Fedha zitatoka Operating Wallet kwenda reserve ya Mezani hii.',
+                  ),
+                  style: TextStyle(
+                    color: OrbiTheme.uiOf(context).textMuted,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                OrbiAmountField(
+                  controller: amountController,
+                  inputFormatters: [AmountInputFormatter()],
+                  label: _text('Amount to allocate', 'Kiasi cha kuweka'),
+                  currency: currency,
+                  validator: (value) =>
+                      (AmountInputFormatter.tryParse(value ?? '') ?? 0) <= 0
+                      ? _text('Enter a valid amount.', 'Weka kiasi sahihi.')
+                      : null,
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: noteController,
+                  maxLines: 2,
+                  decoration: InputDecoration(
+                    labelText: _text('Note', 'Maelezo'),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: save,
+                    child: Text(_text('Allocate funds', 'Weka fedha')),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    amountController.dispose();
+    noteController.dispose();
+
+    if (payload == null) return;
+    final result = await _loadBusyData<Map<String, dynamic>>(
+      _text('Allocating funds...', 'Inaweka fedha Mezani...'),
+      () => _service.allocateSharedBudget(budget['id'].toString(), payload),
+    );
+    if (!mounted || result == null) return;
+    await _refresh();
+    if (!mounted) return;
+    _showStatus(
+      _text('Funds allocated to Mezani.', 'Fedha zimewekwa Mezani.'),
+      error: false,
     );
   }
 
@@ -726,11 +933,11 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
   Future<void> _openSpendSheet(Map<String, dynamic> budget) async {
     final formKey = GlobalKey<FormState>();
     final amountController = TextEditingController();
-    final providerController = TextEditingController();
     final categoryController = TextEditingController();
     final referenceController = TextEditingController();
     final descriptionController = TextEditingController();
-    var spendType = 'MERCHANT_PAYMENT';
+    final agentController = TextEditingController();
+    var withdrawType = 'SHARED_BUDGET_WITHDRAWAL_TO_ACCOUNT';
     var busy = false;
     Map<String, dynamic>? preview;
 
@@ -743,17 +950,27 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
           builder: (context, setSheetState) {
             Map<String, dynamic> payload() => {
               'amount': AmountInputFormatter.tryParse(amountController.text)!,
-              'provider': providerController.text.trim(),
-              'type': spendType,
+              'provider': withdrawType == 'SHARED_BUDGET_AGENT_CASHOUT'
+                  ? agentController.text.trim()
+                  : 'ORBI_ACCOUNT',
+              'type': withdrawType,
               if (categoryController.text.trim().isNotEmpty)
                 'bill_category': categoryController.text.trim(),
               if (referenceController.text.trim().isNotEmpty)
                 'reference': referenceController.text.trim(),
               if (descriptionController.text.trim().isNotEmpty)
                 'description': descriptionController.text.trim(),
+              'metadata': {
+                'withdrawal_destination':
+                    withdrawType == 'SHARED_BUDGET_AGENT_CASHOUT'
+                    ? 'ORBI_AGENT'
+                    : 'OPERATING_WALLET',
+                if (agentController.text.trim().isNotEmpty)
+                  'agent_identifier': agentController.text.trim(),
+              },
             };
 
-            Future<void> previewSpend() async {
+            Future<void> previewWithdrawal() async {
               if (!(formKey.currentState?.validate() ?? false) || busy) return;
               setSheetState(() => busy = true);
               try {
@@ -773,7 +990,7 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
               }
             }
 
-            Future<void> settleSpend() async {
+            Future<void> settleWithdrawal() async {
               if (!(formKey.currentState?.validate() ?? false) || busy) return;
               setSheetState(() => busy = true);
               try {
@@ -787,16 +1004,16 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
                     result['approval'] != null) {
                   _showStatus(
                     _text(
-                      'Spend request sent for approval.',
-                      'Ombi la matumizi limetumwa kwa idhini.',
+                      'Withdrawal request sent for approval.',
+                      'Ombi la kutoa fedha limetumwa kwa idhini.',
                     ),
                     error: false,
                   );
                 } else {
                   _showStatus(
                     _text(
-                      'Budget spend completed.',
-                      'Matumizi ya budget yamekamilika.',
+                      'Mezani withdrawal completed.',
+                      'Utoaji kutoka Mezani umekamilika.',
                     ),
                     error: false,
                   );
@@ -827,37 +1044,38 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
                   children: [
                     _SheetTitle(
                       title: _text(
-                        'Spend from shared budget',
-                        'Tumia kutoka shared budget',
+                        'Withdraw from Mezani',
+                        'Toa fedha kutoka Mezani',
                       ),
                     ),
                     const SizedBox(height: 16),
                     DropdownButtonFormField<String>(
-                      initialValue: spendType,
+                      initialValue: withdrawType,
                       decoration: InputDecoration(
-                        labelText: _text('Spend type', 'Aina ya matumizi'),
+                        labelText: _text(
+                          'Withdraw destination',
+                          'Mahali pa kutoa fedha',
+                        ),
                       ),
                       items: [
                         DropdownMenuItem(
-                          value: 'MERCHANT_PAYMENT',
+                          value: 'SHARED_BUDGET_WITHDRAWAL_TO_ACCOUNT',
                           child: Text(
-                            _text('Merchant payment', 'Malipo ya merchant'),
+                            _text('To my Account', 'Kwenda Akaunti Yangu'),
                           ),
                         ),
                         DropdownMenuItem(
-                          value: 'BILL_PAYMENT',
-                          child: Text(_text('Bill payment', 'Malipo ya bili')),
-                        ),
-                        DropdownMenuItem(
-                          value: 'EXTERNAL_PAYMENT',
+                          value: 'SHARED_BUDGET_AGENT_CASHOUT',
                           child: Text(
-                            _text('External payment', 'Malipo ya nje'),
+                            _text('Via Orbi Agent', 'Kupitia ORBI Wakala'),
                           ),
                         ),
                       ],
-                      onChanged: (value) => setSheetState(
-                        () => spendType = value ?? 'MERCHANT_PAYMENT',
-                      ),
+                      onChanged: (value) => setSheetState(() {
+                        withdrawType =
+                            value ?? 'SHARED_BUDGET_WITHDRAWAL_TO_ACCOUNT';
+                        preview = null;
+                      }),
                     ),
                     const SizedBox(height: 12),
                     OrbiAmountField(
@@ -871,27 +1089,33 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
                           : null,
                     ),
                     const SizedBox(height: 12),
-                    TextFormField(
-                      controller: providerController,
-                      decoration: InputDecoration(
-                        labelText: _text(
-                          'Provider or merchant',
-                          'Provider au merchant',
+                    if (withdrawType == 'SHARED_BUDGET_AGENT_CASHOUT') ...[
+                      TextFormField(
+                        controller: agentController,
+                        decoration: InputDecoration(
+                          labelText: _text(
+                            'Orbi Agent ID',
+                            'Namba ya ORBI Wakala',
+                          ),
                         ),
+                        validator: (value) {
+                          if (withdrawType != 'SHARED_BUDGET_AGENT_CASHOUT') {
+                            return null;
+                          }
+                          return value == null || value.trim().length < 4
+                              ? _text(
+                                  'Enter a valid Orbi Agent ID.',
+                                  'Weka namba sahihi ya ORBI Wakala.',
+                                )
+                              : null;
+                        },
                       ),
-                      validator: (value) =>
-                          value == null || value.trim().length < 2
-                          ? _text(
-                              'Enter provider or merchant.',
-                              'Weka provider au merchant.',
-                            )
-                          : null,
-                    ),
-                    const SizedBox(height: 12),
+                      const SizedBox(height: 12),
+                    ],
                     TextFormField(
                       controller: categoryController,
                       decoration: InputDecoration(
-                        labelText: _text('Category', 'Kundi'),
+                        labelText: _text('Purpose', 'Sababu'),
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -912,9 +1136,13 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
                     if (previewBudget != null) ...[
                       const SizedBox(height: 16),
                       _PreviewBox(
-                        title: _text('Spend preview', 'Muhtasari wa matumizi'),
+                        title: _text(
+                          'Withdrawal preview',
+                          'Muhtasari wa kutoa fedha',
+                        ),
                         lines: [
-                          '${_text('Remaining after spend', 'Kitakachobaki baada ya matumizi')}: ${_money(previewBudget['remaining_amount'], currency)}',
+                          '${_text('Destination', 'Mahali')}: ${withdrawType == 'SHARED_BUDGET_AGENT_CASHOUT' ? _text('Orbi Agent', 'ORBI Wakala') : _text('To my Account', 'Kwenda Akaunti Yangu')}',
+                          '${_text('Remaining after withdrawal', 'Kitakachobaki baada ya kutoa')}: ${_money(previewBudget['remaining_amount'], currency)}',
                           if (preview?['member'] is Map &&
                               (preview!['member']
                                       as Map)['remaining_member_limit'] !=
@@ -928,16 +1156,16 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
                       children: [
                         Expanded(
                           child: OutlinedButton(
-                            onPressed: busy ? null : previewSpend,
+                            onPressed: busy ? null : previewWithdrawal,
                             child: Text(_text('Preview', 'Hakiki')),
                           ),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
                           child: FilledButton(
-                            onPressed: busy ? null : settleSpend,
+                            onPressed: busy ? null : settleWithdrawal,
                             child: Text(
-                              _text('Confirm spend', 'Thibitisha matumizi'),
+                              _text('Confirm withdraw', 'Thibitisha kutoa'),
                             ),
                           ),
                         ),
@@ -954,6 +1182,8 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
   }
 
   Future<void> _showMembers(Map<String, dynamic> budget) async {
+    final budgetRole = (budget['my_role'] ?? 'SPENDER').toString();
+    final canManageMembers = _canManageBudgetRole(budgetRole);
     final members = await _loadBusyData(
       _text('Loading members...', 'Inapakua wanachama...'),
       () => _service.listSharedBudgetMembers(budget['id'].toString()),
@@ -977,21 +1207,127 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
             else
               ...members.map((member) {
                 final label = _personLabel(member);
+                final role = (member['role'] ?? 'SPENDER').toString();
+                final canRemoveMember =
+                    canManageMembers && role.toUpperCase() != 'OWNER';
                 return _InfoRow(
                   title: label,
                   subtitle:
-                      '${_roleLabel((member['role'] ?? 'SPENDER').toString())} • ${_text('Spent', 'Ametumia')}: ${_money(member['spent_amount'], (budget['currency'] ?? 'TZS').toString())}',
+                      '${_roleLabel(role)} • ${_text('Spent', 'Ametumia')}: ${_money(member['spent_amount'], (budget['currency'] ?? 'TZS').toString())}',
                   trailing: member['member_limit'] == null
                       ? null
                       : _money(
                           member['member_limit'],
                           (budget['currency'] ?? 'TZS').toString(),
                         ),
+                  action: canRemoveMember
+                      ? IconButton(
+                          tooltip: _text('Remove member', 'Ondoa mwanachama'),
+                          icon: const Icon(Icons.person_remove_alt_1_outlined),
+                          color: Colors.redAccent,
+                          onPressed: () async {
+                            Navigator.of(context).pop();
+                            await _removeBudgetMember(budget, member);
+                          },
+                        )
+                      : null,
                 );
               }),
           ],
         ),
       ),
+    );
+  }
+
+  Future<void> _removeBudgetMember(
+    Map<String, dynamic> budget,
+    Map<String, dynamic> member,
+  ) async {
+    final budgetId = (budget['id'] ?? '').toString();
+    final memberId = (member['id'] ?? '').toString();
+    if (budgetId.isEmpty || memberId.isEmpty) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(_text('Remove member?', 'Ondoa mwanachama?')),
+        content: Text(
+          _text(
+            'This member will no longer see or spend from this Mezani.',
+            'Mwanachama huyu hataona wala kutumia Mezani hii tena.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(_text('Cancel', 'Ghairi')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(_text('Remove', 'Ondoa')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    final ok = await _loadBusyData<bool>(
+      _text('Removing member...', 'Tunaondoa mwanachama...'),
+      () async {
+        await _service.removeSharedBudgetMember(budgetId, memberId);
+        return true;
+      },
+    );
+    if (!mounted || ok != true) return;
+    await _refresh();
+    if (!mounted) return;
+    _showStatus(
+      _text(
+        'Member removed from this Mezani.',
+        'Mwanachama ameondolewa kwenye Mezani hii.',
+      ),
+      error: false,
+    );
+  }
+
+  Future<void> _leaveBudget(Map<String, dynamic> budget) async {
+    final budgetId = (budget['id'] ?? '').toString();
+    if (budgetId.isEmpty) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(_text('Leave Mezani?', 'Jiondoe kwenye Mezani?')),
+        content: Text(
+          _text(
+            'This Mezani will disappear from your list. You can only return through a new invitation.',
+            'Mezani hii itaondoka kwenye orodha yako. Utaweza kurudi kupitia mwaliko mpya tu.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(_text('Cancel', 'Ghairi')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(_text('Leave', 'Jiondoe')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    final result = await _loadBusyData<Map<String, dynamic>>(
+      _text('Leaving Mezani...', 'Unajiondoa kwenye Mezani...'),
+      () => _service.leaveSharedBudget(budgetId),
+    );
+    if (!mounted || result == null) return;
+    await _refresh();
+    if (!mounted) return;
+    _showStatus(
+      _text('You have left this Mezani.', 'Umejiondoa kwenye Mezani hii.'),
+      error: false,
     );
   }
 
@@ -1401,17 +1737,48 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
                   ..._budgets.map((budget) {
                     final currency = (budget['currency'] ?? 'TZS').toString();
                     final spent = _asDouble(budget['spent_amount']);
-                    final limit = _asDouble(budget['budget_limit']);
+                    final funded = _asDouble(budget['funded_amount']);
                     final remaining = _asDouble(
-                      budget['remaining_amount'] ?? (limit - spent),
+                      budget['remaining_amount'] ?? (funded - spent),
                     );
-                    final progress = limit <= 0
-                        ? 0.0
-                        : (spent / limit).clamp(0, 1).toDouble();
                     final role = (budget['my_role'] ?? 'SPENDER').toString();
-                    final canApprove =
-                        role.toUpperCase() == 'OWNER' ||
-                        role.toUpperCase() == 'MANAGER';
+                    final normalizedRole = role.toUpperCase();
+                    final isOwner = normalizedRole == 'OWNER';
+                    final canManage = _canManageBudgetRole(role);
+                    final canSpend = _canSpendBudgetRole(role);
+                    final showPersonalPortion = !canManage && canSpend;
+                    final memberLimitRaw = budget['member_limit'];
+                    final memberLimit = memberLimitRaw == null
+                        ? null
+                        : _asDouble(memberLimitRaw);
+                    final mySpent = _asDouble(
+                      budget['my_spent_amount'] ?? spent,
+                    );
+                    final myRemaining = memberLimit == null
+                        ? _asDouble(budget['my_remaining_limit'] ?? remaining)
+                        : _asDouble(
+                            budget['my_remaining_limit'] ??
+                                (memberLimit - mySpent),
+                          );
+                    final displayFunded = showPersonalPortion
+                        ? (memberLimit ?? funded)
+                        : funded;
+                    final displaySpent = showPersonalPortion ? mySpent : spent;
+                    final displayRemaining = showPersonalPortion
+                        ? myRemaining
+                        : remaining;
+                    final availableRatio = displayFunded <= 0
+                        ? 0.0
+                        : (displayRemaining / displayFunded)
+                              .clamp(0, 1)
+                              .toDouble();
+                    final remainingPercent = _formatPercent(
+                      availableRatio * 100,
+                    );
+                    final availableLabel = showPersonalPortion
+                        ? _text('My available', 'Changu kilichopo')
+                        : _text('Available funds', 'Fedha zilizopo');
+                    final canLeave = !isOwner;
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 12),
                       child: OrbiActivityCard(
@@ -1477,56 +1844,88 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
                                   ),
                                 ),
                                 const SizedBox(width: 10),
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: [
-                                    Text(
-                                      _money(remaining, currency),
-                                      style: TextStyle(
-                                        color: ui.textPrimary,
+                                Flexible(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: [
+                                      MoneyText(
+                                        value: _money(
+                                          displayRemaining,
+                                          currency,
+                                        ),
+                                        textAlign: TextAlign.end,
+                                        mainFontSize: 16,
+                                        sideFontSize: 10,
                                         fontWeight: FontWeight.w900,
+                                        animateValue: false,
                                       ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      _text('left', 'baki'),
-                                      style: TextStyle(
-                                        color: ui.textMuted,
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w700,
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        showPersonalPortion
+                                            ? _text('for you', 'kwako')
+                                            : _text('left', 'baki'),
+                                        style: TextStyle(
+                                          color: ui.textMuted,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w700,
+                                        ),
                                       ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
-                                PopupMenuButton<String>(
-                                  onSelected: (value) {
-                                    if (value == 'edit') {
-                                      _openBudgetForm(budget: budget);
-                                    } else if (value == 'invites') {
-                                      _showBudgetInvites(budget);
-                                    }
-                                  },
-                                  itemBuilder: (_) => [
-                                    PopupMenuItem(
-                                      value: 'edit',
-                                      child: Text(_text('Edit', 'Hariri')),
-                                    ),
-                                    PopupMenuItem(
-                                      value: 'invites',
-                                      child: Text(
-                                        _text('Invitations', 'Mialiko'),
+                                if (canManage)
+                                  PopupMenuButton<String>(
+                                    onSelected: (value) {
+                                      if (value == 'edit') {
+                                        _openBudgetForm(budget: budget);
+                                      } else if (value == 'invites') {
+                                        _showBudgetInvites(budget);
+                                      }
+                                    },
+                                    itemBuilder: (_) => [
+                                      PopupMenuItem(
+                                        value: 'edit',
+                                        child: Text(_text('Edit', 'Hariri')),
                                       ),
-                                    ),
-                                  ],
-                                ),
+                                      PopupMenuItem(
+                                        value: 'invites',
+                                        child: Text(
+                                          _text('Invitations', 'Mialiko'),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                               ],
                             ),
                             const SizedBox(height: 12),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    availableLabel,
+                                    style: TextStyle(
+                                      color: ui.textMuted,
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  remainingPercent,
+                                  style: TextStyle(
+                                    color: _sharedBudgetAccent,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
                             ClipRRect(
                               borderRadius: BorderRadius.circular(999),
                               child: LinearProgressIndicator(
-                                value: progress,
-                                minHeight: 7,
+                                value: availableRatio,
+                                minHeight: 8,
                                 color: _sharedBudgetAccent,
                                 backgroundColor: ui.cardMuted,
                               ),
@@ -1536,15 +1935,28 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
                               children: [
                                 Expanded(
                                   child: _MetricCard(
-                                    label: _text('Spent', 'Imetumika'),
-                                    value: _money(spent, currency),
+                                    label: _text('Funded', 'Imewekwa'),
+                                    value: _money(displayFunded, currency),
+                                    icon: Icons.savings_outlined,
                                   ),
                                 ),
                                 const SizedBox(width: 10),
                                 Expanded(
                                   child: _MetricCard(
-                                    label: _text('Remaining', 'Kilichobaki'),
-                                    value: _money(remaining, currency),
+                                    label: _text('Spent', 'Imetumika'),
+                                    value: _money(displaySpent, currency),
+                                    icon: Icons.payments_outlined,
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: _MetricCard(
+                                    label: showPersonalPortion
+                                        ? _text('Available to me', 'Changu')
+                                        : _text('Available', 'Kilichopo'),
+                                    value: _money(displayRemaining, currency),
+                                    footer: remainingPercent,
+                                    icon: Icons.account_balance_wallet_outlined,
                                   ),
                                 ),
                               ],
@@ -1555,6 +1967,14 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
                               runSpacing: 8,
                               children: [
                                 _Pill(text: _roleLabel(role)),
+                                _Pill(
+                                  text: isOwner
+                                      ? _text('Created by you', 'Umeunda wewe')
+                                      : _text('Invited', 'Umealikwa'),
+                                  accent: isOwner
+                                      ? const Color(0xFF10B981)
+                                      : const Color(0xFF3B82F6),
+                                ),
                                 _Pill(
                                   text: _periodLabel(
                                     (budget['period_type'] ?? 'MONTHLY')
@@ -1569,43 +1989,90 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 12),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: [
-                                _ActionButton(
-                                  label: _text('Spend', 'Tumia'),
-                                  icon: Icons.payments_outlined,
-                                  onTap: () => _openSpendSheet(budget),
-                                ),
-                                _ActionButton(
-                                  label: _text('Invite', 'Alika'),
-                                  icon: Icons.person_add_alt_1_rounded,
-                                  onTap: () => _openInviteSheet(budget),
-                                ),
-                                _ActionButton(
-                                  label: _text('Members', 'Wanachama'),
-                                  icon: Icons.groups_2_outlined,
-                                  onTap: () => _showMembers(budget),
-                                ),
-                                if (canApprove)
-                                  _ActionButton(
-                                    label: _text('Approvals', 'Idhini'),
-                                    icon: Icons.fact_check_outlined,
-                                    onTap: () => _showBudgetApprovals(budget),
-                                  ),
-                                _ActionButton(
-                                  label: _text('Activity', 'Shughuli'),
-                                  icon: Icons.receipt_long_outlined,
-                                  onTap: () => _showActivity(budget),
-                                ),
-                                _ActionButton(
-                                  label: _text('Report', 'Ripoti'),
-                                  icon: Icons.summarize_outlined,
-                                  onTap: () => _showReport(budget),
-                                ),
-                              ],
+                            const SizedBox(height: 14),
+                            LayoutBuilder(
+                              builder: (context, constraints) {
+                                final buttonWidth =
+                                    (constraints.maxWidth - 8) / 2;
+                                Widget action(_ActionButton button) =>
+                                    SizedBox(width: buttonWidth, child: button);
+                                return Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: [
+                                    if (canManage)
+                                      action(
+                                        _ActionButton(
+                                          label: _text(
+                                            'Allocate',
+                                            'Weka fedha',
+                                          ),
+                                          icon: Icons.add_card_rounded,
+                                          emphasized: true,
+                                          onTap: () =>
+                                              _openAllocateSheet(budget),
+                                        ),
+                                      ),
+                                    if (canSpend)
+                                      action(
+                                        _ActionButton(
+                                          label: _text('Withdraw', 'Toa'),
+                                          icon: Icons.payments_outlined,
+                                          emphasized: true,
+                                          onTap: () => _openSpendSheet(budget),
+                                        ),
+                                      ),
+                                    if (canManage)
+                                      action(
+                                        _ActionButton(
+                                          label: _text('Invite', 'Alika'),
+                                          icon: Icons.person_add_alt_1_rounded,
+                                          onTap: () => _openInviteSheet(budget),
+                                        ),
+                                      ),
+                                    if (canManage)
+                                      action(
+                                        _ActionButton(
+                                          label: _text('Members', 'Wanachama'),
+                                          icon: Icons.groups_2_outlined,
+                                          onTap: () => _showMembers(budget),
+                                        ),
+                                      ),
+                                    if (canManage)
+                                      action(
+                                        _ActionButton(
+                                          label: _text('Approvals', 'Idhini'),
+                                          icon: Icons.fact_check_outlined,
+                                          onTap: () =>
+                                              _showBudgetApprovals(budget),
+                                        ),
+                                      ),
+                                    action(
+                                      _ActionButton(
+                                        label: _text('Activity', 'Shughuli'),
+                                        icon: Icons.receipt_long_outlined,
+                                        onTap: () => _showActivity(budget),
+                                      ),
+                                    ),
+                                    if (canManage)
+                                      action(
+                                        _ActionButton(
+                                          label: _text('Report', 'Ripoti'),
+                                          icon: Icons.summarize_outlined,
+                                          onTap: () => _showReport(budget),
+                                        ),
+                                      ),
+                                    if (canLeave)
+                                      action(
+                                        _ActionButton(
+                                          label: _text('Leave', 'Jiondoe'),
+                                          icon: Icons.logout_rounded,
+                                          onTap: () => _leaveBudget(budget),
+                                        ),
+                                      ),
+                                  ],
+                                );
+                              },
                             ),
                           ],
                         ),
@@ -1688,16 +2155,24 @@ class _SheetTitle extends StatelessWidget {
 }
 
 class _MetricCard extends StatelessWidget {
-  const _MetricCard({required this.label, required this.value});
+  const _MetricCard({
+    required this.label,
+    required this.value,
+    this.footer,
+    this.icon,
+  });
 
   final String label;
   final String value;
+  final String? footer;
+  final IconData? icon;
 
   @override
   Widget build(BuildContext context) {
     final ui = OrbiTheme.uiOf(context);
     return Container(
-      padding: const EdgeInsets.all(12),
+      constraints: const BoxConstraints(minHeight: 88),
+      padding: const EdgeInsets.all(11),
       decoration: BoxDecoration(
         color: ui.cardMuted,
         borderRadius: BorderRadius.circular(16),
@@ -1706,23 +2181,47 @@ class _MetricCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            label,
-            style: TextStyle(
-              color: ui.textMuted,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-            ),
+          Row(
+            children: [
+              if (icon != null) ...[
+                Icon(icon, size: 14, color: _sharedBudgetAccent),
+                const SizedBox(width: 5),
+              ],
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: ui.textMuted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: TextStyle(
-              color: ui.textPrimary,
-              fontSize: 15,
-              fontWeight: FontWeight.w900,
-            ),
+          const SizedBox(height: 12),
+          MoneyText(
+            value: value,
+            mainFontSize: 16,
+            sideFontSize: 10,
+            fontWeight: FontWeight.w900,
+            animateValue: false,
           ),
+          if (footer != null) ...[
+            const SizedBox(height: 5),
+            Text(
+              footer!,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: _sharedBudgetAccent,
+                fontSize: 11,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -1730,26 +2229,32 @@ class _MetricCard extends StatelessWidget {
 }
 
 class _Pill extends StatelessWidget {
-  const _Pill({required this.text});
+  const _Pill({required this.text, this.accent});
 
   final String text;
+  final Color? accent;
 
   @override
   Widget build(BuildContext context) {
     final ui = OrbiTheme.uiOf(context);
+    final chipColor = accent ?? ui.textPrimary;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: ui.cardMuted,
+        color: accent == null
+            ? ui.cardMuted
+            : chipColor.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: ui.border),
+        border: Border.all(
+          color: accent == null ? ui.border : chipColor.withValues(alpha: 0.32),
+        ),
       ),
       child: Text(
         text,
         style: TextStyle(
-          color: ui.textPrimary,
+          color: accent == null ? ui.textPrimary : chipColor,
           fontSize: 11,
-          fontWeight: FontWeight.w700,
+          fontWeight: accent == null ? FontWeight.w700 : FontWeight.w800,
         ),
       ),
     );
@@ -1761,32 +2266,83 @@ class _ActionButton extends StatelessWidget {
     required this.label,
     required this.icon,
     required this.onTap,
+    this.emphasized = false,
   });
 
   final String label;
   final IconData icon;
   final VoidCallback onTap;
+  final bool emphasized;
 
   @override
   Widget build(BuildContext context) {
-    return OutlinedButton.icon(
-      onPressed: onTap,
-      icon: Icon(icon, size: 18, color: _sharedBudgetAccent),
-      label: Text(label),
-      style: OutlinedButton.styleFrom(
-        foregroundColor: _sharedBudgetAccent,
-        side: BorderSide(color: _sharedBudgetAccent.withValues(alpha: 0.28)),
+    final ui = OrbiTheme.uiOf(context);
+    final foreground = emphasized ? Colors.white : _sharedBudgetAccent;
+    return Material(
+      color: emphasized
+          ? _sharedBudgetAccent
+          : _sharedBudgetAccent.withValues(alpha: 0.08),
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Container(
+          height: 48,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: emphasized
+                  ? _sharedBudgetAccent.withValues(alpha: 0.72)
+                  : _sharedBudgetAccent.withValues(alpha: 0.24),
+            ),
+            boxShadow: emphasized
+                ? [
+                    BoxShadow(
+                      color: _sharedBudgetAccent.withValues(alpha: 0.22),
+                      blurRadius: 16,
+                      offset: const Offset(0, 8),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 18, color: foreground),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: emphasized ? foreground : ui.textPrimary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
 }
 
 class _InfoRow extends StatelessWidget {
-  const _InfoRow({required this.title, required this.subtitle, this.trailing});
+  const _InfoRow({
+    required this.title,
+    required this.subtitle,
+    this.trailing,
+    this.action,
+  });
 
   final String title;
   final String subtitle;
   final String? trailing;
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
@@ -1833,6 +2389,7 @@ class _InfoRow extends StatelessWidget {
                 fontWeight: FontWeight.w700,
               ),
             ),
+          if (action != null) ...[const SizedBox(width: 6), action!],
         ],
       ),
     );

@@ -50,3 +50,17 @@ ORBI should feel like a serious financial product: clear, secure, calm, and inte
 - Added haptic feedback to shared quick action tiles and Bento cards.
 - Added Android screenshot/screen-recording protection.
 - Verified with `flutter analyze` and Android debug APK build.
+## Future Business Modules TODO
+
+- Organization payroll, salary advance, and member lending are intentionally not part of the first Organization UI release.
+- Build these only after backend product rules, approval policies, ledger classification, repayment schedules, risk scoring, notifications, and audit reports are designed end-to-end.
+- Keep the first Organization UI focused on organization setup, roles, member governance, Organization Fungu, reports, and approvals.
+
+## Organization Portal Next Development Plan
+
+- Current scope: Organization Portal creates/links an organization profile, assigns the creator as organization `ADMIN`, enables organization roles, and unlocks Organization Fungu with members, invitations, reports, and approval governance.
+- Current finance capability: Organization-owned Fungu is supported. Treasury/goals hooks exist, but they should remain guarded until the product rules and user flows are verified end-to-end.
+- Not in current scope: organization budgets, automated spending, payroll, salary advance, staff loans, member lending, department wallets, and recurring organization disbursements.
+- Phase 1 completion target: finish Organization Portal setup, role visibility, member governance, Organization Fungu, reports, approvals, and clear empty states for users without an organization.
+- Phase 2 target: design Organization Budget/Mezani with explicit ledger classification, spending limits, approver policy, member/department allocation, and audit reports before exposing it in UI.
+- Phase 3 target: design payroll and salary advance as separate regulated financial products, not as simple transfer shortcuts.

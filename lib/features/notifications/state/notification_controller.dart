@@ -10,7 +10,9 @@ import '../../../core/config/app_config.dart';
 import '../../../core/network/orbi_request_headers.dart';
 import '../../../core/network/websocket/websocket_service.dart';
 import '../../../core/security/device_fingerprint.dart';
+import '../../../core/services/firebase_service.dart';
 import '../../../core/utils/user_facing_error.dart';
+import 'realtime_event_classifier.dart';
 
 enum NotificationKind { security, payment, system, marketing, kyc, goal, other }
 
@@ -330,11 +332,13 @@ class NotificationController extends ChangeNotifier {
     }
     return 'SYNC';
   }
+
   String get realtimeDebugSummary {
     final lastSeen = _lastRealtimeMessageAt?.toIso8601String() ?? 'none';
     final error = _lastRealtimeError ?? 'none';
     return 'status=$realtimeStatusLabel reconnects=$_reconnectCycles last=$lastSeen error=$error';
   }
+
   Stream<Map<String, dynamic>> get balanceUpdates =>
       _balanceUpdateController.stream;
   Stream<Map<String, dynamic>> get enterpriseAlerts =>
@@ -400,6 +404,7 @@ class NotificationController extends ChangeNotifier {
         _activeRealtimeUserId == userId &&
         _ws.isConnected &&
         _wsSubscription != null) {
+      _ws.ensureConnected();
       return;
     }
     _authToken = token;
@@ -433,6 +438,12 @@ class NotificationController extends ChangeNotifier {
         notifyListeners();
       },
     );
+    notifyListeners();
+  }
+
+  void ensureRealtime() {
+    if (_activeRealtimeToken == null || _activeRealtimeUserId == null) return;
+    _ws.ensureConnected();
     notifyListeners();
   }
 
@@ -603,7 +614,7 @@ class NotificationController extends ChangeNotifier {
         final item = NotificationItem.fromRealtime(
           Map<String, dynamic>.from(payload),
         );
-        _upsert(item);
+        _upsertRealtimeNotification(item, push: true);
       } catch (_) {
         // ignore malformed event
       }
@@ -633,8 +644,10 @@ class NotificationController extends ChangeNotifier {
         color: _colorForKind(NotificationKind.kyc),
         icon: _iconForKind(NotificationKind.kyc),
       );
-      _upsert(item);
+      _upsertRealtimeNotification(item, push: true);
     }
+
+    _ingestClassifiedRealtimeEvent(data);
 
     _emitServiceAccessEventIfPresent(data);
 
@@ -651,6 +664,47 @@ class NotificationController extends ChangeNotifier {
     if (_isBalanceAffectingEvent(data)) {
       _emitBalanceUpdate(data);
     }
+  }
+
+  void _ingestClassifiedRealtimeEvent(Map<dynamic, dynamic> data) {
+    final type = _eventType(data);
+    if (type == 'NOTIFICATION' || type == 'KYC_UPDATE') return;
+
+    final candidate = RealtimeEventClassifier.classify(data);
+    if (candidate == null || !candidate.shouldStore) return;
+
+    final kind = _kindFromCategoryOrType(candidate.category);
+    final item = NotificationItem(
+      id: candidate.id,
+      title: candidate.title,
+      message: candidate.message,
+      timestamp: candidate.timestamp,
+      isRead: false,
+      category: candidate.category,
+      kind: kind,
+      color: _colorForKind(kind),
+      icon: _iconForKind(kind),
+      metadata: candidate.metadata,
+    );
+    _upsertRealtimeNotification(item, push: candidate.shouldPush);
+  }
+
+  void _upsertRealtimeNotification(NotificationItem item, {required bool push}) {
+    _upsert(item);
+    if (!push) return;
+    unawaited(
+      FirebaseService().showRealtimeNotification(
+        id: item.id,
+        title: item.title,
+        body: item.message,
+        category: item.category,
+        data: {
+          'id': item.id,
+          'category': item.category,
+          'metadata': item.metadata,
+        },
+      ),
+    );
   }
 
   bool _isBalanceAffectingEvent(Map<dynamic, dynamic> data) {
@@ -796,7 +850,9 @@ class NotificationController extends ChangeNotifier {
           payload['code'] ??
           type,
     );
-    final message = _toLower(payload['message'] ?? payload['body'] ?? payload['subject']);
+    final message = _toLower(
+      payload['message'] ?? payload['body'] ?? payload['subject'],
+    );
 
     final isServiceAccessEvent =
         combined.contains('service_access') ||
@@ -809,12 +865,17 @@ class NotificationController extends ChangeNotifier {
     if (!isServiceAccessEvent) return;
 
     final event = <String, dynamic>{
-      'id': payload['id'] ?? payload['request_id'] ?? payload['notification_id'],
+      'id':
+          payload['id'] ?? payload['request_id'] ?? payload['notification_id'],
       'type': payload['type'] ?? combined,
       'status': payload['status'] ?? payload['decision'] ?? '',
       'requested_role': payload['requested_role'] ?? payload['role'] ?? '',
-      'message': payload['message'] ?? payload['body'] ?? payload['subject'] ?? '',
-      'timestamp': payload['timestamp'] ?? payload['created_at'] ?? DateTime.now().toIso8601String(),
+      'message':
+          payload['message'] ?? payload['body'] ?? payload['subject'] ?? '',
+      'timestamp':
+          payload['timestamp'] ??
+          payload['created_at'] ??
+          DateTime.now().toIso8601String(),
       'metadata': payload,
     }..removeWhere((_, value) => value == null || value == '');
 

@@ -256,9 +256,24 @@ class _AdvancedServicesScreenState extends State<AdvancedServicesScreen> {
         status.contains('LOCK');
   }
 
+  bool _isReturnPending(Map<String, dynamic> escrow) {
+    final status = _normalizedStatus(escrow);
+    return status.contains('RETURN_PENDING') ||
+        _pickBool([escrow['returnPending'], escrow['return_pending']]);
+  }
+
+  bool _isReleasePending(Map<String, dynamic> escrow) {
+    final status = _normalizedStatus(escrow);
+    return status.contains('RELEASE_PENDING') ||
+        status.contains('RELEASE_REQUESTED') ||
+        status.contains('AWAITING_RECEIVER_ACCEPTANCE');
+  }
+
   bool _isAwaitingReceiverAcceptance(Map<String, dynamic> escrow) {
+    if (_isReleasePending(escrow)) return true;
     if (_receiverAccepted(escrow)) return false;
     final status = _normalizedStatus(escrow);
+    if (status == 'HELD') return true;
     return status.contains('AWAIT') ||
         status.contains('RELEASE_PENDING') ||
         status.contains('RELEASE_REQUESTED') ||
@@ -277,14 +292,16 @@ class _AdvancedServicesScreenState extends State<AdvancedServicesScreen> {
     if (_actorRole(escrow) != 'sender') return false;
     return !_isTerminalStatus(status) &&
         !_isBlockedStatus(status) &&
-        !_isAwaitingReceiverAcceptance(escrow) &&
-        !_receiverAccepted(escrow);
+        !_isReturnPending(escrow) &&
+        _receiverAccepted(escrow);
   }
 
   bool _canAccept(Map<String, dynamic> escrow) {
     if (_availableActionFlag(escrow, 'accept')) return true;
     return _actorRole(escrow) == 'receiver' &&
-        _isAwaitingReceiverAcceptance(escrow) &&
+        (_isAwaitingReceiverAcceptance(escrow) ||
+            _isReleasePending(escrow) ||
+            _isReturnPending(escrow)) &&
         !_pickBool([
           escrow['holdWindowExpired'],
           escrow['hold_window_expired'],
@@ -296,8 +313,8 @@ class _AdvancedServicesScreenState extends State<AdvancedServicesScreen> {
     final status = _normalizedStatus(escrow);
     if (_actorRole(escrow) != 'sender') return false;
     return !_isTerminalStatus(status) &&
-        !status.contains('REFUND_PENDING') &&
-        !_receiverAccepted(escrow);
+        !_isReturnPending(escrow) &&
+        !status.contains('REFUND_PENDING');
   }
 
   bool _canDispute(Map<String, dynamic> escrow) {
@@ -323,10 +340,32 @@ class _AdvancedServicesScreenState extends State<AdvancedServicesScreen> {
       escrow['holdWindowExpired'],
       escrow['hold_window_expired'],
     ]);
+    if (_isReturnPending(escrow)) {
+      return actorRole == 'receiver'
+          ? _t(
+              'Sender requested a return. Accept it or open a dispute within 24 hours.',
+              'Mtumaji ameomba return. Ikubali au fungua dispute ndani ya saa 24.',
+            )
+          : _t(
+              'Return request is waiting for receiver response.',
+              'Ombi la return linasubiri jibu la mpokeaji.',
+            );
+    }
+    if (_isReleasePending(escrow)) {
+      return actorRole == 'receiver'
+          ? _t(
+              'Sender requested release. Accept to receive funds, or open a dispute if something is wrong.',
+              'Mtumaji ameomba release. Kubali upokee fedha, au fungua dispute kama kuna tatizo.',
+            )
+          : _t(
+              'Release is waiting for receiver final acceptance.',
+              'Release inasubiri idhini ya mwisho ya mpokeaji.',
+            );
+    }
     if (receiverAccepted) {
       return _t(
-        'Hold accepted. Funds stay locked while this record settles.',
-        'Hold imekubaliwa. Fedha zinaendelea kushikiliwa hadi rekodi ikamilike.',
+        'Receiver confirmed this PaySafe. Sender can now request release.',
+        'Mpokeaji amethibitisha PaySafe hii. Mtumaji anaweza kuomba release.',
       );
     }
     if (expired) {
@@ -896,6 +935,47 @@ class _AdvancedServicesScreenState extends State<AdvancedServicesScreen> {
       reason = submitted ?? '';
       if (reason.isEmpty) return;
     }
+    if (!mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          _t('Confirm PaySafe action', 'Thibitisha hatua ya PaySafe'),
+        ),
+        content: Text(
+          action == 'release'
+              ? _t(
+                  'The receiver will need to accept or reject this release before funds move.',
+                  'Mpokeaji atahitaji kukubali au kukataa release hii kabla fedha hazijahama.',
+                )
+              : action == 'accept'
+              ? _t(
+                  'This will confirm or accept the current PaySafe step.',
+                  'Hii itathibitisha au kukubali hatua ya sasa ya PaySafe.',
+                )
+              : action == 'refund'
+              ? _t(
+                  'This will cancel instantly if not confirmed, or request a 24-hour return if already confirmed.',
+                  'Hii itaghairi papo hapo kama haijathibitishwa, au kuomba return ya saa 24 kama imethibitishwa.',
+                )
+              : _t(
+                  'Funds will stay locked while customer care reviews this PaySafe.',
+                  'Fedha zitaendelea kushikiliwa wakati huduma kwa wateja wakikagua PaySafe hii.',
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(_t('Cancel', 'Ghairi')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(_t('Confirm', 'Thibitisha')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
 
     setState(() => _busy = true);
     try {
@@ -912,16 +992,13 @@ class _AdvancedServicesScreenState extends State<AdvancedServicesScreen> {
       _showSnack(
         action == 'release'
             ? _t(
-                'Release requested. Waiting for receiver acceptance.',
-                'Ombi la release limetumwa. Inasubiri idhini ya mpokeaji.',
+                'Release requested. Waiting for receiver final acceptance.',
+                'Release imeombwa. Inasubiri idhini ya mwisho ya mpokeaji.',
               )
             : action == 'accept'
-            ? _t(
-                'Hold accepted and funds released.',
-                'Hold imekubaliwa na fedha zimeachiwa.',
-              )
+            ? _t('PaySafe updated successfully.', 'PaySafe imesasishwa vizuri.')
             : action == 'refund'
-            ? _t('Refund requested.', 'Ombi la kurejesha limetumwa.')
+            ? _t('Return updated.', 'Return imesasishwa.')
             : _t('Dispute submitted.', 'Mgogoro umetumwa.'),
       );
       await _loadAll();
@@ -1246,10 +1323,13 @@ class _AdvancedServicesScreenState extends State<AdvancedServicesScreen> {
                               const SizedBox(height: 14),
                               _collapsibleSection(
                                 ui,
-                                title: _t('Merchant tools', 'Zana za merchant'),
+                                title: _t(
+                                  'Merchant tools',
+                                  'Zana za mfanyabiashara',
+                                ),
                                 subtitle: _t(
                                   'Open for merchant account setup and merchant-only shortcuts.',
-                                  'Fungua kwa usanidi wa merchant na njia za mkato za merchant pekee.',
+                                  'Fungua kwa usanidi wa mfanyabiashara na njia zake za mkato.',
                                 ),
                                 icon: Icons.storefront_outlined,
                                 expanded: _showMerchantTools,
@@ -1291,10 +1371,10 @@ class _AdvancedServicesScreenState extends State<AdvancedServicesScreen> {
 
   Widget _heroCard(OrbiUiTokens ui) {
     return OrbiBrandHeroCard(
-      title: _t('Premium services', 'Huduma zilizoboreshwa'),
+      title: _t('Services and tasks', 'Huduma na kazi'),
       subtitle: _t(
-        'PaySafe, access, merchant, and documents.',
-        'PaySafe, ruhusa, merchant, na hati.',
+        'PaySafe, account access, merchant tools, and documents.',
+        'PaySafe, ruhusa za akaunti, zana za biashara, na hati.',
       ),
       icon: Icons.grid_view_rounded,
       child: Wrap(
@@ -1925,8 +2005,8 @@ class _AdvancedServicesScreenState extends State<AdvancedServicesScreen> {
                       'Hakuna akaunti ya merchant inayotumika bado. Unaweza kuiomba hapa bila kuondoka kwenye app ya mtumiaji.',
                     )
                   : _t(
-                      'Merchant tools stay lightweight here and do not expose any admin or tenant management.',
-                      'Zana za merchant hapa ni nyepesi na hazionyeshi usimamizi wa admin au tenant.',
+                      'Merchant tools stay lightweight here and do not expose any admin or organization management.',
+                      'Zana za mfanyabiashara hapa ni nyepesi na hazionyeshi usimamizi wa admin au organization.',
                     ),
               style: TextStyle(color: ui.textMuted, height: 1.45),
             ),
