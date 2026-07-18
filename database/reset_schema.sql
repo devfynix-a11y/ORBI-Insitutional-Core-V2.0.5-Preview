@@ -593,11 +593,14 @@ CREATE TABLE IF NOT EXISTS public.transactions (
     currency TEXT DEFAULT 'TZS',
     description TEXT NOT NULL,
     type TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('created', 'pending', 'authorized', 'processing', 'settled', 'completed', 'failed', 'cancelled', 'held_for_review', 'awaiting_receiver_acceptance', 'reversed', 'refunded')),
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('created', 'pending', 'authorized', 'processing', 'settled', 'completed', 'failed', 'cancelled', 'held_for_review', 'awaiting_receiver_acceptance', 'paysafe_confirmed', 'return_requested', 'reversed', 'refunded')),
     status_notes TEXT,
     date DATE DEFAULT CURRENT_DATE,
     settlement_id UUID,
     settlement_status TEXT DEFAULT 'PENDING',
+    merchant_name TEXT,
+    category TEXT,
+    provider TEXT,
     metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -635,6 +638,15 @@ BEGIN
     END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='transactions' AND column_name='settlement_status') THEN
         ALTER TABLE public.transactions ADD COLUMN settlement_status TEXT DEFAULT 'PENDING';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='transactions' AND column_name='merchant_name') THEN
+        ALTER TABLE public.transactions ADD COLUMN merchant_name TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='transactions' AND column_name='category') THEN
+        ALTER TABLE public.transactions ADD COLUMN category TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='transactions' AND column_name='provider') THEN
+        ALTER TABLE public.transactions ADD COLUMN provider TEXT;
     END IF;
 
     -- Add User Setting Columns
@@ -745,12 +757,50 @@ BEGIN
                     'cancelled',
                     'held_for_review',
                     'awaiting_receiver_acceptance',
+                    'paysafe_confirmed',
+                    'return_requested',
                     'reversed',
                     'refunded'
                 )
             );
     END IF;
 END $$;
+
+UPDATE public.transactions
+SET
+    merchant_name = COALESCE(
+        NULLIF(BTRIM(merchant_name), ''),
+        NULLIF(BTRIM(metadata->>'merchant_name'), ''),
+        NULLIF(BTRIM(metadata->>'merchantName'), ''),
+        NULLIF(BTRIM(metadata->>'business_name'), ''),
+        NULLIF(BTRIM(metadata->>'businessName'), '')
+    ),
+    category = COALESCE(
+        NULLIF(BTRIM(category), ''),
+        NULLIF(BTRIM(metadata->>'category'), ''),
+        NULLIF(BTRIM(metadata->>'category_name'), ''),
+        NULLIF(BTRIM(metadata->>'categoryName'), ''),
+        NULLIF(BTRIM(metadata->>'category_code'), ''),
+        NULLIF(BTRIM(metadata->>'categoryCode'), '')
+    ),
+    provider = COALESCE(
+        NULLIF(BTRIM(provider), ''),
+        NULLIF(BTRIM(metadata->>'provider'), ''),
+        NULLIF(BTRIM(metadata->>'provider_name'), ''),
+        NULLIF(BTRIM(metadata->>'providerName'), ''),
+        NULLIF(BTRIM(metadata->>'provider_code'), ''),
+        NULLIF(BTRIM(metadata->>'providerCode'), '')
+    )
+WHERE merchant_name IS NULL
+   OR category IS NULL
+   OR provider IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_transactions_user_merchant_recent
+    ON public.transactions (user_id, merchant_name, created_at DESC)
+    WHERE merchant_name IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_transactions_user_category_recent
+    ON public.transactions (user_id, category, created_at DESC)
+    WHERE category IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS public.settlement_payouts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -867,6 +917,8 @@ CREATE TABLE IF NOT EXISTS public.goals (
     name TEXT NOT NULL, 
     target NUMERIC NOT NULL, 
     current NUMERIC DEFAULT 0, 
+    target_amount NUMERIC,
+    current_amount NUMERIC DEFAULT 0,
     source_wallet_id UUID REFERENCES public.wallets(id),
     deadline TIMESTAMP WITH TIME ZONE, 
     color TEXT, 
@@ -908,6 +960,7 @@ CREATE TABLE IF NOT EXISTS public.categories (
     user_id UUID REFERENCES public.users(id) ON DELETE CASCADE, 
     name TEXT NOT NULL, 
     budget TEXT, 
+    spent_amount NUMERIC DEFAULT 0,
     color TEXT, 
     icon TEXT, 
     budget_period TEXT DEFAULT 'MONTHLY',
@@ -969,6 +1022,7 @@ CREATE TABLE IF NOT EXISTS public.shared_pot_members (
     pot_id UUID REFERENCES public.shared_pots(id) ON DELETE CASCADE,
     user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
     role TEXT DEFAULT 'CONTRIBUTOR' CHECK (role IN ('OWNER', 'MANAGER', 'CONTRIBUTOR', 'VIEWER')),
+    status TEXT DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'PAUSED', 'REMOVED')),
     contribution_target NUMERIC,
     contributed_amount NUMERIC DEFAULT 0,
     metadata JSONB DEFAULT '{}'::jsonb,
@@ -1000,7 +1054,12 @@ CREATE TABLE IF NOT EXISTS public.shared_budgets (
     purpose TEXT,
     currency TEXT DEFAULT 'TZS',
     budget_limit NUMERIC NOT NULL,
+    funded_amount NUMERIC DEFAULT 0,
     spent_amount NUMERIC DEFAULT 0,
+    auto_allocate_enabled BOOLEAN DEFAULT FALSE,
+    auto_allocate_mode TEXT DEFAULT 'MANUAL' CHECK (auto_allocate_mode IN ('MANUAL', 'FIXED', 'PERCENT')),
+    auto_allocate_amount NUMERIC DEFAULT 0,
+    auto_allocate_threshold NUMERIC DEFAULT 0,
     period_type TEXT DEFAULT 'MONTHLY' CHECK (period_type IN ('WEEKLY', 'MONTHLY', 'CUSTOM')),
     approval_mode TEXT DEFAULT 'AUTO' CHECK (approval_mode IN ('AUTO', 'REVIEW')),
     status TEXT DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'PAUSED', 'ARCHIVED')),
@@ -1078,6 +1137,48 @@ CREATE TABLE IF NOT EXISTS public.shared_budget_approvals (
 
 DO $$
 BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema='public' AND table_name='shared_budgets' AND column_name='funded_amount'
+    ) THEN
+        ALTER TABLE public.shared_budgets ADD COLUMN funded_amount NUMERIC DEFAULT 0;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema='public' AND table_name='shared_budgets' AND column_name='auto_allocate_enabled'
+    ) THEN
+        ALTER TABLE public.shared_budgets ADD COLUMN auto_allocate_enabled BOOLEAN DEFAULT FALSE;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema='public' AND table_name='shared_budgets' AND column_name='auto_allocate_mode'
+    ) THEN
+        ALTER TABLE public.shared_budgets ADD COLUMN auto_allocate_mode TEXT DEFAULT 'MANUAL';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema='public' AND table_name='shared_budgets' AND column_name='auto_allocate_amount'
+    ) THEN
+        ALTER TABLE public.shared_budgets ADD COLUMN auto_allocate_amount NUMERIC DEFAULT 0;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema='public' AND table_name='shared_budgets' AND column_name='auto_allocate_threshold'
+    ) THEN
+        ALTER TABLE public.shared_budgets ADD COLUMN auto_allocate_threshold NUMERIC DEFAULT 0;
+    END IF;
+    UPDATE public.shared_budgets
+       SET funded_amount = COALESCE(funded_amount, 0),
+           auto_allocate_enabled = COALESCE(auto_allocate_enabled, FALSE),
+           auto_allocate_mode = COALESCE(NULLIF(auto_allocate_mode, ''), 'MANUAL'),
+           auto_allocate_amount = COALESCE(auto_allocate_amount, 0),
+           auto_allocate_threshold = COALESCE(auto_allocate_threshold, 0)
+     WHERE funded_amount IS NULL
+        OR auto_allocate_enabled IS NULL
+        OR auto_allocate_mode IS NULL
+        OR auto_allocate_amount IS NULL
+        OR auto_allocate_threshold IS NULL;
+
     DELETE FROM public.shared_pot_members spm
     WHERE (spm.pot_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.shared_pots sp WHERE sp.id = spm.pot_id))
        OR (spm.user_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = spm.user_id));
@@ -1265,6 +1366,10 @@ CREATE INDEX IF NOT EXISTS idx_shared_pot_invites_pot
     ON public.shared_pot_invitations (pot_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_shared_pot_invites_invitee
     ON public.shared_pot_invitations (invitee_user_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_shared_pot_members_pot
+    ON public.shared_pot_members (pot_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_shared_pot_members_user
+    ON public.shared_pot_members (user_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_shared_budgets_owner
     ON public.shared_budgets (owner_user_id, status);
 CREATE INDEX IF NOT EXISTS idx_shared_budget_members_budget
@@ -1315,7 +1420,7 @@ CREATE TABLE IF NOT EXISTS public.escrow_agreements (
     amount NUMERIC NOT NULL,
     currency TEXT NOT NULL,
     conditions JSONB DEFAULT '{}'::jsonb,
-    status TEXT DEFAULT 'HELD' CHECK (status IN ('HELD', 'RELEASE_PENDING', 'RELEASED', 'DISPUTED', 'REFUNDED')),
+    status TEXT DEFAULT 'HELD' CHECK (status IN ('HELD', 'RELEASE_PENDING', 'RETURN_PENDING', 'RELEASED', 'DISPUTED', 'REFUNDED')),
     dispute_metadata JSONB DEFAULT '{}'::jsonb,
     metadata JSONB DEFAULT '{}'::jsonb,
     expires_at TIMESTAMP WITH TIME ZONE,
@@ -1400,7 +1505,57 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='goals' AND column_name='monthly_target') THEN
         ALTER TABLE public.goals ADD COLUMN monthly_target NUMERIC;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='goals' AND column_name='target_amount') THEN
+        ALTER TABLE public.goals ADD COLUMN target_amount NUMERIC;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='goals' AND column_name='current_amount') THEN
+        ALTER TABLE public.goals ADD COLUMN current_amount NUMERIC DEFAULT 0;
+    END IF;
 END $$;
+
+UPDATE public.goals
+   SET target_amount = COALESCE(target_amount, target),
+       current_amount = COALESCE(current_amount, current, 0)
+ WHERE target_amount IS NULL OR current_amount IS NULL;
+
+CREATE OR REPLACE FUNCTION public.sync_goal_amount_columns()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        NEW.target_amount := COALESCE(NEW.target_amount, NEW.target);
+        NEW.target := COALESCE(NEW.target, NEW.target_amount);
+        NEW.current_amount := COALESCE(NEW.current_amount, NEW.current, 0);
+        NEW.current := COALESCE(NEW.current, NEW.current_amount, 0);
+        RETURN NEW;
+    END IF;
+
+    IF NEW.target_amount IS DISTINCT FROM OLD.target_amount AND NEW.target IS NOT DISTINCT FROM OLD.target THEN
+        NEW.target := COALESCE(NEW.target_amount, NEW.target, 0);
+    ELSIF NEW.target IS DISTINCT FROM OLD.target AND NEW.target_amount IS NOT DISTINCT FROM OLD.target_amount THEN
+        NEW.target_amount := NEW.target;
+    ELSE
+        NEW.target_amount := COALESCE(NEW.target_amount, NEW.target);
+        NEW.target := COALESCE(NEW.target, NEW.target_amount);
+    END IF;
+
+    IF NEW.current_amount IS DISTINCT FROM OLD.current_amount AND NEW.current IS NOT DISTINCT FROM OLD.current THEN
+        NEW.current := COALESCE(NEW.current_amount, 0);
+    ELSIF NEW.current IS DISTINCT FROM OLD.current AND NEW.current_amount IS NOT DISTINCT FROM OLD.current_amount THEN
+        NEW.current_amount := COALESCE(NEW.current, 0);
+    ELSE
+        NEW.current_amount := COALESCE(NEW.current_amount, NEW.current, 0);
+        NEW.current := COALESCE(NEW.current, NEW.current_amount, 0);
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_sync_goal_amount_columns ON public.goals;
+CREATE TRIGGER trg_sync_goal_amount_columns
+BEFORE INSERT OR UPDATE ON public.goals
+FOR EACH ROW
+EXECUTE FUNCTION public.sync_goal_amount_columns();
 
 DO $$
 BEGIN
@@ -1417,7 +1572,14 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='categories' AND column_name='budget_period') THEN
         ALTER TABLE public.categories ADD COLUMN budget_period TEXT DEFAULT 'MONTHLY';
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='categories' AND column_name='spent_amount') THEN
+        ALTER TABLE public.categories ADD COLUMN spent_amount NUMERIC DEFAULT 0;
+    END IF;
 END $$;
+
+UPDATE public.categories
+   SET spent_amount = COALESCE(spent_amount, 0)
+ WHERE spent_amount IS NULL;
 
 CREATE TABLE IF NOT EXISTS public.budget_alerts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -2317,6 +2479,64 @@ CREATE TABLE IF NOT EXISTS public.settlement_lifecycle (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Compatibility columns for the settlement scheduler/manager during the
+-- V93 lifecycle schema transition. Keep these populated from authoritative
+-- settlement_lifecycle fields and related movement records until all runtime
+-- services are fully migrated to stage/status/attempt_count/net_amount.
+ALTER TABLE public.settlement_lifecycle
+    ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS amount NUMERIC NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS current_phase TEXT NOT NULL DEFAULT 'EXTERNAL_PENDING',
+    ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS phase_started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    ADD COLUMN IF NOT EXISTS phase_completed_at TIMESTAMP WITH TIME ZONE,
+    ADD COLUMN IF NOT EXISTS auto_settle_at TIMESTAMP WITH TIME ZONE,
+    ADD COLUMN IF NOT EXISTS auto_settle_executed_at TIMESTAMP WITH TIME ZONE,
+    ADD COLUMN IF NOT EXISTS external_settlement_id TEXT,
+    ADD COLUMN IF NOT EXISTS reconciliation_id TEXT,
+    ADD COLUMN IF NOT EXISTS reconciliation_result JSONB,
+    ADD COLUMN IF NOT EXISTS financial_tx_id UUID,
+    ADD COLUMN IF NOT EXISTS wallet_id UUID REFERENCES public.wallets(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS order_id TEXT;
+
+UPDATE public.settlement_lifecycle sl
+SET
+    user_id = COALESCE(
+        sl.user_id,
+        (SELECT t.user_id FROM public.transactions t WHERE t.id = sl.transaction_id LIMIT 1),
+        (SELECT efm.user_id FROM public.external_fund_movements efm WHERE efm.id = sl.external_movement_id LIMIT 1)
+    ),
+    amount = CASE
+        WHEN sl.amount IS NULL OR sl.amount = 0 THEN COALESCE(NULLIF(sl.net_amount, 0), sl.gross_amount, 0)
+        ELSE sl.amount
+    END,
+    retry_count = COALESCE(NULLIF(sl.retry_count, 0), sl.attempt_count, 0),
+    phase_started_at = COALESCE(
+        sl.phase_started_at,
+        sl.processing_at,
+        sl.queued_at,
+        sl.initiated_at,
+        sl.created_at,
+        NOW()
+    ),
+    phase_completed_at = COALESCE(
+        sl.phase_completed_at,
+        sl.reconciled_at,
+        sl.settled_at,
+        sl.failed_at,
+        sl.reversed_at
+    ),
+    auto_settle_at = COALESCE(sl.auto_settle_at, sl.provider_confirmed_at, sl.sent_to_provider_at),
+    current_phase = COALESCE(NULLIF(sl.current_phase, ''), 'EXTERNAL_PENDING'),
+    external_settlement_id = COALESCE(sl.external_settlement_id, sl.provider_reference, sl.settlement_batch_id)
+WHERE sl.user_id IS NULL
+   OR sl.amount = 0
+   OR sl.retry_count = 0
+   OR sl.phase_started_at IS NULL
+   OR sl.phase_completed_at IS NULL
+   OR sl.auto_settle_at IS NULL
+   OR sl.external_settlement_id IS NULL;
 
 DO $$
 DECLARE
@@ -3694,6 +3914,9 @@ BEGIN
             status,
             date,
             metadata,
+            merchant_name,
+            category,
+            provider,
             category_id
         ) VALUES (
             p_tx_id,
@@ -3707,6 +3930,26 @@ BEGIN
             p_status,
             p_date,
             COALESCE(p_metadata, '{}'::jsonb),
+            NULLIF(BTRIM(COALESCE(
+                p_metadata->>'merchant_name',
+                p_metadata->>'merchantName',
+                p_metadata->>'business_name',
+                p_metadata->>'businessName'
+            )), ''),
+            NULLIF(BTRIM(COALESCE(
+                p_metadata->>'category',
+                p_metadata->>'category_name',
+                p_metadata->>'categoryName',
+                p_metadata->>'category_code',
+                p_metadata->>'categoryCode'
+            )), ''),
+            NULLIF(BTRIM(COALESCE(
+                p_metadata->>'provider',
+                p_metadata->>'provider_name',
+                p_metadata->>'providerName',
+                p_metadata->>'provider_code',
+                p_metadata->>'providerCode'
+            )), ''),
             p_category_id
         );
     EXCEPTION
@@ -4468,13 +4711,14 @@ BEGIN
     );
 
     INSERT INTO public.shared_pot_members (
-        pot_id, user_id, role, contributed_amount, metadata
+        pot_id, user_id, role, status, contributed_amount, metadata
     ) VALUES (
-        p_pot_id, p_user_id, COALESCE(NULLIF(trim(p_member_role), ''), 'CONTRIBUTOR'), v_new_contributed_amount, COALESCE(p_member_metadata, '{}'::jsonb)
+        p_pot_id, p_user_id, COALESCE(NULLIF(trim(p_member_role), ''), 'CONTRIBUTOR'), 'ACTIVE', v_new_contributed_amount, COALESCE(p_member_metadata, '{}'::jsonb)
     )
     ON CONFLICT (pot_id, user_id)
     DO UPDATE SET
         role = EXCLUDED.role,
+        status = 'ACTIVE',
         contributed_amount = v_new_contributed_amount,
         metadata = EXCLUDED.metadata;
 
@@ -6409,7 +6653,7 @@ END $$;
 
 ALTER TABLE public.escrow_agreements
     ADD CONSTRAINT escrow_agreements_status_check
-    CHECK (status IN ('HELD', 'RELEASE_PENDING', 'RELEASED', 'DISPUTED', 'REFUNDED'));
+    CHECK (status IN ('HELD', 'RELEASE_PENDING', 'RETURN_PENDING', 'RELEASED', 'DISPUTED', 'REFUNDED'));
 
 DO $$
 BEGIN
@@ -6601,7 +6845,7 @@ BEGIN
                 'idempotent', TRUE
             );
         END IF;
-        IF v_agreement.status NOT IN ('HELD', 'RELEASE_PENDING') THEN
+        IF v_agreement.status NOT IN ('HELD', 'RELEASE_PENDING', 'RETURN_PENDING') THEN
             RAISE EXCEPTION 'PAYSAFE_STATE_INVALID: cannot dispute escrow in state %', v_agreement.status;
         END IF;
         IF NULLIF(BTRIM(COALESCE(p_reason, '')), '') IS NULL THEN
@@ -6648,7 +6892,7 @@ BEGIN
         IF p_actor_id <> v_agreement.sender_id THEN
             RAISE EXCEPTION 'PAYSAFE_ACTOR_UNAUTHORIZED';
         END IF;
-        IF v_agreement.status IN ('RELEASE_PENDING', 'RELEASED') THEN
+        IF v_agreement.status = 'RELEASED' THEN
             RETURN jsonb_build_object(
                 'referenceId', p_reference_id,
                 'transactionId', v_agreement.transaction_id,
@@ -6659,22 +6903,20 @@ BEGIN
         IF v_agreement.status <> 'HELD' THEN
             RAISE EXCEPTION 'PAYSAFE_STATE_INVALID: cannot release escrow in state %', v_agreement.status;
         END IF;
+        IF v_agreement.receiver_accepted_at IS NULL AND v_agreement.receiver_accepted_by IS NULL THEN
+            RAISE EXCEPTION 'PAYSAFE_RECEIVER_CONFIRM_REQUIRED';
+        END IF;
         UPDATE public.escrow_agreements
         SET
             status = 'RELEASE_PENDING',
             release_requested_at = v_now,
             release_requested_by = p_actor_id,
-            expires_at = COALESCE(
-                CASE
-                    WHEN expires_at IS NOT NULL AND expires_at > v_now THEN expires_at
-                    ELSE NULL
-                END,
-                v_now + make_interval(hours => GREATEST(1, LEAST(168, COALESCE((metadata->>'hold_window_hours')::INT, 24))))
-            ),
+            expires_at = v_now + make_interval(hours => GREATEST(1, LEAST(168, COALESCE((metadata->>'hold_window_hours')::INT, 24)))),
             metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
                 'escrow_status', 'RELEASE_PENDING',
                 'release_requested_at', v_now,
-                'release_requested_by', p_actor_id
+                'release_requested_by', p_actor_id,
+                'release_response_required_by', v_now + make_interval(hours => GREATEST(1, LEAST(168, COALESCE((metadata->>'hold_window_hours')::INT, 24))))
             ),
             updated_at = v_now
         WHERE id = v_agreement.id;
@@ -6682,7 +6924,7 @@ BEGIN
         UPDATE public.transactions
         SET
             status = 'awaiting_receiver_acceptance',
-            status_notes = 'PaySafe release requested and waiting for receiver acceptance.',
+            status_notes = 'PaySafe release requested and waiting for receiver final acceptance.',
             metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
                 'escrow_status', 'RELEASE_PENDING',
                 'release_requested_at', v_now,
@@ -6697,7 +6939,7 @@ BEGIN
             v_tx.status,
             'awaiting_receiver_acceptance',
             p_actor_id::TEXT,
-            jsonb_build_object('paysafe_action', v_action)
+            jsonb_build_object('paysafe_action', 'RELEASE_REQUEST')
         );
 
         RETURN jsonb_build_object(
@@ -6705,11 +6947,7 @@ BEGIN
             'transactionId', v_tx.id,
             'status', 'RELEASE_PENDING',
             'releaseRequestedAt', v_now,
-            'expiresAt', (
-                SELECT ea.expires_at
-                FROM public.escrow_agreements ea
-                WHERE ea.id = v_agreement.id
-            ),
+            'requiresReceiverFinalAcceptance', TRUE,
             'idempotent', FALSE
         );
     ELSIF v_action = 'ACCEPT' THEN
@@ -6724,14 +6962,124 @@ BEGIN
                 'idempotent', TRUE
             );
         END IF;
-        IF v_agreement.status <> 'RELEASE_PENDING' THEN
+        IF v_agreement.status = 'RETURN_PENDING' THEN
+            IF v_agreement.expires_at IS NOT NULL AND v_agreement.expires_at < v_now THEN
+                RAISE EXCEPTION 'PAYSAFE_RETURN_WINDOW_EXPIRED';
+            END IF;
+            v_action := 'REFUND';
+            p_reason := COALESCE(NULLIF(BTRIM(p_reason), ''), 'Return accepted by receiver.');
+            v_target_user_id := v_agreement.sender_id;
+            v_target_vault_id := COALESCE(p_receiver_vault_id, v_agreement.source_vault_id);
+        ELSIF v_agreement.status = 'RELEASE_PENDING' THEN
+            IF v_agreement.expires_at IS NOT NULL AND v_agreement.expires_at < v_now THEN
+                UPDATE public.escrow_agreements
+                SET
+                    status = 'DISPUTED',
+                    disputed_at = v_now,
+                    dispute_metadata = COALESCE(dispute_metadata, '{}'::jsonb) || jsonb_build_object(
+                        'reason', 'PAYSAFE_RELEASE_WINDOW_EXPIRED',
+                        'actor_id', p_actor_id,
+                        'disputed_at', v_now,
+                        'auto_flagged', TRUE
+                    ),
+                    metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+                        'escrow_status', 'DISPUTED',
+                        'auto_flagged_reason', 'PAYSAFE_RELEASE_WINDOW_EXPIRED',
+                        'auto_flagged_at', v_now
+                    ),
+                    updated_at = v_now
+                WHERE id = v_agreement.id;
+
+                UPDATE public.transactions
+                SET
+                    status = 'held_for_review',
+                    status_notes = 'PaySafe release window expired. Customer care resolution required.',
+                    metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+                        'escrow_status', 'DISPUTED',
+                        'auto_flagged_reason', 'PAYSAFE_RELEASE_WINDOW_EXPIRED',
+                        'auto_flagged_at', v_now
+                    ),
+                    updated_at = v_now
+                WHERE id = v_tx.id;
+
+                INSERT INTO public.transaction_events (transaction_id, old_state, new_state, actor, metadata)
+                VALUES (
+                    v_tx.id,
+                    v_tx.status,
+                    'held_for_review',
+                    p_actor_id::TEXT,
+                    jsonb_build_object('paysafe_action', 'AUTO_FLAG_EXPIRED_RELEASE')
+                );
+
+                RETURN jsonb_build_object(
+                    'referenceId', p_reference_id,
+                    'transactionId', v_tx.id,
+                    'status', 'DISPUTED',
+                    'flaggedReason', 'PAYSAFE_RELEASE_WINDOW_EXPIRED',
+                    'idempotent', FALSE
+                );
+            END IF;
+            v_action := 'RELEASE';
+            v_target_user_id := v_agreement.receiver_id;
+            v_target_vault_id := COALESCE(p_receiver_vault_id, v_agreement.receiver_vault_id);
+        ELSIF v_agreement.status = 'HELD' THEN
+            IF v_agreement.receiver_accepted_at IS NOT NULL OR v_agreement.receiver_accepted_by IS NOT NULL THEN
+                RETURN jsonb_build_object(
+                    'referenceId', p_reference_id,
+                    'transactionId', v_agreement.transaction_id,
+                    'status', v_agreement.status,
+                    'receiverAccepted', TRUE,
+                    'idempotent', TRUE
+                );
+            END IF;
+            IF v_agreement.expires_at IS NOT NULL AND v_agreement.expires_at < v_now THEN
+                RAISE EXCEPTION 'PAYSAFE_CONFIRM_WINDOW_EXPIRED';
+            END IF;
+
+            UPDATE public.escrow_agreements
+            SET
+                receiver_accepted_at = v_now,
+                receiver_accepted_by = p_actor_id,
+                metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+                    'escrow_status', 'HELD',
+                    'receiver_confirmed_at', v_now,
+                    'receiver_confirmed_by', p_actor_id
+                ),
+                updated_at = v_now
+            WHERE id = v_agreement.id;
+
+            UPDATE public.transactions
+            SET
+                status = 'paysafe_confirmed',
+                status_notes = 'PaySafe hold confirmed by receiver. Sender release is required for settlement.',
+                metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+                    'escrow_status', 'HELD',
+                    'receiver_confirmed_at', v_now,
+                    'receiver_confirmed_by', p_actor_id
+                ),
+                updated_at = v_now
+            WHERE id = v_tx.id;
+
+            INSERT INTO public.transaction_events (transaction_id, old_state, new_state, actor, metadata)
+            VALUES (
+                v_tx.id,
+                v_tx.status,
+                'paysafe_confirmed',
+                p_actor_id::TEXT,
+                jsonb_build_object('paysafe_action', 'CONFIRM_HOLD')
+            );
+
+            RETURN jsonb_build_object(
+                'referenceId', p_reference_id,
+                'transactionId', v_tx.id,
+                'status', 'HELD',
+                'receiverAccepted', TRUE,
+                'requiresSenderRelease', TRUE,
+                'idempotent', FALSE
+            );
+        ELSE
             RAISE EXCEPTION 'PAYSAFE_STATE_INVALID: cannot accept escrow in state %', v_agreement.status;
         END IF;
-        IF v_agreement.expires_at IS NOT NULL AND v_agreement.expires_at < v_now THEN
-            RAISE EXCEPTION 'PAYSAFE_RELEASE_WINDOW_EXPIRED';
-        END IF;
-        v_target_user_id := v_agreement.receiver_id;
-        v_target_vault_id := COALESCE(p_receiver_vault_id, v_agreement.receiver_vault_id);
     ELSE
         IF v_agreement.status = 'REFUNDED' THEN
             RETURN jsonb_build_object(
@@ -6749,6 +7097,54 @@ BEGIN
         END IF;
         IF NULLIF(BTRIM(COALESCE(p_reason, '')), '') IS NULL THEN
             RAISE EXCEPTION 'PAYSAFE_REFUND_REASON_REQUIRED';
+        END IF;
+        IF (v_agreement.receiver_accepted_at IS NOT NULL OR v_agreement.receiver_accepted_by IS NOT NULL)
+           AND v_agreement.status <> 'DISPUTED' THEN
+            UPDATE public.escrow_agreements
+            SET
+                status = 'RETURN_PENDING',
+                expires_at = v_now + INTERVAL '24 hours',
+                metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+                    'escrow_status', 'RETURN_PENDING',
+                    'return_requested_at', v_now,
+                    'return_requested_by', p_actor_id,
+                    'return_reason', p_reason,
+                    'return_auto_refund_at', v_now + INTERVAL '24 hours'
+                ),
+                updated_at = v_now
+            WHERE id = v_agreement.id;
+
+            UPDATE public.transactions
+            SET
+                status = 'return_requested',
+                status_notes = p_reason,
+                metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+                    'escrow_status', 'RETURN_PENDING',
+                    'return_requested_at', v_now,
+                    'return_requested_by', p_actor_id,
+                    'return_reason', p_reason,
+                    'return_auto_refund_at', v_now + INTERVAL '24 hours'
+                ),
+                updated_at = v_now
+            WHERE id = v_tx.id;
+
+            INSERT INTO public.transaction_events (transaction_id, old_state, new_state, actor, metadata)
+            VALUES (
+                v_tx.id,
+                v_tx.status,
+                'return_requested',
+                p_actor_id::TEXT,
+                jsonb_build_object('paysafe_action', 'RETURN_REQUEST', 'reason', p_reason)
+            );
+
+            RETURN jsonb_build_object(
+                'referenceId', p_reference_id,
+                'transactionId', v_tx.id,
+                'status', 'RETURN_PENDING',
+                'returnRequestedAt', v_now,
+                'autoRefundAt', v_now + INTERVAL '24 hours',
+                'idempotent', FALSE
+            );
         END IF;
         v_target_user_id := v_agreement.sender_id;
         v_target_vault_id := COALESCE(p_receiver_vault_id, v_agreement.source_vault_id);
@@ -6846,11 +7242,9 @@ BEGIN
 
     UPDATE public.escrow_agreements
     SET
-        status = CASE WHEN v_action = 'ACCEPT' THEN 'RELEASED' ELSE 'REFUNDED' END,
-        receiver_vault_id = CASE WHEN v_action = 'ACCEPT' THEN v_target_vault.id ELSE receiver_vault_id END,
-        receiver_accepted_at = CASE WHEN v_action = 'ACCEPT' THEN v_now ELSE receiver_accepted_at END,
-        receiver_accepted_by = CASE WHEN v_action = 'ACCEPT' THEN p_actor_id ELSE receiver_accepted_by END,
-        released_at = CASE WHEN v_action = 'ACCEPT' THEN v_now ELSE released_at END,
+        status = CASE WHEN v_action = 'RELEASE' THEN 'RELEASED' ELSE 'REFUNDED' END,
+        receiver_vault_id = CASE WHEN v_action = 'RELEASE' THEN v_target_vault.id ELSE receiver_vault_id END,
+        released_at = CASE WHEN v_action = 'RELEASE' THEN v_now ELSE released_at END,
         refunded_at = CASE WHEN v_action = 'REFUND' THEN v_now ELSE refunded_at END,
         metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
             'last_action', v_action,
@@ -6858,17 +7252,17 @@ BEGIN
             'last_action_at', v_now,
             'target_vault_id', v_target_vault.id,
             'reason', p_reason,
-            'escrow_status', CASE WHEN v_action = 'ACCEPT' THEN 'RELEASED' ELSE 'REFUNDED' END
+            'escrow_status', CASE WHEN v_action = 'RELEASE' THEN 'RELEASED' ELSE 'REFUNDED' END
         ),
         updated_at = v_now
     WHERE id = v_agreement.id;
 
     UPDATE public.transactions
     SET
-        status = CASE WHEN v_action = 'ACCEPT' THEN 'completed' ELSE 'refunded' END,
+        status = CASE WHEN v_action = 'RELEASE' THEN 'completed' ELSE 'refunded' END,
         status_notes = COALESCE(NULLIF(BTRIM(p_reason), ''), 'PaySafe ' || LOWER(v_action) || ' completed.'),
         metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
-            'escrow_status', CASE WHEN v_action = 'ACCEPT' THEN 'RELEASED' ELSE 'REFUNDED' END,
+            'escrow_status', CASE WHEN v_action = 'RELEASE' THEN 'RELEASED' ELSE 'REFUNDED' END,
             'escrow_action_at', v_now,
             'escrow_action_by', p_actor_id,
             'escrow_target_vault_id', v_target_vault.id
@@ -6880,7 +7274,7 @@ BEGIN
     VALUES (
         v_tx.id,
         v_tx.status,
-        CASE WHEN v_action = 'ACCEPT' THEN 'completed' ELSE 'refunded' END,
+        CASE WHEN v_action = 'RELEASE' THEN 'completed' ELSE 'refunded' END,
         p_actor_id::TEXT,
         jsonb_build_object('paysafe_action', v_action, 'reason', p_reason)
     );
@@ -6888,7 +7282,7 @@ BEGIN
     RETURN jsonb_build_object(
         'referenceId', p_reference_id,
         'transactionId', v_tx.id,
-        'status', CASE WHEN v_action = 'ACCEPT' THEN 'RELEASED' ELSE 'REFUNDED' END,
+        'status', CASE WHEN v_action = 'RELEASE' THEN 'RELEASED' ELSE 'REFUNDED' END,
         'amount', v_agreement.amount,
         'currency', v_agreement.currency,
         'targetVaultId', v_target_vault.id,
@@ -7949,9 +8343,9 @@ BEGIN
     RETURNING * INTO v_pot;
 
     INSERT INTO public.shared_pot_members (
-        pot_id, user_id, role, contributed_amount, metadata
+        pot_id, user_id, role, status, contributed_amount, metadata
     ) VALUES (
-        v_pot.id, v_actor, 'OWNER', 0,
+        v_pot.id, v_actor, 'OWNER', 'ACTIVE', 0,
         jsonb_build_object('owner_membership', TRUE, 'created_atomically', TRUE)
     );
 
@@ -8022,11 +8416,12 @@ BEGIN
 
     IF v_action = 'ACCEPT' THEN
         INSERT INTO public.shared_pot_members (
-            pot_id, user_id, role, contributed_amount, metadata
+            pot_id, user_id, role, status, contributed_amount, metadata
         ) VALUES (
             v_invite.pot_id,
             v_actor,
             v_invite.role,
+            'ACTIVE',
             0,
             jsonb_build_object(
                 'joined_via_invitation', v_invite.id,
@@ -8034,12 +8429,13 @@ BEGIN
                 'created_atomically', TRUE
             )
         )
-        ON CONFLICT (pot_id, user_id) DO NOTHING
+        ON CONFLICT (pot_id, user_id) DO UPDATE
+        SET
+            role = EXCLUDED.role,
+            status = 'ACTIVE',
+            metadata = COALESCE(public.shared_pot_members.metadata, '{}'::jsonb)
+                || EXCLUDED.metadata
         RETURNING * INTO v_member;
-
-        IF v_member.id IS NULL THEN
-            RAISE EXCEPTION 'SHARED_POT_MEMBER_ALREADY_EXISTS';
-        END IF;
     END IF;
 
     UPDATE public.shared_pot_invitations
@@ -8108,7 +8504,7 @@ BEGIN
 
     SELECT * INTO v_member
     FROM public.shared_pot_members
-    WHERE pot_id = p_pot_id AND user_id = v_actor
+    WHERE pot_id = p_pot_id AND user_id = v_actor AND status = 'ACTIVE'
     FOR UPDATE;
     IF NOT FOUND OR v_member.role NOT IN ('OWNER', 'MANAGER', 'CONTRIBUTOR') THEN
         RAISE EXCEPTION 'SHARED_POT_CONTRIBUTION_DENIED';
@@ -8270,7 +8666,7 @@ BEGIN
 
     SELECT * INTO v_member
     FROM public.shared_pot_members
-    WHERE pot_id = p_pot_id AND user_id = v_actor
+    WHERE pot_id = p_pot_id AND user_id = v_actor AND status = 'ACTIVE'
     FOR UPDATE;
     IF NOT FOUND OR v_member.role NOT IN ('OWNER', 'MANAGER') THEN
         RAISE EXCEPTION 'SHARED_POT_WITHDRAW_DENIED';
@@ -8424,3 +8820,377 @@ NOTIFY pgrst, 'reload schema';
 -- END SYNCED MIGRATION: 20260618_shared_pot_hardening.sql
 
 -- END 20260618 SHARED FINANCE AND PAYSAFE HARDENING SYNC
+
+-- BEGIN SYNCED MIGRATION: 20260716_shared_budget_funded_ledger.sql
+-- Mezani is a funded budget reserve. Create stays free; Allocate moves money
+-- from Operating to the Mezani reserve, and Spend/Withdraw consumes that reserve.
+
+ALTER TABLE public.shared_budgets
+    ADD COLUMN IF NOT EXISTS funded_amount NUMERIC DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS auto_allocate_enabled BOOLEAN DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS auto_allocate_mode TEXT DEFAULT 'MANUAL',
+    ADD COLUMN IF NOT EXISTS auto_allocate_amount NUMERIC DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS auto_allocate_threshold NUMERIC DEFAULT 0;
+
+UPDATE public.shared_budgets
+   SET funded_amount = COALESCE(funded_amount, 0),
+       auto_allocate_enabled = COALESCE(auto_allocate_enabled, FALSE),
+       auto_allocate_mode = COALESCE(NULLIF(auto_allocate_mode, ''), 'MANUAL'),
+       auto_allocate_amount = COALESCE(auto_allocate_amount, 0),
+       auto_allocate_threshold = COALESCE(auto_allocate_threshold, 0)
+ WHERE funded_amount IS NULL
+    OR auto_allocate_enabled IS NULL
+    OR auto_allocate_mode IS NULL
+    OR auto_allocate_amount IS NULL
+    OR auto_allocate_threshold IS NULL;
+
+DROP FUNCTION IF EXISTS public.shared_budget_allocate_v1(
+    UUID, UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, JSONB
+);
+DROP FUNCTION IF EXISTS public.shared_budget_withdraw_v1(
+    UUID, UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, JSONB
+);
+
+CREATE OR REPLACE FUNCTION public.shared_budget_allocate_v1(
+    p_user_id UUID,
+    p_budget_id UUID,
+    p_source_wallet_id UUID,
+    p_amount NUMERIC,
+    p_currency TEXT DEFAULT 'TZS',
+    p_description TEXT DEFAULT NULL,
+    p_reference_id TEXT DEFAULT NULL,
+    p_metadata JSONB DEFAULT '{}'::jsonb
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_actor UUID := COALESCE(auth.uid(), p_user_id);
+    v_budget public.shared_budgets%ROWTYPE;
+    v_member public.shared_budget_members%ROWTYPE;
+    v_source_wallet public.wallets%ROWTYPE;
+    v_source_vault public.platform_vaults%ROWTYPE;
+    v_existing public.transactions%ROWTYPE;
+    v_source_table TEXT;
+    v_source_currency TEXT;
+    v_source_balance NUMERIC;
+    v_source_balance_after NUMERIC;
+    v_budget_funded_after NUMERIC;
+    v_budget_available_after NUMERIC;
+    v_tx_id UUID := gen_random_uuid();
+    v_reference_id TEXT := NULLIF(BTRIM(COALESCE(p_reference_id, '')), '');
+BEGIN
+    IF v_actor IS NULL OR (auth.uid() IS NOT NULL AND auth.uid() <> p_user_id) THEN
+        RAISE EXCEPTION 'SHARED_BUDGET_ACTOR_INVALID';
+    END IF;
+    IF p_amount IS NULL OR p_amount <= 0 THEN RAISE EXCEPTION 'INVALID_AMOUNT'; END IF;
+    IF v_reference_id IS NULL THEN RAISE EXCEPTION 'SHARED_BUDGET_IDEMPOTENCY_REQUIRED'; END IF;
+
+    SELECT * INTO v_budget FROM public.shared_budgets WHERE id = p_budget_id FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'SHARED_BUDGET_NOT_FOUND'; END IF;
+    IF v_budget.status <> 'ACTIVE' THEN RAISE EXCEPTION 'SHARED_BUDGET_NOT_ACTIVE'; END IF;
+
+    SELECT * INTO v_member
+      FROM public.shared_budget_members
+     WHERE budget_id = p_budget_id AND user_id = v_actor AND status = 'ACTIVE'
+     FOR UPDATE;
+    IF NOT FOUND OR v_member.role NOT IN ('OWNER', 'MANAGER') THEN
+        RAISE EXCEPTION 'SHARED_BUDGET_ALLOCATE_DENIED';
+    END IF;
+
+    SELECT * INTO v_existing FROM public.transactions WHERE reference_id = v_reference_id FOR UPDATE;
+    IF FOUND THEN
+        IF v_existing.user_id <> v_actor
+           OR v_existing.wallet_id <> p_source_wallet_id
+           OR v_existing.amount::NUMERIC <> p_amount
+           OR v_existing.allocation_source <> 'SHARED_BUDGET_ALLOCATION'
+           OR v_existing.metadata->>'shared_budget_id' <> p_budget_id::TEXT THEN
+            RAISE EXCEPTION 'SHARED_BUDGET_REPLAY_MISMATCH';
+        END IF;
+        RETURN jsonb_build_object(
+            'transaction_id', v_existing.id,
+            'reference_id', v_reference_id,
+            'budget_funded_after', v_budget.funded_amount,
+            'budget_available_after', GREATEST(0, COALESCE(v_budget.funded_amount, 0) - COALESCE(v_budget.spent_amount, 0)),
+            'idempotent', TRUE
+        );
+    END IF;
+
+    SELECT * INTO v_source_vault
+      FROM public.platform_vaults
+     WHERE id = p_source_wallet_id AND user_id = v_actor AND vault_role = 'OPERATING'
+     FOR UPDATE;
+    IF FOUND THEN
+        IF COALESCE(v_source_vault.is_locked, FALSE)
+           OR LOWER(COALESCE(v_source_vault.status, 'active')) <> 'active' THEN
+            RAISE EXCEPTION 'SOURCE_WALLET_UNAVAILABLE';
+        END IF;
+        v_source_table := 'platform_vaults';
+        v_source_balance := COALESCE(v_source_vault.balance, 0);
+        v_source_currency := UPPER(COALESCE(v_source_vault.currency, 'TZS'));
+    ELSE
+        SELECT * INTO v_source_wallet
+          FROM public.wallets
+         WHERE id = p_source_wallet_id AND user_id = v_actor AND UPPER(COALESCE(type, '')) = 'OPERATING'
+         FOR UPDATE;
+        IF NOT FOUND THEN RAISE EXCEPTION 'NO_OPERATING_WALLET'; END IF;
+        IF COALESCE(v_source_wallet.is_locked, FALSE)
+           OR LOWER(COALESCE(v_source_wallet.status, 'active')) <> 'active' THEN
+            RAISE EXCEPTION 'SOURCE_WALLET_UNAVAILABLE';
+        END IF;
+        v_source_table := 'wallets';
+        v_source_balance := COALESCE(v_source_wallet.balance, 0);
+        v_source_currency := UPPER(COALESCE(v_source_wallet.currency, 'TZS'));
+    END IF;
+
+    IF v_source_currency <> UPPER(COALESCE(v_budget.currency, 'TZS'))
+       OR UPPER(BTRIM(COALESCE(p_currency, v_budget.currency, 'TZS'))) <> UPPER(COALESCE(v_budget.currency, 'TZS')) THEN
+        RAISE EXCEPTION 'SHARED_BUDGET_CURRENCY_MISMATCH';
+    END IF;
+    IF COALESCE(v_budget.funded_amount, 0) + p_amount > COALESCE(v_budget.budget_limit, 0) THEN
+        RAISE EXCEPTION 'SHARED_BUDGET_ALLOCATION_LIMIT_EXCEEDED';
+    END IF;
+    IF v_source_balance < p_amount THEN RAISE EXCEPTION 'INSUFFICIENT_FUNDS'; END IF;
+
+    v_source_balance_after := v_source_balance - p_amount;
+    v_budget_funded_after := COALESCE(v_budget.funded_amount, 0) + p_amount;
+    v_budget_available_after := GREATEST(0, v_budget_funded_after - COALESCE(v_budget.spent_amount, 0));
+
+    INSERT INTO public.transactions (
+        id, reference_id, user_id, wallet_id, amount, currency, description,
+        type, status, date, wealth_impact_type, protection_state, allocation_source,
+        shared_budget_id, metadata
+    ) VALUES (
+        v_tx_id, v_reference_id, v_actor, p_source_wallet_id, p_amount::TEXT,
+        UPPER(v_budget.currency),
+        COALESCE(NULLIF(BTRIM(COALESCE(p_description, '')), ''), 'Mezani allocation'),
+        'internal_transfer', 'completed', CURRENT_DATE, 'PLANNED', 'OPEN',
+        'SHARED_BUDGET_ALLOCATION',
+        p_budget_id,
+        COALESCE(p_metadata, '{}'::jsonb)
+            || jsonb_build_object('shared_budget_id', p_budget_id, 'actor_user_id', v_actor)
+    );
+
+    IF v_source_table = 'wallets' THEN
+        UPDATE public.wallets SET balance = v_source_balance_after, updated_at = NOW()
+        WHERE id = p_source_wallet_id AND user_id = v_actor;
+    ELSE
+        UPDATE public.platform_vaults SET balance = v_source_balance_after, updated_at = NOW()
+        WHERE id = p_source_wallet_id AND user_id = v_actor;
+    END IF;
+
+    UPDATE public.shared_budgets SET funded_amount = v_budget_funded_after, updated_at = NOW()
+    WHERE id = p_budget_id;
+
+    INSERT INTO public.financial_ledger (
+        transaction_id, user_id, wallet_id, shared_budget_id, bucket_type,
+        entry_side, entry_type, amount, balance_after, description
+    ) VALUES
+    (v_tx_id, v_actor, p_source_wallet_id, p_budget_id, 'OPERATING',
+     'DEBIT', 'DEBIT', p_amount::TEXT, v_source_balance_after::TEXT,
+     'Mezani allocation debit: ' || v_budget.name),
+    (v_tx_id, v_actor, NULL, p_budget_id, 'BUDGET',
+     'CREDIT', 'CREDIT', p_amount::TEXT, v_budget_available_after::TEXT,
+     'Mezani allocation credit: ' || v_budget.name);
+
+    RETURN jsonb_build_object(
+        'transaction_id', v_tx_id,
+        'reference_id', v_reference_id,
+        'source_balance_after', v_source_balance_after,
+        'budget_funded_after', v_budget_funded_after,
+        'budget_available_after', v_budget_available_after,
+        'source_table', v_source_table,
+        'idempotent', FALSE
+    );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.shared_budget_withdraw_v1(
+    p_user_id UUID,
+    p_budget_id UUID,
+    p_target_wallet_id UUID,
+    p_amount NUMERIC,
+    p_currency TEXT DEFAULT 'TZS',
+    p_description TEXT DEFAULT NULL,
+    p_reference_id TEXT DEFAULT NULL,
+    p_metadata JSONB DEFAULT '{}'::jsonb
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_actor UUID := COALESCE(auth.uid(), p_user_id);
+    v_budget public.shared_budgets%ROWTYPE;
+    v_member public.shared_budget_members%ROWTYPE;
+    v_target_wallet public.wallets%ROWTYPE;
+    v_target_vault public.platform_vaults%ROWTYPE;
+    v_existing public.transactions%ROWTYPE;
+    v_target_table TEXT;
+    v_target_currency TEXT;
+    v_target_balance NUMERIC;
+    v_target_balance_after NUMERIC;
+    v_budget_spent_after NUMERIC;
+    v_budget_available_after NUMERIC;
+    v_tx_id UUID := gen_random_uuid();
+    v_reference_id TEXT := NULLIF(BTRIM(COALESCE(p_reference_id, '')), '');
+BEGIN
+    IF v_actor IS NULL OR (auth.uid() IS NOT NULL AND auth.uid() <> p_user_id) THEN
+        RAISE EXCEPTION 'SHARED_BUDGET_ACTOR_INVALID';
+    END IF;
+    IF p_amount IS NULL OR p_amount <= 0 THEN RAISE EXCEPTION 'INVALID_AMOUNT'; END IF;
+    IF v_reference_id IS NULL THEN RAISE EXCEPTION 'SHARED_BUDGET_IDEMPOTENCY_REQUIRED'; END IF;
+
+    SELECT * INTO v_budget FROM public.shared_budgets WHERE id = p_budget_id FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'SHARED_BUDGET_NOT_FOUND'; END IF;
+    IF v_budget.status <> 'ACTIVE' THEN RAISE EXCEPTION 'SHARED_BUDGET_NOT_ACTIVE'; END IF;
+
+    SELECT * INTO v_member
+      FROM public.shared_budget_members
+     WHERE budget_id = p_budget_id AND user_id = v_actor AND status = 'ACTIVE'
+     FOR UPDATE;
+    IF NOT FOUND OR v_member.role NOT IN ('OWNER', 'MANAGER', 'SPENDER') THEN
+        RAISE EXCEPTION 'SHARED_BUDGET_SPEND_DENIED';
+    END IF;
+
+    SELECT * INTO v_existing FROM public.transactions WHERE reference_id = v_reference_id FOR UPDATE;
+    IF FOUND THEN
+        IF v_existing.user_id <> v_actor
+           OR v_existing.wallet_id <> p_target_wallet_id
+           OR v_existing.amount::NUMERIC <> p_amount
+           OR v_existing.allocation_source <> 'SHARED_BUDGET_WITHDRAWAL'
+           OR v_existing.metadata->>'shared_budget_id' <> p_budget_id::TEXT THEN
+            RAISE EXCEPTION 'SHARED_BUDGET_REPLAY_MISMATCH';
+        END IF;
+        RETURN jsonb_build_object(
+            'transaction_id', v_existing.id,
+            'reference_id', v_reference_id,
+            'budget_spent_after', v_budget.spent_amount,
+            'budget_available_after', GREATEST(0, COALESCE(v_budget.funded_amount, 0) - COALESCE(v_budget.spent_amount, 0)),
+            'idempotent', TRUE
+        );
+    END IF;
+
+    IF COALESCE(v_budget.funded_amount, 0) - COALESCE(v_budget.spent_amount, 0) < p_amount THEN
+        RAISE EXCEPTION 'SHARED_BUDGET_FUNDS_REQUIRED';
+    END IF;
+    IF v_member.member_limit IS NOT NULL
+       AND COALESCE(v_member.spent_amount, 0) + p_amount > COALESCE(v_member.member_limit, 0) THEN
+        RAISE EXCEPTION 'SHARED_BUDGET_MEMBER_LIMIT_EXCEEDED';
+    END IF;
+
+    SELECT * INTO v_target_vault
+      FROM public.platform_vaults
+     WHERE id = p_target_wallet_id AND user_id = v_actor AND vault_role = 'OPERATING'
+     FOR UPDATE;
+    IF FOUND THEN
+        IF COALESCE(v_target_vault.is_locked, FALSE)
+           OR LOWER(COALESCE(v_target_vault.status, 'active')) <> 'active' THEN
+            RAISE EXCEPTION 'TARGET_WALLET_UNAVAILABLE';
+        END IF;
+        v_target_table := 'platform_vaults';
+        v_target_balance := COALESCE(v_target_vault.balance, 0);
+        v_target_currency := UPPER(COALESCE(v_target_vault.currency, 'TZS'));
+    ELSE
+        SELECT * INTO v_target_wallet
+          FROM public.wallets
+         WHERE id = p_target_wallet_id AND user_id = v_actor AND UPPER(COALESCE(type, '')) = 'OPERATING'
+         FOR UPDATE;
+        IF NOT FOUND THEN RAISE EXCEPTION 'NO_OPERATING_WALLET'; END IF;
+        IF COALESCE(v_target_wallet.is_locked, FALSE)
+           OR LOWER(COALESCE(v_target_wallet.status, 'active')) <> 'active' THEN
+            RAISE EXCEPTION 'TARGET_WALLET_UNAVAILABLE';
+        END IF;
+        v_target_table := 'wallets';
+        v_target_balance := COALESCE(v_target_wallet.balance, 0);
+        v_target_currency := UPPER(COALESCE(v_target_wallet.currency, 'TZS'));
+    END IF;
+
+    IF v_target_currency <> UPPER(COALESCE(v_budget.currency, 'TZS'))
+       OR UPPER(BTRIM(COALESCE(p_currency, v_budget.currency, 'TZS'))) <> UPPER(COALESCE(v_budget.currency, 'TZS')) THEN
+        RAISE EXCEPTION 'SHARED_BUDGET_CURRENCY_MISMATCH';
+    END IF;
+
+    v_target_balance_after := v_target_balance + p_amount;
+    v_budget_spent_after := COALESCE(v_budget.spent_amount, 0) + p_amount;
+    v_budget_available_after := GREATEST(0, COALESCE(v_budget.funded_amount, 0) - v_budget_spent_after);
+
+    INSERT INTO public.transactions (
+        id, reference_id, user_id, wallet_id, to_wallet_id, amount, currency, description,
+        type, status, date, wealth_impact_type, protection_state, allocation_source,
+        shared_budget_id, metadata
+    ) VALUES (
+        v_tx_id, v_reference_id, v_actor, p_target_wallet_id, p_target_wallet_id,
+        p_amount::TEXT, UPPER(v_budget.currency),
+        COALESCE(NULLIF(BTRIM(COALESCE(p_description, '')), ''), 'Mezani withdrawal'),
+        'internal_transfer', 'completed', CURRENT_DATE, 'PLANNED', 'OPEN',
+        'SHARED_BUDGET_WITHDRAWAL',
+        p_budget_id,
+        COALESCE(p_metadata, '{}'::jsonb)
+            || jsonb_build_object('shared_budget_id', p_budget_id, 'actor_user_id', v_actor)
+    );
+
+    IF v_target_table = 'wallets' THEN
+        UPDATE public.wallets SET balance = v_target_balance_after, updated_at = NOW()
+        WHERE id = p_target_wallet_id AND user_id = v_actor;
+    ELSE
+        UPDATE public.platform_vaults SET balance = v_target_balance_after, updated_at = NOW()
+        WHERE id = p_target_wallet_id AND user_id = v_actor;
+    END IF;
+
+    UPDATE public.shared_budgets SET spent_amount = v_budget_spent_after, updated_at = NOW()
+    WHERE id = p_budget_id;
+    UPDATE public.shared_budget_members SET spent_amount = COALESCE(spent_amount, 0) + p_amount, updated_at = NOW()
+    WHERE id = v_member.id;
+
+    INSERT INTO public.financial_ledger (
+        transaction_id, user_id, wallet_id, shared_budget_id, bucket_type,
+        entry_side, entry_type, amount, balance_after, description
+    ) VALUES
+    (v_tx_id, v_actor, NULL, p_budget_id, 'BUDGET',
+     'DEBIT', 'DEBIT', p_amount::TEXT, v_budget_available_after::TEXT,
+     'Mezani withdrawal debit: ' || v_budget.name),
+    (v_tx_id, v_actor, p_target_wallet_id, p_budget_id, 'OPERATING',
+     'CREDIT', 'CREDIT', p_amount::TEXT, v_target_balance_after::TEXT,
+     'Mezani withdrawal credit: ' || v_budget.name);
+
+    RETURN jsonb_build_object(
+        'transaction_id', v_tx_id,
+        'reference_id', v_reference_id,
+        'target_balance_after', v_target_balance_after,
+        'budget_spent_after', v_budget_spent_after,
+        'budget_available_after', v_budget_available_after,
+        'target_table', v_target_table,
+        'idempotent', FALSE
+    );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.shared_budget_allocate_v1(
+    UUID, UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, JSONB
+) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.shared_budget_withdraw_v1(
+    UUID, UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, JSONB
+) FROM PUBLIC;
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+        EXECUTE 'REVOKE ALL ON FUNCTION public.shared_budget_allocate_v1(UUID, UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, JSONB) FROM anon';
+        EXECUTE 'REVOKE ALL ON FUNCTION public.shared_budget_withdraw_v1(UUID, UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, JSONB) FROM anon';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+        EXECUTE 'REVOKE ALL ON FUNCTION public.shared_budget_allocate_v1(UUID, UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, JSONB) FROM authenticated';
+        EXECUTE 'REVOKE ALL ON FUNCTION public.shared_budget_withdraw_v1(UUID, UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, JSONB) FROM authenticated';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        EXECUTE 'GRANT EXECUTE ON FUNCTION public.shared_budget_allocate_v1(UUID, UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, JSONB) TO service_role';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION public.shared_budget_withdraw_v1(UUID, UUID, UUID, NUMERIC, TEXT, TEXT, TEXT, JSONB) TO service_role';
+    END IF;
+END $$;
+
+NOTIFY pgrst, 'reload schema';
+-- END SYNCED MIGRATION: 20260716_shared_budget_funded_ledger.sql

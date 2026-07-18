@@ -31,6 +31,50 @@ export type CreateOperatorAlertInput = {
 };
 
 class OperatorAlertService {
+    private normalizeActionType(value: any): OperatorAlertAction['type'] {
+        const normalized = String(value || '').trim();
+        if (['navigate', 'acknowledge', 'resolve', 'freeze_user', 'open_case'].includes(normalized)) {
+            return normalized as OperatorAlertAction['type'];
+        }
+        return 'navigate';
+    }
+
+    private normalizeActions(actions?: OperatorAlertAction[] | any): OperatorAlertAction[] {
+        if (!Array.isArray(actions)) return [];
+        return actions
+            .filter((action) => action && typeof action === 'object' && !Array.isArray(action))
+            .map((action) => ({
+                id: String(action.id || '').trim(),
+                label: String(action.label || '').trim(),
+                type: this.normalizeActionType(action.type),
+                ...(action.target == null ? {} : { target: String(action.target) }),
+                ...(action.payload && typeof action.payload === 'object' && !Array.isArray(action.payload)
+                    ? { payload: action.payload }
+                    : {}),
+            }))
+            .filter((action) => action.id && action.label);
+    }
+
+    private actionsForDb(actions?: OperatorAlertAction[]): { items: OperatorAlertAction[] } {
+        return { items: this.normalizeActions(actions) };
+    }
+
+    private actionsForClient(actions: any): OperatorAlertAction[] {
+        if (Array.isArray(actions)) return this.normalizeActions(actions);
+        if (actions && typeof actions === 'object' && Array.isArray(actions.items)) {
+            return this.normalizeActions(actions.items);
+        }
+        if (typeof actions === 'string' && actions.trim()) {
+            try {
+                const parsed = JSON.parse(actions);
+                return this.actionsForClient(parsed);
+            } catch {
+                return [];
+            }
+        }
+        return [];
+    }
+
     async create(input: CreateOperatorAlertInput) {
         const alert = {
             id: UUID.generate(),
@@ -44,7 +88,7 @@ class OperatorAlertService {
             resource_type: input.resourceType || null,
             resource_id: input.resourceId || null,
             metadata: input.metadata || {},
-            actions: input.actions || [],
+            actions: this.actionsForDb(input.actions),
             status: 'UNREAD',
             created_at: new Date().toISOString(),
             read_at: null,
@@ -139,7 +183,7 @@ class OperatorAlertService {
             resourceType: alert.resource_type,
             resourceId: alert.resource_id,
             metadata: alert.metadata || {},
-            actions: alert.actions || [],
+            actions: this.actionsForClient(alert.actions),
             status: alert.status || 'UNREAD',
             createdAt: alert.created_at,
             readAt: alert.read_at,

@@ -559,7 +559,7 @@ export const registerEngagementRoutes = (v1: Router, deps: Deps) => {
       ] = await Promise.all([
         sb
           .from('transactions')
-          .select('merchant_name,category,description,provider,created_at')
+          .select('merchant_name,category,description,provider,type,metadata,created_at')
           .eq('user_id', userId)
           .order('created_at', { ascending: false })
           .limit(30),
@@ -584,12 +584,33 @@ export const registerEngagementRoutes = (v1: Router, deps: Deps) => {
       const categoryFrequency = new Map<string, number>();
       const recentMerchantNames = new Set<string>();
       for (const tx of recentTransactions) {
-        const category = firstNonEmpty(tx.category, tx.provider);
+        const metadata = tx.metadata && typeof tx.metadata === 'object' ? tx.metadata : {};
+        const category = firstNonEmpty(
+          tx.category,
+          tx.provider,
+          metadata.category,
+          metadata.category_name,
+          metadata.categoryName,
+          metadata.provider,
+          metadata.provider_name,
+          metadata.providerName,
+          tx.type,
+        );
         if (category) {
           const key = category.toLowerCase();
           categoryFrequency.set(key, (categoryFrequency.get(key) || 0) + 1);
         }
-        const merchantName = firstNonEmpty(tx.merchant_name);
+        const merchantName = firstNonEmpty(
+          tx.merchant_name,
+          tx.provider,
+          metadata.merchant_name,
+          metadata.merchantName,
+          metadata.business_name,
+          metadata.businessName,
+          metadata.provider,
+          metadata.provider_name,
+          metadata.providerName,
+        );
         if (merchantName) {
           recentMerchantNames.add(merchantName.toLowerCase());
         }

@@ -6,6 +6,9 @@ export const riskAssessment = async (req: Request, res: Response, next: NextFunc
   if (req.path === '/health' || req.path.startsWith('/public')) return next();
 
   const profile = SecurityOperationsEngine.classify(req);
+  if (profile.class === 'SAFE_READ') {
+    return next();
+  }
 
   try {
     if (!SecurityOperationsEngine.hasRequiredReason(req, profile)) {

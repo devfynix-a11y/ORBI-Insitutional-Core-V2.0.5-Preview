@@ -8,6 +8,8 @@ import {
 import {
   resolveSharedPotMembership,
   canManageSharedPot,
+  canReviewSharedPot,
+  canViewSharedPotGovernance,
   canContributeToSharedPot,
   resolveUserBySharedPotIdentifier,
   expireSharedPotInvitationIfNeeded,
@@ -116,7 +118,7 @@ const SharedPotMemberAddSchema = z.object({
     recipientId: z.string().uuid().optional(),
     role: z.preprocess(
         (value) => typeof value === 'string' ? value.trim().toUpperCase() : value,
-        z.enum(['MANAGER', 'CONTRIBUTOR', 'VIEWER']).optional(),
+        z.enum(['MANAGER', 'SIGNATORY', 'ACCOUNTANT', 'CONTRIBUTOR', 'VIEWER']).optional(),
     ),
     message: z.string().max(240).optional(),
 });
@@ -138,12 +140,25 @@ const SharedBudgetCreateSchema = z.object({
     purpose: z.string().optional(),
     currency: z.string().min(3).max(8).optional(),
     budget_limit: z.coerce.number().positive(),
+    auto_allocate_enabled: z.coerce.boolean().optional(),
+    auto_allocate_mode: z.enum(['MANUAL', 'FIXED', 'PERCENT']).optional(),
+    auto_allocate_amount: z.coerce.number().nonnegative().optional(),
+    auto_allocate_threshold: z.coerce.number().nonnegative().optional(),
     period_type: z.enum(['WEEKLY', 'MONTHLY', 'CUSTOM']).optional(),
     approval_mode: z.enum(['AUTO', 'REVIEW']).optional(),
 });
 
 const SharedBudgetUpdateSchema = SharedBudgetCreateSchema.partial().extend({
     status: z.enum(['ACTIVE', 'PAUSED', 'ARCHIVED']).optional(),
+});
+
+const SharedBudgetAllocateSchema = z.object({
+    amount: z.coerce.number().positive(),
+    currency: z.string().min(3).max(8).optional(),
+    source_wallet_id: z.string().uuid().optional(),
+    note: z.string().max(255).optional(),
+    idempotencyKey: z.string().min(8).max(128).optional(),
+    idempotency_key: z.string().min(8).max(128).optional(),
 });
 
 const SharedBudgetMemberAddSchema = z.object({
@@ -181,7 +196,13 @@ const SharedBudgetSpendSchema = z.object({
     bill_category: z.string().min(2).optional(),
     reference: z.string().min(2).optional(),
     description: z.string().max(255).optional(),
-    type: z.enum(['EXTERNAL_PAYMENT', 'BILL_PAYMENT', 'MERCHANT_PAYMENT']).optional(),
+    type: z.enum([
+        'EXTERNAL_PAYMENT',
+        'BILL_PAYMENT',
+        'MERCHANT_PAYMENT',
+        'SHARED_BUDGET_WITHDRAWAL_TO_ACCOUNT',
+        'SHARED_BUDGET_AGENT_CASHOUT',
+    ]).optional(),
     metadata: z.record(z.string(), z.any()).optional(),
 });
 
@@ -231,6 +252,8 @@ export const registerWealthRoutes = (v1: Router, deps: Deps) => {
     resolveWealthSourceWallet,
     resolveSharedPotMembership,
     canManageSharedPot,
+    canReviewSharedPot,
+    canViewSharedPotGovernance,
     canContributeToSharedPot,
     resolveUserBySharedPotIdentifier,
     expireSharedPotInvitationIfNeeded,
@@ -245,6 +268,7 @@ export const registerWealthRoutes = (v1: Router, deps: Deps) => {
     SharedBudgetCreateSchema,
     SharedBudgetUpdateSchema,
     SharedBudgetMemberAddSchema,
+    SharedBudgetAllocateSchema,
     SharedBudgetInviteResponseSchema,
     SharedBudgetApprovalResponseSchema,
     SharedBudgetSpendSchema,

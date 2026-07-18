@@ -167,15 +167,12 @@ export class GoalService {
             .order('created_at', { ascending: true });
 
         if (goalsError) throw new Error(goalsError.message);
-        if (!goals || goals.length === 0) {
-            return { success: true, applied: [], skipped: [], reason: 'NO_AUTO_GOALS' };
-        }
 
         let remainingAvailable = grossSourceAmount;
         const applied: any[] = [];
         const skipped: any[] = [];
 
-        for (const rawGoal of goals) {
+        for (const rawGoal of goals || []) {
             const goalId = String(rawGoal.id);
             const fundingStrategy = String(rawGoal.funding_strategy || 'manual').toLowerCase();
             const currentAmount = Number(rawGoal.current || 0);
@@ -287,6 +284,116 @@ export class GoalService {
             }
         }
 
+        const ruleTrigger = ['DEPOSIT', 'SALARY', 'REMITTANCE', 'MANUAL'].includes(normalizedTrigger)
+            ? normalizedTrigger
+            : ['CARD_DEPOSIT', 'EXTERNAL_DEPOSIT', 'AGENT_CASH_DEPOSIT'].includes(normalizedTrigger)
+                ? 'DEPOSIT'
+                : 'MANUAL';
+        const { data: budgetRules, error: budgetRulesError } = await sb
+            .from('allocation_rules')
+            .select('id, name, trigger_type, target_id, mode, fixed_amount, percentage, priority, metadata')
+            .eq('user_id', args.userId)
+            .eq('target_type', 'BUDGET')
+            .eq('trigger_type', ruleTrigger)
+            .eq('is_active', true)
+            .order('priority', { ascending: true })
+            .order('created_at', { ascending: true });
+        if (budgetRulesError) throw new Error(budgetRulesError.message);
+
+        for (const rule of budgetRules || []) {
+            const budgetId = String(rule.target_id || '');
+            if (!budgetId) {
+                skipped.push({ ruleId: rule.id, targetType: 'BUDGET', reason: 'BUDGET_TARGET_MISSING' });
+                continue;
+            }
+            if (remainingAvailable <= 0) {
+                skipped.push({ ruleId: rule.id, budgetId, targetType: 'BUDGET', reason: 'SOURCE_FUNDS_CONSUMED' });
+                continue;
+            }
+
+            const { data: budget, error: budgetError } = await sb
+                .from('shared_budgets')
+                .select('id, owner_user_id, name, currency, budget_limit, funded_amount, spent_amount, status, auto_allocate_enabled, auto_allocate_mode, auto_allocate_amount, auto_allocate_threshold')
+                .eq('id', budgetId)
+                .eq('owner_user_id', args.userId)
+                .maybeSingle();
+            if (budgetError) throw new Error(budgetError.message);
+            if (!budget || budget.status !== 'ACTIVE' || budget.auto_allocate_enabled !== true) {
+                skipped.push({ ruleId: rule.id, budgetId, targetType: 'BUDGET', reason: 'BUDGET_AUTO_ALLOCATION_DISABLED' });
+                continue;
+            }
+
+            const fundedAmount = Number(budget.funded_amount || 0);
+            const spentAmount = Number(budget.spent_amount || 0);
+            const budgetLimit = Number(budget.budget_limit || 0);
+            const available = this.roundMoney(fundedAmount - spentAmount);
+            const threshold = Number(budget.auto_allocate_threshold || 0);
+            const remainingBudgetCapacity = this.roundMoney(budgetLimit - fundedAmount);
+            if (remainingBudgetCapacity <= 0) {
+                skipped.push({ ruleId: rule.id, budgetId, targetType: 'BUDGET', reason: 'BUDGET_ALREADY_FUNDED' });
+                continue;
+            }
+            if (threshold > 0 && available >= threshold) {
+                skipped.push({ ruleId: rule.id, budgetId, targetType: 'BUDGET', reason: 'BUDGET_ABOVE_THRESHOLD' });
+                continue;
+            }
+
+            const mode = String(rule.mode || budget.auto_allocate_mode || 'FIXED').toUpperCase();
+            let desiredAmount = 0;
+            if (mode === 'PERCENT') {
+                const percentage = Number(rule.percentage || budget.auto_allocate_amount || 0);
+                desiredAmount = this.roundMoney((grossSourceAmount * percentage) / 100);
+            } else {
+                desiredAmount = this.roundMoney(Number(rule.fixed_amount || budget.auto_allocate_amount || 0));
+            }
+            desiredAmount = this.roundMoney(Math.min(desiredAmount, remainingBudgetCapacity, remainingAvailable));
+            if (desiredAmount <= 0) {
+                skipped.push({ ruleId: rule.id, budgetId, targetType: 'BUDGET', reason: 'NO_ALLOCATABLE_AMOUNT' });
+                continue;
+            }
+
+            try {
+                const reference = `budget_auto_${args.sourceTransactionId}_${budgetId}`;
+                const { data: allocation, error: allocationError } = await sb.rpc('shared_budget_allocate_v1', {
+                    p_user_id: args.userId,
+                    p_budget_id: budgetId,
+                    p_source_wallet_id: sourceWalletId,
+                    p_amount: desiredAmount,
+                    p_currency: budget.currency || args.currency || 'TZS',
+                    p_description: `Auto allocation to Mezani: ${budget.name}`,
+                    p_reference_id: reference,
+                    p_metadata: {
+                        allocation_rule_id: rule.id,
+                        source_transaction_id: args.sourceTransactionId,
+                        source_reference_id: args.sourceReferenceId || sourceTx.reference_id || null,
+                        trigger_type: normalizedTrigger,
+                        target_type: 'BUDGET',
+                        auto_allocation: true,
+                        ...(args.metadata || {}),
+                    },
+                });
+                if (allocationError) throw new Error(allocationError.message);
+                remainingAvailable = this.roundMoney(remainingAvailable - desiredAmount);
+                applied.push({
+                    ruleId: rule.id,
+                    budgetId,
+                    targetType: 'BUDGET',
+                    name: budget.name,
+                    amount: desiredAmount,
+                    mode,
+                    allocation,
+                });
+            } catch (error: any) {
+                skipped.push({
+                    ruleId: rule.id,
+                    budgetId,
+                    targetType: 'BUDGET',
+                    reason: error?.message || 'BUDGET_AUTO_ALLOCATION_FAILED',
+                });
+                console.error('[GoalService] Budget auto-allocation failed:', error);
+            }
+        }
+
         await Audit.log('FINANCIAL', args.userId, 'GOAL_AUTO_ALLOCATION_RUN', {
             sourceTransactionId: args.sourceTransactionId,
             sourceReferenceId: args.sourceReferenceId || sourceTx.reference_id || null,
@@ -296,6 +403,7 @@ export class GoalService {
             appliedCount: applied.length,
             appliedAmount: applied.reduce((sum, item) => sum + Number(item.amount || 0), 0),
             skippedCount: skipped.length,
+            budgetRuleCount: (budgetRules || []).length,
         });
 
         return {
@@ -485,7 +593,9 @@ export class GoalService {
             color: g.color,
             icon: g.icon,
             funding_strategy: g.fundingStrategy || 'manual',
-            auto_allocation_enabled: g.autoAllocationEnabled || false
+            auto_allocation_enabled: g.autoAllocationEnabled || false,
+            linked_income_percentage: g.linkedIncomePercentage,
+            monthly_target: g.monthlyTarget
         };
 
         // Remove undefined fields

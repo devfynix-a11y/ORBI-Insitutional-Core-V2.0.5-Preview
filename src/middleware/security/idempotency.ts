@@ -10,7 +10,10 @@ type CreateIdempotencyOptions = {
 };
 
 export const resolveIdempotencyHeader = (req: Request) =>
-  req.header('Idempotency-Key') || req.header('x-idempotency-key');
+  req.header('Idempotency-Key') ||
+  req.header('x-idempotency-key') ||
+  (req.body as any)?.idempotencyKey ||
+  (req.body as any)?.idempotency_key;
 
 const stableStringify = (value: any): string => {
   if (value === null || value === undefined) return '';

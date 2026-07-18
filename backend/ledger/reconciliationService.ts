@@ -9,7 +9,6 @@ import { BankingEngine } from './transactionEngine.js';
 import { ProviderFactory } from '../payments/providers/ProviderFactory.js';
 import { resolveProviderCode } from '../payments/financialPartnerMetadata.js';
 import { SocketRegistry } from '../infrastructure/SocketRegistry.js';
-import { Messaging } from '../features/MessagingService.js';
 import { DataProtection } from '../security/DataProtection.js';
 // emailService and brevoSmsService removed as per user request.
 
@@ -195,15 +194,14 @@ export class ReconciliationService {
                         metadata: { walletId: wallet.id, userId: wallet.user_id }
                     });
 
-                    // Alert Admin
-                    const { data: user } = await sb.from('users').select('language').eq('id', wallet.user_id).maybeSingle();
-                    const language = user?.language || 'en';
-                    const subject = language === 'sw' ? 'Tahadhari ya Uadilifu wa Salio' : 'Balance Integrity Alert';
-                    const body = language === 'sw' 
-                        ? `Tofauti imegunduliwa kwenye salio la akaunti yako. Timu yetu inachunguza.` 
-                        : `A discrepancy was detected in your account balance. Our team is investigating.`;
-
-                    await Messaging.dispatch(wallet.user_id, 'security', subject, body, { sms: true, email: true });
+                    await Audit.log('SECURITY', 'system-recon', 'RECON_INTERNAL_BALANCE_MISMATCH', {
+                        walletId: wallet.id,
+                        userId: wallet.user_id,
+                        expected_balance: ledgerBalance,
+                        actual_balance: walletBalance,
+                        difference: diff,
+                        notify_customer: false,
+                    });
                 }
             }
 

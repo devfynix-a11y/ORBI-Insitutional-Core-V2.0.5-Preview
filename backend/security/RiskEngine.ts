@@ -63,7 +63,7 @@ export class RiskEngine {
         }
 
         if (operationProfile.requiresIdempotency) {
-            const idempotencyKey = req.get?.('Idempotency-Key') || req.get?.('x-idempotency-key') || req.headers?.['idempotency-key'] || req.headers?.['x-idempotency-key'];
+            const idempotencyKey = req.get?.('Idempotency-Key') || req.get?.('x-idempotency-key') || req.headers?.['idempotency-key'] || req.headers?.['x-idempotency-key'] || req.body?.idempotencyKey || req.body?.idempotency_key;
             if (!idempotencyKey) {
                 signals.push({ type: 'MISSING_IDEMPOTENCY_KEY', score: 65, detail: `${operationProfile.class} requires an idempotency key.` });
                 totalScore += 65;
@@ -93,7 +93,7 @@ export class RiskEngine {
         }
 
         // Log Risk Event
-        await this.logRiskEvent(context.userId || 'anonymous', context.ip, finalScore, signals, action);
+        await this.logRiskEvent(context.userId || 'anonymous', context.ip, finalScore, signals, action, operationProfile);
         if (action === 'BLOCK') {
             await SecurityOperationsEngine.alertSecurityBlock(req, operationProfile, {
                 reason: 'RISK_SCORE_BLOCK',
@@ -105,10 +105,20 @@ export class RiskEngine {
         return { score: finalScore, action, signals };
     }
 
-    private static async logRiskEvent(userId: string, ip: string, score: number, signals: RiskSignal[], action: string) {
+    private static async logRiskEvent(userId: string, ip: string, score: number, signals: RiskSignal[], action: string, operationProfile: ReturnType<typeof SecurityOperationsEngine.classify>) {
         if (score > 10) {
-            console.warn(`[RiskEngine] High Risk Detected: ${score} for ${userId}. Action: ${action}`);
-            await Audit.log('SECURITY', userId, 'RISK_EVENT', { ip, score, signals, action });
+            const signalTypes = signals.map((signal) => signal.type).join(',') || 'none';
+            console.warn(`[RiskEngine] High Risk Detected: ${score} for ${userId}. Action: ${action}. Route: ${operationProfile.method} ${operationProfile.route}. Class: ${operationProfile.class}. Signals: ${signalTypes}`);
+            await Audit.log('SECURITY', userId, 'RISK_EVENT', {
+                ip,
+                score,
+                signals,
+                action,
+                route: operationProfile.route,
+                method: operationProfile.method,
+                operationClass: operationProfile.class,
+                severity: operationProfile.severity,
+            });
         }
     }
 }

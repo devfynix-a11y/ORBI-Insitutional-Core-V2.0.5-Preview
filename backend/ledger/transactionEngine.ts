@@ -981,7 +981,7 @@ export class BankingEngineService {
                  
                  let subject = isSw ? 'Fedha Zimepokelewa' : 'Funds Received';
                  if (isSalary) subject = isSw ? 'Mshahara Umepokelewa' : 'Salary Received';
-                 if (isEscrow) subject = isSw ? 'Malipo ya Escrow Yanasubiri' : 'Pending Escrow Payment';
+                 if (isEscrow) subject = isSw ? 'Ombi la Orbi PaySafe' : 'Orbi PaySafe request';
                  
                  let recipientMsg = '';
                  let templateName = 'Transfer_Received';
@@ -1002,15 +1002,17 @@ export class BankingEngineService {
                         ? `Ndugu ${recipientName}, mshahara wako wa mwezi ${month} kiasi cha ${targetCurrency} ${targetAmount.toLocaleString()} umeingia kwenye akaunti yako ya ORBI saa ${recipientTime.display}. Kumbukumbu ${refId}. ${footer}`
                         : `Dear ${recipientName}, your salary for ${month} of ${targetCurrency} ${targetAmount.toLocaleString()} has been credited to your ORBI account at ${recipientTime.display}. Reference ${refId}. ${footer}`;
                  } else if (isEscrow) {
-                     templateName = 'Escrow_Created';
-                     // Escrow_Created template only requires currency and amount
+                     templateName = 'Escrow_Request_Received';
                      variables = {
+                         senderName,
+                         recipientName,
                          currency: targetCurrency,
-                         amount: targetAmount.toLocaleString()
+                         amount: targetAmount.toLocaleString(),
+                         refId
                      };
                      recipientMsg = isSw
-                        ? `Una malipo yanayosubiri ya ${targetCurrency} ${targetAmount.toLocaleString()} kutoka kwa mteja. Fedha zimefungwa kwenye Orbi PaySafe na zitatolewa baada ya uthibitisho wa uwasilishaji.`
-                        : `You have a pending payment of ${targetCurrency} ${targetAmount.toLocaleString()} from a customer. Funds are locked in Orbi PaySafe and will be released upon delivery confirmation.`;
+                        ? `${senderName} ametengeneza ombi la Orbi PaySafe la ${targetCurrency} ${targetAmount.toLocaleString()} kwa ajili yako. Fedha ziko salama hadi release ithibitishwe. Kumbukumbu ${refId}.`
+                        : `${senderName} created an Orbi PaySafe request of ${targetCurrency} ${targetAmount.toLocaleString()} for you. Funds are safe until release is confirmed. Reference ${refId}.`;
                  } else {
                      variables.recipientName = recipientName;
                      variables.senderName = senderName;
@@ -1020,6 +1022,7 @@ export class BankingEngineService {
                  }
                  
                  promises.push(Messaging.dispatch(recipientId, 'info', subject, recipientMsg, { 
+                     push: true,
                      sms: true,
                      email: true,
                      template: templateName,
@@ -1043,15 +1046,23 @@ export class BankingEngineService {
             const senderFooter = isSenderSw 
                 ? "Asante kwa kuichagua ORBI, tunathamini imani yako. Timu ya Kifedha ya ORBI"
                 : "Thank you For choosing ORBI, We value your trust. The ORBI Financial Team";
-            const senderSubject = isSenderSw ? 'Uhamisho Umekamilika' : 'Transfer Completed';
-            const senderMsg = isSenderSw
-                ? `Ndugu ${senderName} umefanikiwa kutuma ${currency} ${amount.toLocaleString()}/= kutoka kwenye akaunti yako ya ORBI kwenda kwa ${recipientName} saa ${senderTime.display}. Kumbukumbu ${refId} . ${senderFooter}`
-                : `Dear ${senderName} you have successfully sent ${currency} ${amount.toLocaleString()}/= from your ORBI account to ${recipientName} at ${senderTime.display}. Reference ${refId} . ${senderFooter}`;
+            const senderIsEscrow = tx.type === 'escrow';
+            const senderSubject = senderIsEscrow
+                ? (isSenderSw ? 'Orbi PaySafe imeundwa' : 'Orbi PaySafe created')
+                : (isSenderSw ? 'Uhamisho Umekamilika' : 'Transfer Completed');
+            const senderMsg = senderIsEscrow
+                ? (isSenderSw
+                    ? `Ndugu ${senderName}, umeunda Orbi PaySafe ya ${currency} ${amount.toLocaleString()}/= kwa ${recipientName}. Fedha ziko salama hadi uthibitishe release. Kumbukumbu ${refId}. ${senderFooter}`
+                    : `Dear ${senderName}, you created an Orbi PaySafe of ${currency} ${amount.toLocaleString()}/= for ${recipientName}. Money is safe until you confirm release. Reference ${refId}. ${senderFooter}`)
+                : (isSenderSw
+                    ? `Ndugu ${senderName} umefanikiwa kutuma ${currency} ${amount.toLocaleString()}/= kutoka kwenye akaunti yako ya ORBI kwenda kwa ${recipientName} saa ${senderTime.display}. Kumbukumbu ${refId} . ${senderFooter}`
+                    : `Dear ${senderName} you have successfully sent ${currency} ${amount.toLocaleString()}/= from your ORBI account to ${recipientName} at ${senderTime.display}. Reference ${refId} . ${senderFooter}`);
             
             promises.push(Messaging.dispatch(senderId, 'info', senderSubject, senderMsg, { 
+                push: true,
                 sms: true,
                 email: true,
-                template: 'Transfer_Sent',
+                template: senderIsEscrow ? 'Escrow_Created' : 'Transfer_Sent',
                 variables: {
                     senderName,
                     amount: amount.toLocaleString(),

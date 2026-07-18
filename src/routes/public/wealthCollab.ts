@@ -26,11 +26,12 @@ export const resolveSharedPotMembership = async (sb: any, potId: string, userId:
     .select('*')
     .eq('pot_id', potId)
     .eq('user_id', userId)
+    .eq('status', 'ACTIVE')
     .maybeSingle();
   if (memberError) throw new Error(memberError.message);
 
   const ownerMembership = pot.owner_user_id === userId
-    ? { role: 'OWNER', user_id: userId, pot_id: potId }
+    ? { role: 'OWNER', status: 'ACTIVE', user_id: userId, pot_id: potId }
     : null;
 
   let organizationMembership = null;
@@ -43,8 +44,15 @@ export const resolveSharedPotMembership = async (sb: any, potId: string, userId:
     if (orgUserError) throw new Error(orgUserError.message);
     const orgRole = String(orgUser?.org_role || '').toUpperCase();
     if (String(orgUser?.organization_id || '') === String(pot.organization_id)) {
+      const potRole = orgRole === 'SIGNATORY'
+        ? 'SIGNATORY'
+        : orgRole === 'ACCOUNTANT'
+          ? 'ACCOUNTANT'
+          : ['ADMIN', 'MANAGER'].includes(orgRole)
+            ? 'MANAGER'
+            : 'VIEWER';
       organizationMembership = {
-        role: ['ADMIN', 'MANAGER', 'SIGNATORY'].includes(orgRole) ? 'MANAGER' : 'VIEWER',
+        role: potRole,
         user_id: userId,
         pot_id: potId,
         organization_role: orgRole || 'MEMBER',
@@ -59,6 +67,9 @@ export const resolveSharedPotMembership = async (sb: any, potId: string, userId:
 };
 
 export const canManageSharedPot = (role: string) => ['OWNER', 'MANAGER'].includes(role.toUpperCase());
+export const canReviewSharedPot = (role: string) => ['OWNER', 'MANAGER', 'SIGNATORY'].includes(role.toUpperCase());
+export const canViewSharedPotGovernance = (role: string) =>
+  ['OWNER', 'MANAGER', 'SIGNATORY', 'ACCOUNTANT'].includes(role.toUpperCase());
 export const canContributeToSharedPot = (role: string) =>
   ['OWNER', 'MANAGER', 'CONTRIBUTOR'].includes(role.toUpperCase());
 
@@ -133,11 +144,12 @@ export const resolveSharedBudgetMembership = async (sb: any, budgetId: string, u
     .select('*')
     .eq('budget_id', budgetId)
     .eq('user_id', userId)
+    .eq('status', 'ACTIVE')
     .maybeSingle();
   if (memberError) throw new Error(memberError.message);
 
   const ownerMembership = budget.owner_user_id === userId
-    ? { role: 'OWNER', user_id: userId, budget_id: budgetId }
+    ? { role: 'OWNER', status: 'ACTIVE', user_id: userId, budget_id: budgetId }
     : null;
 
   const effectiveMembership = membership || ownerMembership;

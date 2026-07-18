@@ -65,6 +65,14 @@ class OrbiTalkGatewayService {
         return ownerEmail || envFirst('ORBI_TALK_GATEWAY_USER_EMAIL');
     }
 
+    private redactPushPayload<T extends Record<string, any>>(payload: T): T {
+        return {
+            ...payload,
+            ...(payload.token ? { token: '[redacted]' } : {}),
+            ...(payload.fcmToken ? { fcmToken: '[redacted]' } : {}),
+        };
+    }
+
     private brandPayload(context?: NotificationBrandContext | NotificationBrand) {
         const brand = context && 'source' in context
             ? context as NotificationBrand
@@ -389,7 +397,10 @@ class OrbiTalkGatewayService {
                 requestId
             };
 
-            orbiTalkGatewayLogger.debug('orbi_talk_gateway.push_payload_prepared', { channel: 'push', payload });
+            orbiTalkGatewayLogger.debug('orbi_talk_gateway.push_payload_prepared', {
+                channel: 'push',
+                payload: this.redactPushPayload(payload),
+            });
 
             const endpoint = `${this.baseUrl}/api/send-push`;
             const response = await fetch(endpoint, {
@@ -407,7 +418,12 @@ class OrbiTalkGatewayService {
                 return false;
             }
 
-            orbiTalkGatewayLogger.info('orbi_talk_gateway.push_sent', { channel: 'push' });
+            orbiTalkGatewayLogger.info('orbi_talk_gateway.push_sent', {
+                channel: 'push',
+                event_origin: data.event_origin || data.eventOrigin || 'ORBI_TALK_GATEWAY',
+                delivery_rail: data.delivery_rail || data.deliveryRail || 'TALK_GATEWAY_PUSH',
+                request_id: requestId,
+            });
             return true;
         } catch (error) {
             orbiTalkGatewayLogger.error('orbi_talk_gateway.push_exception', { channel: 'push' }, error);
@@ -451,7 +467,12 @@ class OrbiTalkGatewayService {
                 ...(fcmToken && channel !== 'push' ? { fcmToken } : {})
             };
 
-            orbiTalkGatewayLogger.debug('orbi_talk_gateway.template_payload_prepared', { channel, recipient, template_name: templateName, payload });
+            orbiTalkGatewayLogger.debug('orbi_talk_gateway.template_payload_prepared', {
+                channel,
+                recipient,
+                template_name: templateName,
+                payload: this.redactPushPayload(payload),
+            });
 
             const endpoint = `${this.baseUrl}/api/send-template`;
             const response = await fetch(endpoint, {

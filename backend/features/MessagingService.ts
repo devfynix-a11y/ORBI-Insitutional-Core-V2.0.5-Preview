@@ -20,6 +20,7 @@ import {
     resolveNotificationBrand,
 } from '../infrastructure/NotificationBrandResolver.js';
 import { GlobalTimeResolver } from '../utils/GlobalTimeResolver.js';
+import { getOrbiDatabase } from '../../services/orbiDatabase.js';
 
 /**
  * NEXUS MESSAGING & NOTIFICATION NODE (V5.1)
@@ -127,6 +128,9 @@ class MessagingService {
                 email = email || String(authData.user?.email || authData.user?.user_metadata?.email || '').trim();
             }
 
+            const resolvedFcmToken =
+                profileData.fcm_token || await this.loadDevicePushToken(userId);
+
             return {
                 full_name: fullName || (email ? email.split('@')[0] : '') || 'User',
                 name: fullName || (email ? email.split('@')[0] : '') || 'User',
@@ -140,7 +144,7 @@ class MessagingService {
                 phone: phone,
                 nationality: profileData.nationality || 'Tanzania',
                 email,
-                fcm_token: profileData.fcm_token,
+                fcm_token: resolvedFcmToken,
                 id_type: profileData.id_type,
                 metadata: profileData.metadata || {},
                 device_name: recentDevice?.device_name || 'ORBI Mobile',
@@ -160,6 +164,39 @@ class MessagingService {
             metadata: {},
             device_name: 'ORBI Mobile',
         };
+    }
+
+    private async loadDevicePushToken(userId: string): Promise<string | null> {
+        const normalizedUserId = String(userId || '').trim();
+        if (!normalizedUserId || normalizedUserId === 'system') return null;
+
+        try {
+            const pool = getOrbiDatabase();
+            const { rows } = await pool.query(
+                `
+                SELECT fcm_token
+                FROM public.users
+                WHERE id = $1::uuid
+                  AND fcm_token IS NOT NULL
+                  AND length(fcm_token) > 0
+                UNION ALL
+                SELECT fcm_token
+                FROM public.staff
+                WHERE id = $1::uuid
+                  AND fcm_token IS NOT NULL
+                  AND length(fcm_token) > 0
+                LIMIT 1
+                `,
+                [normalizedUserId],
+            );
+            return rows[0]?.fcm_token || null;
+        } catch (error: any) {
+            console.warn('[Messaging] Direct FCM token lookup failed', {
+                userId: normalizedUserId,
+                error: error?.message || String(error),
+            });
+            return null;
+        }
     }
 
     private resolveTimeZone(profile: any, variables: Record<string, any> = {}): string {
@@ -588,26 +625,52 @@ CEO, ORBI`
             options.email = false;
         }
 
-        if (pushAllowed && (isTanzania || profile.fcm_token)) {
-            options.push = options.push ?? true;
-        }
+        const hasFcmToken = Boolean(profile.fcm_token);
+        const shouldDefaultPush = pushAllowed && hasFcmToken;
+        options.push = options.push ?? shouldDefaultPush;
 
-        // Try Push Notification
+        // Try Push Notification. Closed apps only receive notifications through
+        // device push, so allowed in-app messages must not be socket-only when a
+        // valid device token exists and the user has push enabled. Core is the
+        // authoritative push sender for Core events; Orbi Talk Gateway is the
+        // parallel communications rail using the same requestId for audit.
         if (options.push && pushAllowed && profile.fcm_token) {
-            await firebasePushService.send({
+            const pushData = {
+                title: displaySubject,
+                body: displayBody,
+                category,
+                messageId: id,
+                refId,
+                event_origin: 'ORBI_CORE',
+                eventOrigin: 'ORBI_CORE',
+                delivery_rail: 'CORE_FIREBASE',
+                deliveryRail: 'CORE_FIREBASE',
+                ...(options.template ? { templateName: options.template } : {}),
+                ...(options.eventCode ? { eventCode: options.eventCode } : {}),
+            };
+            const corePushSent = await firebasePushService.send({
                 token: profile.fcm_token,
                 title: displaySubject,
                 body: displayBody,
-                data: {
-                    title: displaySubject,
-                    body: displayBody,
-                    category,
-                    messageId: id,
-                    refId,
-                    ...(options.template ? { templateName: options.template } : {}),
-                    ...(options.eventCode ? { eventCode: options.eventCode } : {}),
-                },
+                data: pushData,
                 requestId: id,
+            });
+            if (!corePushSent) {
+                console.info('[Messaging] Push rail result', {
+                    userId,
+                    messageId: id,
+                    category,
+                    corePushSent,
+                });
+            }
+        } else {
+            console.info('[Messaging] Push notification skipped', {
+                userId,
+                messageId: id,
+                category,
+                pushAllowed,
+                requestedPush: options.push === true,
+                hasFcmToken,
             });
         }
 

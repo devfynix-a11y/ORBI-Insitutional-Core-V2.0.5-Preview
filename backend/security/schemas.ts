@@ -1,6 +1,13 @@
 
 import { z } from 'zod';
 
+const PostgresUuidSchema = z
+    .string()
+    .regex(
+        /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/,
+        'Invalid UUID'
+    );
+
 /**
  * ORBI VALIDATION SCHEMAS (V1.0)
  * Centralized Zod schemas for API request validation.
@@ -44,8 +51,8 @@ export const PaymentIntentSchema = z.object({
     quote_id: z.string().optional(),
     quoteHash: z.string().optional(),
     quote_hash: z.string().optional(),
-    sourceWalletId: z.string().uuid().optional(),
-    targetWalletId: z.string().uuid().optional(),
+    sourceWalletId: PostgresUuidSchema.optional(),
+    targetWalletId: PostgresUuidSchema.optional(),
     recipientId: z.string().optional(),
     recipient_customer_id: z.string().optional(),
     amount: z.number().positive(),

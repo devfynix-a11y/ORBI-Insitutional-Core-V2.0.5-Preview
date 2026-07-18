@@ -7,10 +7,19 @@ export const validate = (schema: z.ZodSchema) =>
       schema.parse(req.body);
       next();
     } catch (err: any) {
+      const issues = Array.isArray(err?.issues)
+        ? err.issues
+        : Array.isArray(err?.errors)
+          ? err.errors
+          : [];
       res.status(400).json({
         success: false,
         error: 'VALIDATION_FAILED',
-        details: err.errors?.map((e: any) => ({ path: e.path, message: e.message })) || [],
+        details: issues.map((e: any) => ({
+          path: Array.isArray(e.path) ? e.path : [],
+          message: e.message || 'Invalid value',
+          code: e.code,
+        })),
       });
     }
   };

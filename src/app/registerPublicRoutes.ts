@@ -238,6 +238,8 @@ export const registerAppPublicRoutes = (deps: Deps) => {
     validate,
     LogicCore,
     OTPService,
+    getSupabase,
+    getAdminSupabase,
     GoalCreateSchema,
     GoalUpdateSchema,
   });

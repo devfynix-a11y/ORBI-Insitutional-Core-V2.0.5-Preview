@@ -17,6 +17,8 @@ type Deps = {
   resolveWealthSourceWallet: (sb: any, userId: string, sourceWalletId?: string) => Promise<any>;
   resolveSharedPotMembership: (sb: any, potId: string, userId: string) => Promise<any>;
   canManageSharedPot: (role: string) => boolean;
+  canReviewSharedPot: (role: string) => boolean;
+  canViewSharedPotGovernance: (role: string) => boolean;
   canContributeToSharedPot: (role: string) => boolean;
   resolveUserBySharedPotIdentifier: (sb: any, identifier: string) => Promise<any>;
   expireSharedPotInvitationIfNeeded: (sb: any, invite: any) => Promise<any>;
@@ -163,6 +165,27 @@ const withdrawalRequiresApproval = (pot: any, role: string) => {
   return !roleCanWithdrawDirectly(role, policy);
 };
 
+const scheduleSharedPotArchive = async (sb: any, pot: any, request: any, scheduledAt: string) => {
+  const { data, error } = await sb.from('shared_pot_delete_requests').update({
+    status: 'SCHEDULED',
+    scheduled_archive_at: scheduledAt,
+    updated_at: new Date().toISOString(),
+  }).eq('id', request.id).select('*').single();
+  if (error) throw new Error(error.message);
+  await sb.from('shared_pots').update({
+    status: 'ARCHIVED',
+    metadata: {
+      ...(pot.metadata || {}),
+      delete_request_id: data.id,
+      pending_archive: true,
+      scheduled_archive_at: scheduledAt,
+      archived_from_ui_at: new Date().toISOString(),
+    },
+    updated_at: new Date().toISOString(),
+  }).eq('id', pot.id);
+  return data;
+};
+
 const validateWithdrawalPolicy = (pot: any, payload: any) => {
   const amount = toMoneyNumber(payload.amount);
   if (pot?.maturity_at && new Date(pot.maturity_at).getTime() > Date.now()) {
@@ -182,20 +205,38 @@ const approvalCount = (approvals: any[]) => approvals.filter((item) => item?.act
 
 const normalizeApprovals = (value: any): any[] => Array.isArray(value) ? value : [];
 
-const notifyPotMembers = async (sb: any, potId: string, subject: string, body: string, variables: Record<string, any> = {}) => {
+const notifyPotMembers = async (
+  sb: any,
+  potId: string,
+  subject: string,
+  body: string,
+  variables: Record<string, any> = {},
+  options: { excludeUserIds?: string[] } = {},
+) => {
+  const excluded = new Set((options.excludeUserIds || []).map((userId) => String(userId)));
   const { data: members } = await sb
     .from('shared_pot_members')
     .select('user_id')
-    .eq('pot_id', potId);
+    .eq('pot_id', potId)
+    .eq('status', 'ACTIVE');
   const userIds: string[] = Array.from(
     new Set<string>((members || []).map((member: any) => String(member.user_id || '')).filter(Boolean)),
-  );
+  ).filter((userId) => !excluded.has(userId));
   await Promise.all(userIds.map((userId) => Messaging.dispatch(userId, 'info', subject, body, {
     push: true,
-    sms: false,
+    sms: true,
     email: true,
     eventCode: variables.eventCode || 'SHARED_POT_GOVERNANCE_UPDATED',
-    variables,
+    variables: {
+      ...variables,
+      recipient_user_id: userId,
+    },
+    metadata: {
+      ...(variables.metadata || {}),
+      potId,
+      recipientUserId: userId,
+      eventCode: variables.eventCode || 'SHARED_POT_GOVERNANCE_UPDATED',
+    },
   }).catch((error: any) => {
     console.warn('[Wealth][SharedPot] Member notification deferred', {
       potId,
@@ -203,6 +244,154 @@ const notifyPotMembers = async (sb: any, potId: string, subject: string, body: s
       code: String(error?.code || error?.message || ''),
     });
   })));
+};
+
+const formatContributionAmount = (amount: any, currency: any) => {
+  const numeric = Number(amount || 0);
+  const safeAmount = Number.isFinite(numeric) ? numeric : 0;
+  return `${String(currency || 'TZS').toUpperCase()} ${safeAmount.toLocaleString('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  })}`;
+};
+
+const notifySharedPotContribution = async (sb: any, pot: any, contributorUserId: string, data: any, amount: any) => {
+  const amountLabel = formatContributionAmount(amount, pot.currency);
+  const potName = String(pot.name || 'Fungu');
+  const transactionId = data?.transaction?.id || null;
+  const potBalance = data?.shared_pot?.current_amount ?? pot.current_amount;
+
+  await Messaging.dispatch(
+    contributorUserId,
+    'info',
+    'Fungu contribution received',
+    `Your contribution of ${amountLabel} to ${potName} has been recorded.`,
+    {
+      push: true,
+      sms: true,
+      email: true,
+      eventCode: 'SHARED_POT_CONTRIBUTION_CONFIRMED',
+      variables: {
+        eventCode: 'SHARED_POT_CONTRIBUTION_CONFIRMED',
+        potId: pot.id,
+        potName,
+        amount: amountLabel,
+        currency: String(pot.currency || 'TZS').toUpperCase(),
+        transactionId,
+        potBalance,
+      },
+      metadata: {
+        potId: pot.id,
+        transactionId,
+        amount: Number(amount || 0),
+        currency: String(pot.currency || 'TZS').toUpperCase(),
+        eventCode: 'SHARED_POT_CONTRIBUTION_CONFIRMED',
+      },
+    },
+  ).catch((error: any) => {
+    console.warn('[Wealth][SharedPot] Contributor contribution notification deferred', {
+      potId: pot.id,
+      userId: contributorUserId,
+      code: String(error?.code || error?.message || ''),
+    });
+  });
+
+  await notifyPotMembers(
+    sb,
+    pot.id,
+    'New Fungu contribution',
+    `${amountLabel} has been added to ${potName}.`,
+    {
+      eventCode: 'SHARED_POT_CONTRIBUTION_POSTED',
+      potId: pot.id,
+      potName,
+      amount: amountLabel,
+      currency: String(pot.currency || 'TZS').toUpperCase(),
+      transactionId,
+      potBalance,
+      contributorUserId,
+    },
+    { excludeUserIds: [contributorUserId] },
+  );
+};
+
+const notifySharedPotWithdrawal = async (
+  sb: any,
+  pot: any,
+  requesterUserId: string,
+  data: any,
+  amount: any,
+  options: { approvedByUserId?: string | null; requiresApproval?: boolean } = {},
+) => {
+  const amountLabel = formatContributionAmount(amount, pot.currency);
+  const potName = String(pot.name || 'Fungu');
+  const transactionId = data?.transaction?.id || data?.transaction?.internalId || data?.request?.transaction_id || null;
+  const potBalance = data?.shared_pot?.current_amount ?? pot.current_amount;
+  const eventCode = options.requiresApproval
+    ? 'SHARED_POT_WITHDRAWAL_REQUESTED'
+    : options.approvedByUserId
+      ? 'SHARED_POT_WITHDRAWAL_APPROVED_EXECUTED'
+      : 'SHARED_POT_WITHDRAWAL_COMPLETED';
+
+  await Messaging.dispatch(
+    requesterUserId,
+    'info',
+    options.requiresApproval ? 'Fungu withdrawal requested' : 'Fungu withdrawal completed',
+    options.requiresApproval
+      ? `Your withdrawal request of ${amountLabel} from ${potName} has been sent for approval.`
+      : `${amountLabel} has been withdrawn from ${potName} to your ORBI account.`,
+    {
+      push: true,
+      sms: true,
+      email: true,
+      eventCode,
+      variables: {
+        eventCode,
+        potId: pot.id,
+        potName,
+        amount: amountLabel,
+        currency: String(pot.currency || 'TZS').toUpperCase(),
+        transactionId,
+        potBalance,
+        approvedByUserId: options.approvedByUserId || null,
+      },
+      metadata: {
+        potId: pot.id,
+        transactionId,
+        amount: Number(amount || 0),
+        currency: String(pot.currency || 'TZS').toUpperCase(),
+        eventCode,
+        approvedByUserId: options.approvedByUserId || null,
+      },
+    },
+  ).catch((error: any) => {
+    console.warn('[Wealth][SharedPot] Withdrawal actor notification deferred', {
+      potId: pot.id,
+      userId: requesterUserId,
+      code: String(error?.code || error?.message || ''),
+    });
+  });
+
+  await notifyPotMembers(
+    sb,
+    pot.id,
+    options.requiresApproval ? 'Fungu withdrawal needs approval' : 'Fungu withdrawal posted',
+    options.requiresApproval
+      ? `${amountLabel} withdrawal from ${potName} is waiting for approval.`
+      : `${amountLabel} has been withdrawn from ${potName}.`,
+    {
+      eventCode,
+      potId: pot.id,
+      potName,
+      amount: amountLabel,
+      currency: String(pot.currency || 'TZS').toUpperCase(),
+      transactionId,
+      potBalance,
+      requesterUserId,
+      approvedByUserId: options.approvedByUserId || null,
+    },
+    { excludeUserIds: [requesterUserId] },
+  );
 };
 
 const createSharedPotWithdrawalRequest = async (input: {
@@ -361,6 +550,8 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
     resolveWealthSourceWallet,
     resolveSharedPotMembership,
     canManageSharedPot,
+    canReviewSharedPot,
+    canViewSharedPotGovernance,
     canContributeToSharedPot,
     resolveUserBySharedPotIdentifier,
     expireSharedPotInvitationIfNeeded,
@@ -375,35 +566,43 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
       const { data: memberships, error: memberError } = await sb
         .from('shared_pot_members')
         .select('pot_id, role')
-        .eq('user_id', session.sub);
+        .eq('user_id', session.sub)
+        .eq('status', 'ACTIVE');
       if (memberError) return res.status(400).json({ success: false, error: memberError.message });
 
       const memberPotIds = Array.from(new Set((memberships || []).map((item: any) => String(item.pot_id || '')).filter(Boolean)));
-      let query = sb
+      const { data: ownerPots, error: ownerError } = await sb
         .from('shared_pots')
         .select('*')
-        .eq('owner_user_id', session.sub);
+        .eq('owner_user_id', session.sub)
+        .order('created_at', { ascending: false });
+      if (ownerError) return res.status(400).json({ success: false, error: ownerError.message });
+
+      let memberPots: any[] = [];
       if (memberPotIds.length > 0) {
-        query = sb
+        const { data: memberRows, error: memberPotError } = await sb
           .from('shared_pots')
           .select('*')
-          .or([
-            `owner_user_id.eq.${session.sub}`,
-            `id.in.(${memberPotIds.join(',')})`,
-          ].join(','));
+          .in('id', memberPotIds)
+          .order('created_at', { ascending: false });
+        if (memberPotError) return res.status(400).json({ success: false, error: memberPotError.message });
+        memberPots = memberRows || [];
       }
-      const { data, error } = await query.order('created_at', { ascending: false });
-      if (error) return res.status(400).json({ success: false, error: error.message });
+
       const membershipByPot = new Map(
         (memberships || []).map((item: any) => [String(item.pot_id), String(item.role || 'CONTRIBUTOR').toUpperCase()]),
       );
-      const items = (data || []).map((pot: any) => ({
+      const potsById = new Map<string, any>();
+      for (const pot of [...(ownerPots || []), ...memberPots]) {
+        potsById.set(String(pot.id), pot);
+      }
+      const items = Array.from(potsById.values()).map((pot: any) => ({
         ...pot,
         my_role: pot.owner_user_id === session.sub
           ? 'OWNER'
           : (membershipByPot.get(String(pot.id)) || 'CONTRIBUTOR'),
         is_owner: pot.owner_user_id === session.sub,
-      }));
+      })).sort((a: any, b: any) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
       res.json({ success: true, data: { pots: items } });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });
@@ -529,11 +728,15 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
     try {
       const sb = getAdminSupabase() || getSupabase();
       if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
-      const { pot } = await resolveSharedPotMembership(sb, req.params.id, session.sub);
+      const { pot, membership } = await resolveSharedPotMembership(sb, req.params.id, session.sub);
+      if (!canViewSharedPotGovernance(String(membership.role || ''))) {
+        return res.status(403).json({ success: false, error: 'SHARED_POT_ACCESS_DENIED' });
+      }
       const { data, error } = await sb
         .from('shared_pot_members')
-        .select('id,pot_id,user_id,role,contribution_target,contributed_amount,metadata,created_at')
+        .select('id,pot_id,user_id,role,status,contribution_target,contributed_amount,metadata,created_at')
         .eq('pot_id', pot.id)
+        .eq('status', 'ACTIVE')
         .order('created_at', { ascending: true });
       if (error) return res.status(400).json({ success: false, error: error.message });
       const usersById = await fetchUsersById(sb, compactIds(data || [], 'user_id'));
@@ -553,12 +756,16 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
     try {
       const sb = getAdminSupabase() || getSupabase();
       if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
-      const { pot } = await resolveSharedPotMembership(sb, req.params.id, session.sub);
+      const { pot, membership } = await resolveSharedPotMembership(sb, req.params.id, session.sub);
+      if (!canViewSharedPotGovernance(String(membership.role || ''))) {
+        return res.status(403).json({ success: false, error: 'SHARED_POT_ACCESS_DENIED' });
+      }
 
       const { data: memberRows, error: memberError } = await sb
         .from('shared_pot_members')
-        .select('id,pot_id,user_id,role,contribution_target,contributed_amount,metadata,created_at')
+        .select('id,pot_id,user_id,role,status,contribution_target,contributed_amount,metadata,created_at')
         .eq('pot_id', pot.id)
+        .eq('status', 'ACTIVE')
         .order('created_at', { ascending: true });
       if (memberError) return res.status(400).json({ success: false, error: memberError.message });
 
@@ -635,6 +842,101 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
         users: usersById.get(String(invite.invitee_user_id)) || null,
       }));
       res.json({ success: true, data: { invitations } });
+    } catch (e: any) {
+      res.status(e.message === 'SHARED_POT_ACCESS_DENIED' ? 403 : 400).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.delete('/wealth/shared-pots/:id/members/:memberId', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    try {
+      const sb = getAdminSupabase() || getSupabase();
+      if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+      const { pot, membership } = await resolveSharedPotMembership(sb, req.params.id, session.sub);
+      if (!canManageSharedPot(String(membership.role || ''))) {
+        return res.status(403).json({ success: false, error: 'SHARED_POT_MEMBER_REMOVE_DENIED' });
+      }
+      const { data: member, error: memberError } = await sb
+        .from('shared_pot_members')
+        .select('*')
+        .eq('id', req.params.memberId)
+        .eq('pot_id', pot.id)
+        .maybeSingle();
+      if (memberError) return res.status(400).json({ success: false, error: memberError.message });
+      if (!member) return res.status(404).json({ success: false, error: 'SHARED_POT_MEMBER_NOT_FOUND' });
+      if (String(member.user_id) === String(pot.owner_user_id)) {
+        return res.status(400).json({ success: false, error: 'SHARED_POT_OWNER_CANNOT_BE_REMOVED' });
+      }
+      if (String(member.user_id) === String(session.sub)) {
+        return res.status(400).json({ success: false, error: 'SHARED_POT_SELF_REMOVE_DENIED' });
+      }
+      const { data, error } = await sb
+        .from('shared_pot_members')
+        .update({
+          status: 'REMOVED',
+          metadata: {
+            ...(member.metadata || {}),
+            removed_by: session.sub,
+            removed_at: new Date().toISOString(),
+          },
+        })
+        .eq('id', member.id)
+        .select('*')
+        .single();
+      if (error) return res.status(400).json({ success: false, error: error.message });
+      try {
+        await notifyPotMembers(
+          sb,
+          pot.id,
+          'Fungu member updated',
+          `A member was removed from ${pot.name}.`,
+          { potId: pot.id, memberId: data.id, removedUserId: member.user_id, eventCode: 'SHARED_POT_MEMBER_REMOVED' },
+        );
+      } catch (notifyError) {
+        console.warn('[Wealth][SharedPot] Member removal notification failed', notifyError);
+      }
+      res.json({ success: true, data: { member: data } });
+    } catch (e: any) {
+      res.status(e.message === 'SHARED_POT_ACCESS_DENIED' ? 403 : 400).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.post('/wealth/shared-pots/:id/leave', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    try {
+      const sb = getAdminSupabase() || getSupabase();
+      if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+      const { pot, membership } = await resolveSharedPotMembership(sb, req.params.id, session.sub);
+      if (String(membership.role || '').toUpperCase() === 'OWNER' || String(pot.owner_user_id) === String(session.sub)) {
+        return res.status(400).json({ success: false, error: 'SHARED_POT_OWNER_CANNOT_LEAVE' });
+      }
+      const { data, error } = await sb
+        .from('shared_pot_members')
+        .update({
+          status: 'LEFT',
+          metadata: {
+            ...(membership.metadata || {}),
+            left_by: session.sub,
+            left_at: new Date().toISOString(),
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', membership.id)
+        .select('*')
+        .single();
+      if (error) return res.status(400).json({ success: false, error: error.message });
+      try {
+        await notifyPotMembers(
+          sb,
+          pot.id,
+          'Fungu member left',
+          `A member left ${pot.name}.`,
+          { potId: pot.id, memberId: data.id, userId: session.sub, eventCode: 'SHARED_POT_MEMBER_LEFT' },
+        );
+      } catch (notifyError) {
+        console.warn('[Wealth][SharedPot] Member leave notification failed', notifyError);
+      }
+      res.json({ success: true, data: { member: data } });
     } catch (e: any) {
       res.status(e.message === 'SHARED_POT_ACCESS_DENIED' ? 403 : 400).json({ success: false, error: e.message });
     }
@@ -717,14 +1019,14 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
       }
       const { data: existingMember, error: existingMemberError } = await sb
         .from('shared_pot_members')
-        .select('id')
+        .select('id,status')
         .eq('pot_id', pot.id)
         .eq('user_id', memberUser.id)
         .maybeSingle();
       if (existingMemberError) {
         return failInvite(400, existingMemberError.message, { phase: 'existing_member_lookup' });
       }
-      if (existingMember) {
+      if (String(existingMember?.status || '').toUpperCase() === 'ACTIVE') {
         return failInvite(400, 'SHARED_POT_MEMBER_ALREADY_EXISTS', { inviteeUserId: memberUser.id });
       }
 
@@ -853,6 +1155,7 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
         wealthNumber,
         resolveWealthSourceWallet,
       });
+      await notifySharedPotContribution(sb, pot, session.sub, data, payload.amount);
       res.json({ success: true, data });
     } catch (e: any) {
       res.status(
@@ -866,7 +1169,10 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
     try {
       const sb = getAdminSupabase() || getSupabase();
       if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
-      const { pot } = await resolveSharedPotMembership(sb, req.params.id, session.sub);
+      const { pot, membership } = await resolveSharedPotMembership(sb, req.params.id, session.sub);
+      if (!canViewSharedPotGovernance(String(membership.role || ''))) {
+        return res.status(403).json({ success: false, error: 'SHARED_POT_ACCESS_DENIED' });
+      }
       const { data, error } = await sb
         .from('shared_pot_withdrawal_requests')
         .select('*')
@@ -912,7 +1218,7 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
       }
 
       const { pot, membership } = await resolveSharedPotMembership(sb, request.pot_id, session.sub);
-      if (!canManageSharedPot(String(membership.role || ''))) {
+      if (!canReviewSharedPot(String(membership.role || ''))) {
         return res.status(403).json({ success: false, error: 'SHARED_POT_WITHDRAW_APPROVAL_DENIED' });
       }
       if (String(request.requester_user_id) === String(session.sub)) {
@@ -995,6 +1301,9 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
         wealthNumber,
         resolveWealthSourceWallet,
       });
+      await notifySharedPotWithdrawal(sb, pot, String(request.requester_user_id), withdrawal, request.amount, {
+        approvedByUserId: session.sub,
+      });
       const { data, error } = await sb
         .from('shared_pot_withdrawal_requests')
         .update({
@@ -1028,6 +1337,14 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
       if (toMoneyNumber(pot.current_amount) >= 1) {
         return res.status(400).json({ success: false, error: 'SHARED_POT_DELETE_BALANCE_NOT_EMPTY' });
       }
+      const accessModel = normalizeUpper(pot.access_model, 'INVITE');
+      const { count: activeMemberCount, error: countError } = await sb
+        .from('shared_pot_members')
+        .select('id', { count: 'exact', head: true })
+        .eq('pot_id', pot.id)
+        .eq('status', 'ACTIVE');
+      if (countError) return res.status(400).json({ success: false, error: countError.message });
+      const requiresApproval = accessModel === 'ORG';
 
       const otpRequestId = String(req.body?.otp_request_id || '');
       const otpCode = String(req.body?.otp_code || '');
@@ -1075,13 +1392,34 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
           otp_verified_at: new Date().toISOString(),
           metadata: {
             pot_name: pot.name,
-            access_model: pot.access_model || 'INVITE',
+            access_model: accessModel,
+            active_member_count: Number(activeMemberCount || 0),
             requested_role: membership.role || 'MANAGER',
           },
         })
         .select('*')
         .single();
       if (error) return res.status(400).json({ success: false, error: error.message });
+      if (!requiresApproval) {
+        const scheduledAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+        const scheduled = await scheduleSharedPotArchive(sb, pot, data, scheduledAt);
+        await notifyPotMembers(
+          sb,
+          pot.id,
+          'Fungu archive scheduled',
+          `${pot.name} has been archived from the main list and will remain cancellable for 24 hours.`,
+          { potId: pot.id, requestId: scheduled.id, scheduledAt, eventCode: 'SHARED_POT_DELETE_SCHEDULED' },
+        );
+        return res.json({
+          success: true,
+          data: {
+            request: scheduled,
+            requires_approval: false,
+            scheduled_archive_at: scheduledAt,
+            member_count: Number(activeMemberCount || 0),
+          },
+        });
+      }
       await notifyPotMembers(
         sb,
         pot.id,
@@ -1154,22 +1492,12 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
         return res.json({ success: true, data: { request: data, requires_more_approvals: true } });
       }
       const scheduledAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-      const { data, error } = await sb.from('shared_pot_delete_requests').update({
-        status: 'SCHEDULED',
+      const { data: reviewed, error: reviewError } = await sb.from('shared_pot_delete_requests').update({
         approvals: updatedApprovals,
-        scheduled_archive_at: scheduledAt,
         updated_at: new Date().toISOString(),
       }).eq('id', request.id).select('*').single();
-      if (error) return res.status(400).json({ success: false, error: error.message });
-      await sb.from('shared_pots').update({
-        metadata: {
-          ...(pot.metadata || {}),
-          delete_request_id: data.id,
-          pending_archive: true,
-          scheduled_archive_at: scheduledAt,
-        },
-        updated_at: new Date().toISOString(),
-      }).eq('id', pot.id);
+      if (reviewError) return res.status(400).json({ success: false, error: reviewError.message });
+      const data = await scheduleSharedPotArchive(sb, pot, reviewed, scheduledAt);
       await notifyPotMembers(sb, pot.id, 'Fungu archive scheduled', `${pot.name} will be archived after 24 hours unless cancelled.`, { potId: pot.id, requestId: data.id, scheduledAt, eventCode: 'SHARED_POT_DELETE_SCHEDULED' });
       res.json({ success: true, data: { request: data, scheduled_archive_at: scheduledAt } });
     } catch (e: any) {
@@ -1285,6 +1613,9 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
           wealthNumber,
           resolveWealthSourceWallet,
         });
+        await notifySharedPotWithdrawal(sb, pot, session.sub, data, payload.amount, {
+          requiresApproval: true,
+        });
         return res.json({ success: true, data });
       }
       if (!roleCanWithdrawDirectly(memberRole, String(pot.withdrawal_policy || 'OWNER_OR_MANAGER'))) {
@@ -1299,6 +1630,7 @@ export const registerSharedPotRoutes = (v1: Router, deps: Deps) => {
         wealthNumber,
         resolveWealthSourceWallet,
       });
+      await notifySharedPotWithdrawal(sb, pot, session.sub, data, payload.amount);
       res.json({ success: true, data });
     } catch (e: any) {
       res.status(e.message === 'SHARED_POT_WITHDRAW_DENIED' ? 403 : 400).json({ success: false, error: e.message });

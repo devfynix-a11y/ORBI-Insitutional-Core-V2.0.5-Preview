@@ -136,10 +136,57 @@ const transactionTimestamp = (transaction: any): Date | null => {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
-const isCreditLike = (transaction: any): boolean => {
-  const type = String(transaction?.type || transaction?.direction || '').toUpperCase();
-  const side = String(transaction?.entry_side || '').toUpperCase();
-  return ['CREDIT', 'INCOMING', 'DEPOSIT', 'RECEIVED'].some((marker) => type.includes(marker) || side.includes(marker));
+const transactionLedgerSide = (transaction: any): 'CREDIT' | 'DEBIT' | null => {
+  const sideText = [
+    transaction?.ledger?.entry_side,
+    transaction?.ledger?.entry_type,
+    transaction?.entry_side,
+    transaction?.entry_type,
+    transaction?.direction,
+    transaction?.metadata?.ledger?.entry_side,
+    transaction?.metadata?.entry_side,
+  ].map((value) => String(value || '').toUpperCase()).join(' ');
+
+  if (sideText.includes('CREDIT')) return 'CREDIT';
+  if (sideText.includes('DEBIT')) return 'DEBIT';
+
+  const signedAmount = Number(
+    transaction?.signed_amount ??
+    transaction?.signedAmount ??
+    transaction?.net_amount ??
+    transaction?.netAmount,
+  );
+  if (Number.isFinite(signedAmount) && signedAmount !== 0) {
+    return signedAmount > 0 ? 'CREDIT' : 'DEBIT';
+  }
+
+  return null;
+};
+
+const transactionReportAmount = (transaction: any): number => {
+  const amount = toMoneyNumber(
+    transaction?.amount ??
+    transaction?.signed_amount ??
+    transaction?.signedAmount ??
+    transaction?.net_amount ??
+    transaction?.netAmount,
+  );
+  return Math.abs(amount);
+};
+
+const transactionBalanceAfter = (transaction: any): number | null => {
+  const raw = firstText([
+    transaction?.balance_after,
+    transaction?.balanceAfter,
+    transaction?.available_balance_after,
+    transaction?.availableBalanceAfter,
+    transaction?.running_balance,
+    transaction?.ledger?.balance_after,
+    transaction?.metadata?.balance_after,
+  ]);
+  if (!raw) return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
 };
 
 const movementFamilyOf = (transaction: any): string => String(
@@ -169,25 +216,47 @@ const buildTransactionReport = (transactions: any[], range: ReturnType<typeof re
   });
 
   const summary = scoped.reduce((acc: any, transaction: any) => {
-    const amount = toMoneyNumber(transaction?.amount);
-    if (isInternalMoneyMovement(transaction)) {
-      acc.internal_movements += amount;
-      acc.internal_movement_count += 1;
-    } else if (isIncomeSpendingMovement(transaction) && isCreditLike(transaction)) {
-      acc.total_in += amount;
-      acc.money_in += amount;
-      acc.external_in += amount;
-    } else if (isIncomeSpendingMovement(transaction)) {
-      acc.total_out += amount;
-      acc.money_out += amount;
-      acc.external_out += amount;
+    const amount = transactionReportAmount(transaction);
+    const side = transactionLedgerSide(transaction);
+    const balanceAfter = transactionBalanceAfter(transaction);
+    const previousBalance = acc._last_operating_balance;
+    const balanceDelta = balanceAfter !== null && previousBalance !== null
+      ? balanceAfter - previousBalance
+      : null;
+    const reconciledAmount = balanceDelta !== null && balanceDelta !== 0
+      ? Math.abs(balanceDelta)
+      : amount;
+    const reconciledSide = balanceDelta !== null && balanceDelta !== 0
+      ? (balanceDelta > 0 ? 'CREDIT' : 'DEBIT')
+      : side;
+
+    if (reconciledSide === 'CREDIT') {
+      acc.total_credit += reconciledAmount;
+      acc.total_in += reconciledAmount;
+      acc.money_in += reconciledAmount;
+    } else if (reconciledSide === 'DEBIT') {
+      acc.total_debit += reconciledAmount;
+      acc.total_out += reconciledAmount;
+      acc.money_out += reconciledAmount;
     } else {
       acc.unclassified_movements += amount;
       acc.unclassified_movement_count += 1;
     }
-    acc.net = acc.total_in - acc.total_out;
+
+    if (isInternalMoneyMovement(transaction)) {
+      acc.internal_movements += amount;
+      acc.internal_movement_count += 1;
+    } else if (isIncomeSpendingMovement(transaction) && reconciledSide === 'CREDIT') {
+      acc.external_in += reconciledAmount;
+    } else if (isIncomeSpendingMovement(transaction) && reconciledSide === 'DEBIT') {
+      acc.external_out += reconciledAmount;
+    }
+    acc.net = acc.total_credit - acc.total_debit;
     acc.gross_movement += amount;
     acc.transaction_count += 1;
+    if (balanceAfter !== null) {
+      acc._last_operating_balance = balanceAfter;
+    }
     const currency = String(transaction?.currency || 'TZS').toUpperCase();
     acc.currency = acc.currency || currency;
     acc.currencies[currency] = (acc.currencies[currency] || 0) + amount;
@@ -198,6 +267,10 @@ const buildTransactionReport = (transactions: any[], range: ReturnType<typeof re
     currency: 'TZS',
     total_in: 0,
     total_out: 0,
+    total_credit: 0,
+    total_debit: 0,
+    credit_total: 0,
+    debit_total: 0,
     money_in: 0,
     money_out: 0,
     external_in: 0,
@@ -211,7 +284,12 @@ const buildTransactionReport = (transactions: any[], range: ReturnType<typeof re
     transaction_count: 0,
     currencies: {},
     statuses: {},
+    _last_operating_balance: null,
   });
+
+  summary.credit_total = summary.total_credit;
+  summary.debit_total = summary.total_debit;
+  delete summary._last_operating_balance;
 
   return {
     report_type: 'TRANSACTION_HISTORY',
@@ -261,19 +339,19 @@ const buildBalanceSnapshot = async (sb: any, userId: string, currency = 'TZS') =
   const wallets = await safeRows(
     'wallets',
     sb.from('wallets')
-      .select('id,name,wallet_name,type,wallet_type,bucket_type,balance,available_balance,currency,user_id')
+      .select('id,name,type,management_tier,balance,currency,user_id')
       .eq('user_id', userId),
   );
   const vaults = await safeRows(
     'platform_vaults',
     sb.from('platform_vaults')
-      .select('id,name,vault_name,vault_role,balance,available_balance,currency,user_id')
+      .select('id,name,vault_role,balance,currency,user_id')
       .eq('user_id', userId),
   );
   const goals = await safeRows(
     'goals',
     sb.from('goals')
-      .select('id,name,current,current_amount,balance,currency,status,user_id')
+      .select('id,name,current,currency,status,user_id')
       .eq('user_id', userId),
   );
   const escrows = await safeRows(
@@ -289,10 +367,10 @@ const buildBalanceSnapshot = async (sb: any, userId: string, currency = 'TZS') =
   const potIds = potMembers.map((row) => String(row?.pot_id || '').trim()).filter(Boolean);
   const potsQuery = potIds.length
     ? sb.from('shared_pots')
-      .select('id,name,current_amount,balance,currency,status,owner_user_id')
+      .select('id,name,current_amount,currency,status,owner_user_id')
       .or(`owner_user_id.eq.${userId},id.in.(${potIds.join(',')})`)
     : sb.from('shared_pots')
-      .select('id,name,current_amount,balance,currency,status,owner_user_id')
+      .select('id,name,current_amount,currency,status,owner_user_id')
       .eq('owner_user_id', userId);
   const pots = await safeRows('shared_pots', potsQuery);
   const budgetMembers = await safeRows(
@@ -302,10 +380,10 @@ const buildBalanceSnapshot = async (sb: any, userId: string, currency = 'TZS') =
   const budgetIds = budgetMembers.map((row) => String(row?.budget_id || '').trim()).filter(Boolean);
   const budgetsQuery = budgetIds.length
     ? sb.from('shared_budgets')
-      .select('id,name,budget_limit,spent_amount,current_amount,balance,currency,status,owner_user_id')
+      .select('id,name,budget_limit,spent_amount,currency,status,owner_user_id')
       .or(`owner_user_id.eq.${userId},id.in.(${budgetIds.join(',')})`)
     : sb.from('shared_budgets')
-      .select('id,name,budget_limit,spent_amount,current_amount,balance,currency,status,owner_user_id')
+      .select('id,name,budget_limit,spent_amount,currency,status,owner_user_id')
       .eq('owner_user_id', userId);
   const budgets = await safeRows('shared_budgets', budgetsQuery);
 
@@ -339,12 +417,10 @@ const buildBalanceSnapshot = async (sb: any, userId: string, currency = 'TZS') =
     ['amount'],
     safeCurrency,
   );
-  const goalsBalance = sumRows(goals, ['current_amount', 'current', 'balance'], safeCurrency);
-  const potsBalance = sumRows(pots, ['current_amount', 'balance'], safeCurrency);
+  const goalsBalance = sumRows(goals, ['current'], safeCurrency);
+  const potsBalance = sumRows(pots, ['current_amount'], safeCurrency);
   const budgetsBalance = budgets.reduce((total, row) => {
     if (String(row?.currency || safeCurrency).toUpperCase() !== safeCurrency) return total;
-    const current = toMoneyNumber(row?.current_amount ?? row?.balance);
-    if (current > 0) return total + current;
     const limit = toMoneyNumber(row?.budget_limit);
     const spent = toMoneyNumber(row?.spent_amount);
     return total + Math.max(limit - spent, 0);
@@ -420,6 +496,12 @@ const isOperatingWalletRecord = (wallet: any): boolean => {
   return /(operating|main|internal vault|default|dilpesa|spendable|available)/.test(text);
 };
 
+const isOperatingLedgerLeg = (leg: any, walletById: Map<string, any>): boolean => {
+  const bucket = String(leg?.bucket_type || '').toUpperCase();
+  if (bucket && bucket !== 'OPERATING') return false;
+  return isOperatingWalletRecord(walletById.get(String(leg?.wallet_id || '')));
+};
+
 const pickGeneralReportBalanceLeg = (
   legs: any[],
   userId: string,
@@ -434,7 +516,7 @@ const pickGeneralReportBalanceLeg = (
     return String(leg?.user_id || '') === String(userId);
   });
   const operatingLegs = ownedLegs.filter((leg: any) =>
-    isOperatingWalletRecord(walletById.get(String(leg?.wallet_id || ''))),
+    isOperatingLedgerLeg(leg, walletById),
   );
   const preferredSide = preferredGeneralReportBalanceSide(transaction);
   if (preferredSide) {
@@ -462,7 +544,7 @@ const pickReportSourceLeg = (
   }
   return debitLegs.find((leg: any) =>
     String(walletById.get(String(leg?.wallet_id || ''))?.user_id || leg?.user_id || '') === String(userId) &&
-    isOperatingWalletRecord(walletById.get(String(leg?.wallet_id || ''))),
+    isOperatingLedgerLeg(leg, walletById),
   ) || debitLegs[0];
 };
 
@@ -483,7 +565,7 @@ const pickReportDestinationLeg = (
   return creditLegs.find((leg: any) => {
     const wallet = walletById.get(String(leg?.wallet_id || ''));
     return String(wallet?.user_id || leg?.user_id || '') !== String(userId) &&
-      isOperatingWalletRecord(wallet);
+      isOperatingLedgerLeg(leg, walletById);
   }) || creditLegs.find((leg: any) => {
     const wallet = walletById.get(String(leg?.wallet_id || ''));
     return !String(wallet?.vault_role || wallet?.name || '').toLowerCase().includes('paysafe');
@@ -596,6 +678,11 @@ const enrichTransactionsForReport = async (
         .map((transaction: any) => String(transaction?.metadata?.shared_pot_id || '').trim())
         .filter(Boolean),
     ));
+    const sharedBudgetIds = Array.from(new Set(
+      transactions
+        .map((transaction: any) => String(transaction?.shared_budget_id || transaction?.metadata?.shared_budget_id || '').trim())
+        .filter(Boolean),
+    ));
     const userById = new Map<string, any>();
     if (userIds.length) {
       const { data: users, error: userError } = await sb
@@ -618,6 +705,18 @@ const enrichTransactionsForReport = async (
         sharedPots.forEach((pot: any) => sharedPotById.set(String(pot.id), pot));
       } else if (sharedPotError) {
         console.warn('[Transactions Report] shared pot enrichment skipped:', sharedPotError.message);
+      }
+    }
+    const sharedBudgetById = new Map<string, any>();
+    if (sharedBudgetIds.length) {
+      const { data: sharedBudgets, error: sharedBudgetError } = await sb
+        .from('shared_budgets')
+        .select('id,name')
+        .in('id', sharedBudgetIds);
+      if (!sharedBudgetError && Array.isArray(sharedBudgets)) {
+        sharedBudgets.forEach((budget: any) => sharedBudgetById.set(String(budget.id), budget));
+      } else if (sharedBudgetError) {
+        console.warn('[Transactions Report] shared budget enrichment skipped:', sharedBudgetError.message);
       }
     }
 
@@ -683,12 +782,15 @@ const enrichTransactionsForReport = async (
       ]);
       const sharedPot = sharedPotById.get(String(transaction?.metadata?.shared_pot_id || ''));
       const sharedPotLabel = sharedPot?.name ? `Fungu: ${sharedPot.name}` : undefined;
+      const sharedBudget = sharedBudgetById.get(String(transaction?.shared_budget_id || transaction?.metadata?.shared_budget_id || ''));
+      const sharedBudgetLabel = sharedBudget?.name ? `Mezani: ${sharedBudget.name}` : undefined;
+      const internalResourceLabel = sharedPotLabel || sharedBudgetLabel;
       const balanceSide = String(balanceLeg?.entry_side || balanceLeg?.entry_type || '').toUpperCase();
-      const resolvedSourceDisplayName = sharedPotLabel && balanceSide.includes('CREDIT')
-        ? sharedPotLabel
+      const resolvedSourceDisplayName = internalResourceLabel && balanceSide.includes('CREDIT')
+        ? internalResourceLabel
         : sourceDisplayName;
-      const resolvedDestinationDisplayName = sharedPotLabel && balanceSide.includes('DEBIT')
-        ? sharedPotLabel
+      const resolvedDestinationDisplayName = internalResourceLabel && balanceSide.includes('DEBIT')
+        ? internalResourceLabel
         : destinationDisplayName;
       const balanceAfter = firstText([
         balanceLeg?.balance_after,
@@ -1071,6 +1173,72 @@ export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
+  v1.get('/transactions/settlement-status', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    const quoteId = String(req.query.quoteId || req.query.quote_id || '').trim();
+    const idempotencyKey = String(req.query.idempotencyKey || req.query.idempotency_key || '').trim();
+
+    if (!quoteId && !idempotencyKey) {
+      return res.status(400).json({
+        success: false,
+        error: 'SETTLEMENT_LOOKUP_KEY_REQUIRED',
+        message: 'quoteId or idempotencyKey is required.',
+      });
+    }
+
+    try {
+      const sb = getSupabase();
+      if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+
+      let query = sb
+        .from('transaction_quotes')
+        .select('id, status, idempotency_key, transaction_id, settlement_result, confirmed_at, settled_at, updated_at, expires_at')
+        .eq('user_id', session.sub);
+
+      if (quoteId) query = query.eq('id', quoteId);
+      if (idempotencyKey) query = query.eq('idempotency_key', idempotencyKey);
+
+      const { data: quote, error } = await query.maybeSingle();
+      if (error) throw error;
+      if (!quote) {
+        return res.status(404).json({
+          success: false,
+          error: 'SETTLEMENT_STATUS_NOT_FOUND',
+          message: 'No settlement state was found for this transaction preview.',
+        });
+      }
+
+      let transaction: any = null;
+      const transactionId = quote.transaction_id ? String(quote.transaction_id) : '';
+      if (transactionId) {
+        transaction = await LogicCore.getTransactionForUser(session.sub, transactionId);
+      }
+
+      res.json({
+        success: true,
+        data: {
+          quoteId: quote.id,
+          idempotencyKey: quote.idempotency_key,
+          quoteStatus: quote.status,
+          status: transaction?.status || quote.status,
+          transactionId,
+          transaction,
+          settlementResult: quote.settlement_result || null,
+          confirmedAt: quote.confirmed_at,
+          settledAt: quote.settled_at,
+          updatedAt: quote.updated_at,
+          expiresAt: quote.expires_at,
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({
+        success: false,
+        error: 'SETTLEMENT_STATUS_LOOKUP_FAILED',
+        message: e.message,
+      });
+    }
+  });
+
   v1.get('/fx/quote', authenticate as any, async (req, res) => {
     const { from, to, amount } = req.query;
     if (!from || !to || !amount) {
@@ -1115,10 +1283,18 @@ export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
         session.sub,
         report.summary?.currency || 'TZS',
       );
+      const summary = {
+        ...report.summary,
+        available_balance: balances.available_balance,
+        availableBalance: balances.available_balance,
+        inside_orbi_total: balances.inside_orbi_total,
+        insideOrbiTotal: balances.inside_orbi_total,
+      };
       res.json({
         success: true,
         data: {
           ...report,
+          summary,
           balances,
           balance_snapshot: balances,
         },
