@@ -31,6 +31,95 @@ const requireWorkerScope = (requiredScopes: string[]) =>
     return next();
   };
 
+const quoteErrorStatus = (message: string) => {
+  if (/DB_OFFLINE|UNAVAILABLE/i.test(message)) return 503;
+  if (/NOT_CONFIGURED|NOT_FOUND|REQUIRED|ACCESS_DENIED|INSUFFICIENT|BLOCK/i.test(message)) return 400;
+  return 500;
+};
+
+const normalizeChallengeDecision = (value: unknown) => {
+  const decision = String(value || '').trim().toLowerCase();
+  if (['approve', 'approved', 'accept', 'accepted', 'confirm', 'confirmed'].includes(decision)) {
+    return 'approve' as const;
+  }
+  if (['reject', 'rejected', 'decline', 'declined', 'deny', 'denied', 'cancel', 'cancelled'].includes(decision)) {
+    return 'reject' as const;
+  }
+  throw new Error('SERVICE_CHALLENGE_DECISION_INVALID');
+};
+
+async function completeApprovedServiceChallengeWithPaySafeHold(
+  actorUserId: string,
+  response: Awaited<ReturnType<typeof gatewayPaymentIntentService.respondToChallenge>>,
+) {
+  const intent = response.intent || {};
+  const requestPayload = intent.request_payload || {};
+  const requestMetadata = requestPayload.metadata || {};
+  const challengeMetadata = response.challenge?.metadata || {};
+  const merchantId = String(
+    intent.merchant_id ||
+      challengeMetadata.merchantId ||
+      challengeMetadata.merchant_id ||
+      requestMetadata.merchantId ||
+      requestMetadata.merchant_id ||
+      '',
+  ).trim();
+  if (!merchantId) throw new Error('MERCHANT_CONTEXT_REQUIRED');
+
+  const sb = getAdminSupabase() || getSupabase();
+  if (!sb) throw new Error('DB_OFFLINE');
+  const { data: merchant, error: merchantError } = await sb
+    .from('merchants')
+    .select('id,business_name,owner_user_id,status')
+    .eq('id', merchantId)
+    .maybeSingle();
+  if (merchantError) throw new Error(merchantError.message || 'MERCHANT_LOOKUP_FAILED');
+  if (!merchant) throw new Error('MERCHANT_NOT_FOUND');
+  if (String(merchant.status || '').toLowerCase() !== 'active') throw new Error('MERCHANT_NOT_ACTIVE');
+  const recipientUserId = String(merchant.owner_user_id || '').trim();
+  if (!recipientUserId) throw new Error('MERCHANT_OWNER_REQUIRED');
+
+  const currency = String(intent.currency || requestPayload.currency || 'TZS').toUpperCase();
+  const amount = Number(intent.amount || requestPayload.amount || 0);
+  const reference = String(intent.reference || requestPayload.reference || '').trim();
+  const serviceCode = String(intent.service_code || requestPayload.serviceCode || '').trim();
+  const description = String(
+    requestPayload.description ||
+      requestMetadata.description ||
+      `Protected checkout ${reference || intent.intent_id}`,
+  ).trim();
+
+  const paysafeReferenceId = await LogicCore.createEscrow(
+    actorUserId,
+    recipientUserId,
+    amount,
+    description,
+    {
+      ...(requestMetadata || {}),
+      merchantId,
+      serviceCode,
+      orderId: requestMetadata.orderId || requestMetadata.order_id || reference || null,
+      gatewayIntentId: String(intent.intent_id),
+      gatewayChallengeId: String(response.challenge?.challenge_id || ''),
+      gatewayReference: reference || null,
+      source: 'pay_gateway_service_challenge',
+      settlementPolicy: 'paysafe_hold_required',
+      thirdPartyAuthorization: true,
+      merchantName: merchant.business_name || null,
+      currency,
+    },
+  );
+
+  return {
+    paysafeReferenceId,
+    merchant,
+    amount,
+    currency,
+    reference,
+    serviceCode,
+  };
+}
+
 const TrustedGatewayEventSchema = z.object({
   providerId: z.string().min(1),
   reference: z.string().min(1),
@@ -1175,6 +1264,157 @@ export const registerInternalRoutes = (internal: Router) => {
         ...getInternalAuditMetadata(req),
       });
       return res.status(message === 'DB_OFFLINE' ? 503 : 500).json({ success: false, error: message });
+    }
+  });
+
+  internal.post('/pay-gateway/service-payment-challenges/:challengeId/respond', requireWorkerScope(['gateway:service-payments:write', 'gateway:service-payments:result']), async (req, res) => {
+    const workerId = String((req as any).internalWorker?.id || req.get('x-worker-id') || 'payment-gateway');
+    const challengeId = String(req.params.challengeId || '').trim();
+    let decision: 'approve' | 'reject';
+    try {
+      decision = normalizeChallengeDecision(req.body?.decision || req.body?.action || req.body?.status);
+    } catch (e: any) {
+      return res.status(400).json({ success: false, error: e.message });
+    }
+
+    try {
+      const idempotencyKey = String(
+        req.get('idempotency-key') ||
+          req.get('x-idempotency-key') ||
+          req.body?.idempotencyKey ||
+          req.body?.idempotency_key ||
+          '',
+      ).trim();
+      if (idempotencyKey.length < 8) {
+        return res.status(400).json({ success: false, error: 'IDEMPOTENCY_KEY_REQUIRED' });
+      }
+
+      const pending = await gatewayPaymentIntentService.getPendingChallengeForGateway(challengeId);
+      const userId = String(pending.challenge.customer_user_id || '').trim();
+      if (!userId) throw new Error('GATEWAY_CHALLENGE_CUSTOMER_REQUIRED');
+      const challengeMetadata = pending.challenge?.metadata || {};
+      if (decision === 'approve' && challengeMetadata.otcRequired === true) {
+        const otcRequestId = String(
+          req.body?.otc_request_id ||
+            req.body?.otp_request_id ||
+            challengeMetadata.otcRequestId ||
+            '',
+        ).trim();
+        const otcCode = String(
+          req.body?.otc_code ||
+            req.body?.otp_code ||
+            req.body?.code ||
+            req.body?.pin ||
+            '',
+        ).trim();
+        if (!otcRequestId || !otcCode) {
+          return res.status(400).json({
+            success: false,
+            error: 'SERVICE_PAYMENT_OTC_REQUIRED',
+            message: 'Enter the OTC sent to the customer registered ORBI contact.',
+          });
+        }
+        const verified = await OTPService.verify(otcRequestId, otcCode, userId);
+        if (!verified) {
+          return res.status(403).json({
+            success: false,
+            error: 'SERVICE_PAYMENT_OTC_INVALID',
+            message: 'The OTC is invalid or expired.',
+          });
+        }
+      }
+
+      const response = await gatewayPaymentIntentService.respondToChallenge({
+        challengeId,
+        userId,
+        decision,
+        idempotencyKey,
+        metadata: {
+          channel: 'hosted_gateway_challenge',
+          otc_verified_at: decision === 'approve' && challengeMetadata.otcRequired === true
+            ? new Date().toISOString()
+            : null,
+          worker_id: workerId,
+          app_id: req.get('x-orbi-app-id') || null,
+        },
+      });
+
+      let event = response.event;
+      if (decision === 'approve') {
+        try {
+          const hold = await completeApprovedServiceChallengeWithPaySafeHold(
+            userId,
+            response,
+          );
+          event = {
+            ...event,
+            status: 'completed',
+            message: 'ORBI PaySafe hold created successfully.',
+            transactionId: hold.paysafeReferenceId,
+            raw: {
+              ...(event.raw || {}),
+              status: 'payment_held',
+              paysafeReferenceId: hold.paysafeReferenceId,
+              merchantId: hold.merchant.id,
+              merchantName: hold.merchant.business_name || null,
+              reference: hold.reference,
+              amount: hold.amount,
+              currency: hold.currency,
+            },
+          };
+          await gatewayPaymentIntentService.updateIntentEvent(event.intentId, event, 'COMPLETED');
+        } catch (holdError: any) {
+          event = {
+            ...event,
+            status: 'failed',
+            message: holdError.message || 'ORBI PaySafe hold failed after authorization.',
+            raw: {
+              ...(event.raw || {}),
+              status: 'payment_hold_failed',
+              error: holdError.message || 'PAYSAFE_HOLD_FAILED',
+            },
+          };
+          await gatewayPaymentIntentService.updateIntentEvent(event.intentId, event, 'FAILED').catch(() => undefined);
+        }
+      }
+
+      const gatewayDelivery = await gatewayPaymentIntentService
+        .deliverServicePaymentEvent(event)
+        .catch((error: any) => ({
+          attempted: true,
+          delivered: false,
+          error: error.message || 'PAY_GATEWAY_SERVICE_PAYMENT_EVENT_FAILED',
+        }));
+
+      await Audit.log('FINANCIAL', userId, 'SERVICE_PAYMENT_HOSTED_CHALLENGE_RESPONDED', {
+        challengeId,
+        decision,
+        intentId: event.intentId,
+        serviceCode: event.serviceCode,
+        gatewayDelivery,
+        replayed: response.replayed === true,
+        workerId,
+        ...getInternalAuditMetadata(req),
+      });
+
+      return res.json({
+        success: true,
+        data: {
+          ...response.event,
+          ...event,
+          gatewayDelivery,
+          replayed: response.replayed === true,
+        },
+      });
+    } catch (e: any) {
+      const message = e.message || 'SERVICE_CHALLENGE_RESPONSE_FAILED';
+      await Audit.log('FINANCIAL', workerId, 'SERVICE_PAYMENT_HOSTED_CHALLENGE_RESPONSE_FAILED', {
+        challengeId,
+        decision,
+        error: message,
+        ...getInternalAuditMetadata(req),
+      }).catch(() => undefined);
+      return res.status(quoteErrorStatus(message)).json({ success: false, error: message });
     }
   });
 
