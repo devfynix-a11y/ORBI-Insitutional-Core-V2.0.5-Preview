@@ -284,6 +284,9 @@ class NotificationController extends ChangeNotifier {
       StreamController<Map<String, dynamic>>.broadcast();
   final StreamController<Map<String, dynamic>> _serviceAccessEventController =
       StreamController<Map<String, dynamic>>.broadcast();
+  final StreamController<Map<String, dynamic>>
+  _servicePaymentChallengeController =
+      StreamController<Map<String, dynamic>>.broadcast();
 
   final WebSocketService _ws = WebSocketService();
   StreamSubscription<dynamic>? _wsSubscription;
@@ -345,6 +348,8 @@ class NotificationController extends ChangeNotifier {
       _enterpriseAlertController.stream;
   Stream<Map<String, dynamic>> get serviceAccessEvents =>
       _serviceAccessEventController.stream;
+  Stream<Map<String, dynamic>> get servicePaymentChallenges =>
+      _servicePaymentChallengeController.stream;
 
   /// Fetch notifications from REST API.
   Future<void> fetch(String token, {int limit = 50, int offset = 0}) async {
@@ -694,6 +699,7 @@ class NotificationController extends ChangeNotifier {
     required bool push,
   }) {
     _upsert(item);
+    _emitServicePaymentChallengeIfPresent(item);
     if (!push) return;
     unawaited(
       FirebaseService().showRealtimeNotification(
@@ -708,6 +714,60 @@ class NotificationController extends ChangeNotifier {
         },
       ),
     );
+  }
+
+  void _emitServicePaymentChallengeIfPresent(NotificationItem item) {
+    final challenge = _extractServicePaymentChallenge(item.metadata);
+    if (challenge == null) return;
+    challenge['notification_id'] ??= item.id;
+    challenge['notification_title'] ??= item.title;
+    challenge['notification_message'] ??= item.message;
+    _servicePaymentChallengeController.add(challenge);
+  }
+
+  Map<String, dynamic>? _extractServicePaymentChallenge(
+    Map<String, dynamic> metadata,
+  ) {
+    Map<String, dynamic>? from(dynamic value) {
+      if (value is Map) return Map<String, dynamic>.from(value);
+      return null;
+    }
+
+    final direct = from(metadata['servicePaymentChallenge']);
+    if (direct != null) return direct;
+    final snake = from(metadata['service_payment_challenge']);
+    if (snake != null) return snake;
+    final challenge = from(metadata['challenge']);
+    if (challenge != null &&
+        ((challenge['challengeId'] ?? challenge['challenge_id']) != null)) {
+      return challenge;
+    }
+
+    final type = _toLower(
+      metadata['type'] ??
+          metadata['event'] ??
+          metadata['event_code'] ??
+          metadata['category'] ??
+          metadata['template_name'],
+    );
+    final hasServicePaymentSignal =
+        type.contains('service_payment') ||
+        type.contains('payment_challenge') ||
+        type.contains('checkout_challenge') ||
+        type.contains('third_party_payment');
+    final challengeId =
+        (metadata['challengeId'] ??
+                metadata['challenge_id'] ??
+                metadata['service_payment_challenge_id'] ??
+                metadata['payment_challenge_id'])
+            ?.toString()
+            .trim();
+    if (!hasServicePaymentSignal ||
+        challengeId == null ||
+        challengeId.isEmpty) {
+      return null;
+    }
+    return Map<String, dynamic>.from(metadata);
   }
 
   bool _isBalanceAffectingEvent(Map<dynamic, dynamic> data) {
@@ -975,6 +1035,7 @@ class NotificationController extends ChangeNotifier {
     _balanceUpdateController.close();
     _enterpriseAlertController.close();
     _serviceAccessEventController.close();
+    _servicePaymentChallengeController.close();
     _ws.dispose();
     super.dispose();
   }

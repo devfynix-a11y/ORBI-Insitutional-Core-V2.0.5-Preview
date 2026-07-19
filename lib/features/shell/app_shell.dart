@@ -10,6 +10,8 @@ import '../auth/state/auth_controller.dart';
 // Feature imports (Do NOT modify paths unless folder structure changes)
 import '../dashboard/presentation/dashboard_screen.dart';
 import '../payment/presentation/payment_screen.dart';
+import '../payment/presentation/service_payment_challenge_prompt.dart';
+import '../payment/data/service_payment_challenge_service.dart';
 import '../notifications/presentation/notifications_prompt.dart';
 import '../transactions/presentation/transactions_screen.dart';
 import '../wallet/presentation/wallet_screen.dart';
@@ -89,9 +91,15 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   StreamSubscription<Map<String, dynamic>>? _balanceUpdateSubscription;
   StreamSubscription<Map<String, dynamic>>? _serviceAccessEventSubscription;
+  StreamSubscription<Map<String, dynamic>>?
+  _servicePaymentChallengeSubscription;
   Timer? _dashboardRealtimeRefreshDebounce;
   Timer? _identityRefreshDebounce;
   Timer? _realtimeWatchdogTimer;
+  final Set<String> _promptedServiceChallengeIds = <String>{};
+  bool _serviceChallengePromptOpen = false;
+  final ServicePaymentChallengeService _servicePaymentChallengeService =
+      ServicePaymentChallengeService();
 
   AuthController? _auth;
 
@@ -118,6 +126,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         .read<NotificationController>()
         .serviceAccessEvents
         .listen((_) => _scheduleIdentityRefresh());
+    _servicePaymentChallengeSubscription ??= context
+        .read<NotificationController>()
+        .servicePaymentChallenges
+        .listen(_showServicePaymentChallenge);
     _scheduleBootstrap();
   }
 
@@ -221,6 +233,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       if (!_startupBeepPlayed) {
         _startupBeepPlayed = true;
       }
+      unawaited(_promptPendingServicePaymentChallenges());
 
       unawaited(
         Future<void>(() async {
@@ -363,6 +376,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     _realtimeWatchdogTimer?.cancel();
     _balanceUpdateSubscription?.cancel();
     _serviceAccessEventSubscription?.cancel();
+    _servicePaymentChallengeSubscription?.cancel();
     super.dispose();
   }
 
@@ -381,6 +395,50 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final userId = _resolveUserId(_auth?.session['user']);
     if (userId == null || userId.isEmpty) return;
     context.read<NotificationController>().startRealtime(token, userId);
+  }
+
+  Future<void> _showServicePaymentChallenge(
+    Map<String, dynamic> challenge,
+  ) async {
+    if (!mounted || _serviceChallengePromptOpen) return;
+    final challengeId =
+        (challenge['challengeId'] ??
+                challenge['challenge_id'] ??
+                challenge['id'] ??
+                '')
+            .toString()
+            .trim();
+    if (challengeId.isNotEmpty &&
+        _promptedServiceChallengeIds.contains(challengeId)) {
+      return;
+    }
+    if (challengeId.isNotEmpty) {
+      _promptedServiceChallengeIds.add(challengeId);
+    }
+
+    _serviceChallengePromptOpen = true;
+    try {
+      await showServicePaymentChallengePrompt(context, challenge);
+    } finally {
+      _serviceChallengePromptOpen = false;
+    }
+  }
+
+  Future<void> _promptPendingServicePaymentChallenges() async {
+    if (!mounted || _serviceChallengePromptOpen) return;
+    try {
+      final pending = await _servicePaymentChallengeService
+          .listPending()
+          .timeout(const Duration(seconds: 8));
+      if (!mounted || pending.isEmpty) return;
+      for (final challenge in pending) {
+        if (!mounted) return;
+        await _showServicePaymentChallenge(challenge);
+        break;
+      }
+    } catch (error) {
+      debugPrint('[SERVICE_PAYMENT] pending challenge sweep failed: $error');
+    }
   }
 
   void _startRealtimeWatchdog() {
@@ -480,6 +538,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       if (_auth?.isAuthenticated == true && _auth?.isReauthLocked != true) {
         unawaited(_restoreRealtimeNotifications());
+        unawaited(_promptPendingServicePaymentChallenges());
         _scheduleIdentityRefresh();
       }
     }
