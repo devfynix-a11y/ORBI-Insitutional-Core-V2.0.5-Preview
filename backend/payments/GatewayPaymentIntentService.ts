@@ -143,6 +143,38 @@ export class GatewayPaymentIntentService {
     }));
   }
 
+  async getPendingChallengeForUser(challengeId: string, userId: string) {
+    const sb = getAdminSupabase();
+    if (!sb) throw new Error('SERVICE_ROLE_REQUIRED');
+
+    const { data: challenge, error } = await sb
+      .from('gateway_payment_challenges')
+      .select('id,challenge_id,customer_user_id,challenge_type,status,expires_at,metadata,intent_id')
+      .eq('challenge_id', challengeId)
+      .maybeSingle();
+    if (error) throw new Error(error.message || 'GATEWAY_CHALLENGE_LOOKUP_FAILED');
+    if (!challenge) throw new Error('GATEWAY_CHALLENGE_NOT_FOUND');
+    if (String(challenge.customer_user_id) !== String(userId)) {
+      throw new Error('GATEWAY_CHALLENGE_ACCESS_DENIED');
+    }
+    if (String(challenge.status) !== 'PENDING') {
+      throw new Error(`GATEWAY_CHALLENGE_${String(challenge.status).toUpperCase()}`);
+    }
+    if (new Date(String(challenge.expires_at)).getTime() <= Date.now()) {
+      throw new Error('GATEWAY_CHALLENGE_EXPIRED');
+    }
+
+    const { data: intent, error: intentError } = await sb
+      .from('gateway_payment_intents')
+      .select('*')
+      .eq('id', challenge.intent_id)
+      .maybeSingle();
+    if (intentError) throw new Error(intentError.message || 'GATEWAY_INTENT_LOOKUP_FAILED');
+    if (!intent) throw new Error('GATEWAY_INTENT_NOT_FOUND');
+
+    return { challenge, intent };
+  }
+
   async respondToChallenge(input: {
     challengeId: string;
     userId: string;

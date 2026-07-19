@@ -4,6 +4,7 @@ import {
 } from '../../../backend/payments/billProviderRegistry.js';
 import { gatewayPaymentIntentService } from '../../../backend/payments/GatewayPaymentIntentService.js';
 import { Audit } from '../../../backend/security/audit.js';
+import { OTPService } from '../../../backend/security/otpService.js';
 import {
   requireIdempotencyKey,
   resolveIdempotencyHeader,
@@ -327,13 +328,51 @@ export const registerCommerceRoutes = (v1: Router, deps: Deps) => {
 
     try {
       const idempotencyKey = String(resolveIdempotencyHeader(req)).trim();
+      const challengeId = String(req.params.challengeId || '').trim();
+      const pending = await gatewayPaymentIntentService.getPendingChallengeForUser(
+        challengeId,
+        session.sub,
+      );
+      const challengeMetadata = pending.challenge?.metadata || {};
+      if (decision === 'approve' && challengeMetadata.otcRequired === true) {
+        const otcRequestId = String(
+          req.body?.otc_request_id ||
+            req.body?.otp_request_id ||
+            challengeMetadata.otcRequestId ||
+            '',
+        ).trim();
+        const otcCode = String(
+          req.body?.otc_code ||
+            req.body?.otp_code ||
+            req.body?.code ||
+            '',
+        ).trim();
+        if (!otcRequestId || !otcCode) {
+          return res.status(400).json({
+            success: false,
+            error: 'SERVICE_PAYMENT_OTC_REQUIRED',
+            message: 'Enter the OTC sent to your registered ORBI contact.',
+          });
+        }
+        const verified = await OTPService.verify(otcRequestId, otcCode, session.sub);
+        if (!verified) {
+          return res.status(403).json({
+            success: false,
+            error: 'SERVICE_PAYMENT_OTC_INVALID',
+            message: 'The OTC is invalid or expired.',
+          });
+        }
+      }
       const response = await gatewayPaymentIntentService.respondToChallenge({
-        challengeId: String(req.params.challengeId || '').trim(),
+        challengeId,
         userId: session.sub,
         decision,
         idempotencyKey,
         metadata: {
           channel: 'mobile_app',
+          otc_verified_at: decision === 'approve' && challengeMetadata.otcRequired === true
+            ? new Date().toISOString()
+            : null,
           device_id: req.get('x-device-id') || req.get('x-orbi-device-id') || null,
           app_id: req.get('x-orbi-app-id') || null,
         },

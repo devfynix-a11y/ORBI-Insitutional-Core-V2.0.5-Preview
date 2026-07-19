@@ -10,6 +10,7 @@ import { Webhooks } from '../../../backend/payments/webhookHandler.js';
 import { platformFeeService } from '../../../backend/payments/PlatformFeeService.js';
 import { gatewayPaymentIntentService } from '../../../backend/payments/GatewayPaymentIntentService.js';
 import { Messaging } from '../../../backend/features/MessagingService.js';
+import { OTPService } from '../../../backend/security/otpService.js';
 import {
   createInternalWorkerMiddleware,
   getInternalAuditMetadata,
@@ -966,24 +967,45 @@ export const registerInternalRoutes = (internal: Router) => {
         const amountLabel = request.amount > 0
           ? `${request.currency.toUpperCase()} ${request.amount}`
           : `${request.operation}${paySafeAction ? ` ${paySafeAction}` : ''}`;
+        const otcContact = String(customer.phone || customer.email || '').trim();
+        const otc = otcContact
+          ? await OTPService.generateAndSend(
+              String(customer.id),
+              otcContact,
+              'SERVICE_PAYMENT_AUTHORIZATION',
+              customer.phone ? 'sms' : 'email',
+              'ORBI payment challenge',
+            )
+          : null;
+        if (!otc?.requestId || ['THROTTLED', 'ERROR_NO_CONTACT'].includes(String(otc.requestId))) {
+          throw new Error('SERVICE_PAYMENT_OTC_DELIVERY_FAILED');
+        }
         event = {
           intentId: request.intentId,
           serviceCode: request.serviceCode,
           status: 'requires_action',
-          message: 'Customer authorization is required before ORBI Core can continue payment processing.',
+          message: 'Customer authorization and OTC verification are required before ORBI Core can continue payment processing.',
           challenge: {
-            type: 'PIN',
+            type: 'OTP',
             challengeId,
-            prompt: `Approve ${amountLabel} for ${request.serviceCode}.`,
+            prompt: `Enter the ORBI OTC sent to you to approve ${amountLabel} for ${request.serviceCode}.`,
             expiresAt,
             delivery: {
-              channel: 'in_app',
-              destinationHint: 'ORBI mobile app',
+              channel: String(otc.deliveryType || '').includes('sms')
+                ? 'sms'
+                : String(otc.deliveryType || '').includes('email')
+                  ? 'email'
+                  : 'push',
+              destinationHint: otc.deliveryContact || 'registered ORBI contact',
             },
             metadata: {
               customerId: customer.id,
               reference: request.reference,
               operation: request.operation,
+              otcRequired: true,
+              otcRequestId: otc.requestId,
+              otcDeliveryType: otc.deliveryType || null,
+              otcDeliveryContact: otc.deliveryContact || null,
               paySafeFundingRoute,
               merchantId: merchantContext?.merchant?.id || null,
               merchantName: merchantContext?.merchant?.business_name || null,
@@ -1050,7 +1072,7 @@ export const registerInternalRoutes = (internal: Router) => {
           String(resolvedCustomer.id),
           'update',
           'Approve ORBI payment request',
-          `Approve ${amountText} for ${merchantName}. Reference ${request.reference}.`,
+          `Enter your ORBI OTC to approve ${amountText} for ${merchantName}. Reference ${request.reference}.`,
           {
             push: true,
             email: false,
@@ -1066,11 +1088,11 @@ export const registerInternalRoutes = (internal: Router) => {
             localized: {
               en: {
                 subject: 'Approve ORBI payment request',
-                body: `Approve ${amountText} for ${merchantName}. Reference ${request.reference}.`,
+                body: `Enter your ORBI OTC to approve ${amountText} for ${merchantName}. Reference ${request.reference}.`,
               },
               sw: {
                 subject: 'Thibitisha ombi la malipo ya ORBI',
-                body: `Thibitisha ${amountText} kwa ${merchantName}. Kumbukumbu ${request.reference}.`,
+                body: `Weka OTC yako ya ORBI kuthibitisha ${amountText} kwa ${merchantName}. Kumbukumbu ${request.reference}.`,
               },
             },
             metadata: {
@@ -1078,6 +1100,7 @@ export const registerInternalRoutes = (internal: Router) => {
               category: 'service_payment_authorization',
               servicePaymentChallenge: {
                 challengeId: event.challenge.challengeId,
+                challengeType: event.challenge.type,
                 intentId: event.intentId,
                 serviceCode: event.serviceCode,
                 reference: request.reference,
@@ -1086,6 +1109,10 @@ export const registerInternalRoutes = (internal: Router) => {
                 operation: request.operation,
                 expiresAt: event.challenge.expiresAt,
                 merchantName,
+                otcRequired: event.challenge.metadata?.otcRequired === true,
+                otcRequestId: event.challenge.metadata?.otcRequestId || null,
+                otcDeliveryType: event.challenge.metadata?.otcDeliveryType || null,
+                otcDeliveryContact: event.challenge.metadata?.otcDeliveryContact || null,
               },
             },
           },
