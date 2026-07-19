@@ -408,11 +408,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       ),
       child: Row(
         children: [
-          Icon(
-            Icons.notifications_none_rounded,
-            size: 18,
-            color: ui.iconMuted,
-          ),
+          Icon(Icons.notifications_none_rounded, size: 18, color: ui.iconMuted),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -432,10 +428,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             TextButton.icon(
               onPressed: _markAllAsRead,
               style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 4,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
@@ -572,6 +565,8 @@ class _NotificationDetailPageState extends State<NotificationDetailPage> {
   final ServicePaymentChallengeService _challengeService =
       ServicePaymentChallengeService();
   final Map<String, String> _challengeIdempotencyKeys = <String, String>{};
+  final Map<String, TextEditingController> _otcControllers =
+      <String, TextEditingController>{};
   String? _respondingDecision;
 
   @override
@@ -580,6 +575,10 @@ class _NotificationDetailPageState extends State<NotificationDetailPage> {
       recognizer.dispose();
     }
     _recognizers.clear();
+    for (final controller in _otcControllers.values) {
+      controller.dispose();
+    }
+    _otcControllers.clear();
     super.dispose();
   }
 
@@ -711,6 +710,24 @@ class _NotificationDetailPageState extends State<NotificationDetailPage> {
         .toString()
         .trim();
     if (challengeId.isEmpty || _respondingDecision != null) return;
+    final otcRequired =
+        challenge['otcRequired'] == true ||
+        challenge['otc_required'] == true ||
+        (challenge['challengeType'] ?? challenge['type'])
+                .toString()
+                .toUpperCase() ==
+            'OTP';
+    final otcRequestId =
+        (challenge['otcRequestId'] ?? challenge['otc_request_id'] ?? '')
+            .toString()
+            .trim();
+    final otcCode = _otcControllers[challengeId]?.text.trim() ?? '';
+    if (decision == 'approve' && otcRequired && otcCode.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Weka msimbo wa OTC uliotumwa kwanza.')),
+      );
+      return;
+    }
 
     setState(() => _respondingDecision = decision);
     try {
@@ -724,6 +741,8 @@ class _NotificationDetailPageState extends State<NotificationDetailPage> {
         challengeId: challengeId,
         decision: decision,
         idempotencyKey: idempotencyKey,
+        otcRequestId: otcRequestId,
+        otcCode: otcCode,
       );
       if (!mounted) return;
       final approved = decision == 'approve';
@@ -758,13 +777,35 @@ class _NotificationDetailPageState extends State<NotificationDetailPage> {
     final amount = (challenge['amount'] ?? '').toString().trim();
     final currency = (challenge['currency'] ?? '').toString().trim();
     final reference = (challenge['reference'] ?? '').toString().trim();
-    final serviceName = (challenge['merchantName'] ??
-            challenge['serviceName'] ??
-            challenge['serviceCode'] ??
-            'ORBI service')
+    final serviceName =
+        (challenge['merchantName'] ??
+                challenge['serviceName'] ??
+                challenge['serviceCode'] ??
+                'ORBI service')
+            .toString()
+            .trim();
+    final expiresAt = (challenge['expiresAt'] ?? '').toString().trim();
+    final challengeId = (challenge['challengeId'] ?? challenge['challenge_id'])
         .toString()
         .trim();
-    final expiresAt = (challenge['expiresAt'] ?? '').toString().trim();
+    final otcRequired =
+        challenge['otcRequired'] == true ||
+        challenge['otc_required'] == true ||
+        (challenge['challengeType'] ?? challenge['type'])
+                .toString()
+                .toUpperCase() ==
+            'OTP';
+    final otcDelivery =
+        (challenge['otcDeliveryType'] ??
+                challenge['otc_delivery_type'] ??
+                challenge['deliveryType'] ??
+                '')
+            .toString()
+            .trim();
+    final otcController = _otcControllers.putIfAbsent(
+      challengeId,
+      TextEditingController.new,
+    );
     final amountLabel = amount.isEmpty
         ? ''
         : '${currency.isEmpty ? 'TZS' : currency.toUpperCase()} $amount';
@@ -830,10 +871,7 @@ class _NotificationDetailPageState extends State<NotificationDetailPage> {
             const SizedBox(height: 10),
             Text(
               'Ref: $reference',
-              style: TextStyle(
-                color: ui.textSoft,
-                fontWeight: FontWeight.w700,
-              ),
+              style: TextStyle(color: ui.textSoft, fontWeight: FontWeight.w700),
             ),
           ],
           if (expiresAt.isNotEmpty) ...[
@@ -841,6 +879,26 @@ class _NotificationDetailPageState extends State<NotificationDetailPage> {
             Text(
               'Muda wa ombi unaisha: $expiresAt',
               style: TextStyle(color: ui.textSoft, fontSize: 12),
+            ),
+          ],
+          if (otcRequired) ...[
+            const SizedBox(height: 14),
+            TextField(
+              controller: otcController,
+              enabled: !busy,
+              keyboardType: TextInputType.number,
+              textInputAction: TextInputAction.done,
+              maxLength: 6,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: InputDecoration(
+                counterText: '',
+                labelText: 'Msimbo wa OTC',
+                hintText: 'Weka tarakimu 6',
+                helperText: otcDelivery.isEmpty
+                    ? 'Umetumwa kwenye mawasiliano yako ya ORBI.'
+                    : 'Umetumwa kupitia $otcDelivery.',
+                prefixIcon: const Icon(Icons.lock_clock_outlined),
+              ),
             ),
           ],
           const SizedBox(height: 16),

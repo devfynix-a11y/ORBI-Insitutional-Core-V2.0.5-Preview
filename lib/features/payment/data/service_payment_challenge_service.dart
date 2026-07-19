@@ -22,14 +22,15 @@ class ServicePaymentChallengeService {
     required String challengeId,
     required String decision,
     String? idempotencyKey,
+    String? otcRequestId,
+    String? otcCode,
   }) async {
     final normalizedChallengeId = challengeId.trim();
     if (normalizedChallengeId.isEmpty) {
       throw const ServicePaymentChallengeException('Challenge ID is missing.');
     }
 
-    final resolvedIdempotencyKey =
-        (idempotencyKey?.trim().isNotEmpty ?? false)
+    final resolvedIdempotencyKey = (idempotencyKey?.trim().isNotEmpty ?? false)
         ? idempotencyKey!.trim()
         : createIdempotencyKey();
     final template =
@@ -47,6 +48,9 @@ class ServicePaymentChallengeService {
           'decision': decision,
           'idempotencyKey': resolvedIdempotencyKey,
           'idempotency_key': resolvedIdempotencyKey,
+          if (otcRequestId?.trim().isNotEmpty ?? false)
+            'otc_request_id': otcRequestId!.trim(),
+          if (otcCode?.trim().isNotEmpty ?? false) 'otc_code': otcCode!.trim(),
         },
         options: Options(
           headers: {
