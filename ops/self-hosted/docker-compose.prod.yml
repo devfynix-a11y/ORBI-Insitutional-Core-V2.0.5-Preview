@@ -115,8 +115,6 @@ services:
       start_period: 60s
     mem_limit: 3g
     cpus: 1.5
-    ports:
-      - "127.0.0.1:8081:8080"
     networks:
       - private
       - edge

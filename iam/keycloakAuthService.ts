@@ -598,6 +598,7 @@ export class KeycloakAuthService {
       const { payload } = await jwtVerify(token, this.jwks, {
         algorithms: ['RS256'],
         issuer: issuer(),
+        audience: process.env.ORBI_KEYCLOAK_AUDIENCE || undefined,
       });
       const azp = String(payload.azp || '');
       const aud = Array.isArray(payload.aud)
