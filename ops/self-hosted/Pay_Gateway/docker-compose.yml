@@ -1,7 +1,7 @@
 services:
   pay-gateway:
     build:
-      context: ../../../ORBI PAY GATEWAY
+      context: ../../../../ORBI PAY GATEWAY
       dockerfile: Dockerfile
     image: orbi-pay-gateway:${ORBI_PAY_GATEWAY_RELEASE_ID:-local}
     container_name: orbi-pay-gateway
@@ -24,7 +24,7 @@ services:
       ORBI_CORE_TRUSTED_PAYSAFE_BALANCE_PATH: ${ORBI_CORE_TRUSTED_PAYSAFE_BALANCE_PATH:-/api/internal/pay-gateway/paysafe-balances}
       ORBI_CORE_TRUSTED_MERCHANT_ORDER_PAYMENT_STATUS_PATH: ${ORBI_CORE_TRUSTED_MERCHANT_ORDER_PAYMENT_STATUS_PATH:-/api/internal/pay-gateway/merchant-order-payment-status}
       ORBI_CORE_TRUSTED_MERCHANT_SETTLEMENTS_PATH: ${ORBI_CORE_TRUSTED_MERCHANT_SETTLEMENTS_PATH:-/api/internal/pay-gateway/merchant-settlements}
-      ORBI_CORE_CALLBACK_TIMEOUT_MS: ${ORBI_CORE_CALLBACK_TIMEOUT_MS:-30000}
+      ORBI_CORE_CALLBACK_TIMEOUT_MS: ${ORBI_CORE_CALLBACK_TIMEOUT_MS:-60000}
       PAYMENT_GATEWAY_WORKER_ID: ${PAYMENT_GATEWAY_WORKER_ID:-orbi-payment-gateway}
       PAYMENT_GATEWAY_WORKER_SCOPES: ${PAYMENT_GATEWAY_WORKER_SCOPES:-gateway:events:write,gateway:service-payments:write,gateway:service-payments:result,gateway:identity:read,gateway:paysafe-balances:read,gateway:merchant-payments:read,gateway:merchant-settlements:read}
       WORKER_SIGNING_SECRET: ${WORKER_SIGNING_SECRET}
@@ -37,8 +37,8 @@ services:
       ORBI_SHOP_PAY_WEBHOOK_URL: ${ORBI_SHOP_PAY_WEBHOOK_URL:-https://shop.orbifinancial.com/api/orbi-pay/webhooks}
       ORBI_SHOP_MERCHANT_ID: ${ORBI_SHOP_MERCHANT_ID}
     volumes:
-      - ../../../ORBI PAY GATEWAY/config/providers.example.json:/app/config/providers.json:ro
-      - ../../../ORBI PAY GATEWAY/config/services.json:/app/config/services.json:ro
+      - ../../../../ORBI PAY GATEWAY/config/providers.example.json:/app/config/providers.json:ro
+      - ../../../../ORBI PAY GATEWAY/config/services.json:/app/config/services.json:ro
     ports:
       - "${ORBI_PAY_GATEWAY_BIND_ADDRESS:-127.0.0.1}:3100:3100"
     healthcheck:
