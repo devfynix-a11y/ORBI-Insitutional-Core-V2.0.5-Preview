@@ -5,6 +5,7 @@ import { Audit } from '../security/audit.js';
 import { DataVault } from '../security/encryption.js';
 import { UUID } from '../../services/utils.js';
 import { TransactionService } from '../../ledger/transactionService.js';
+import { EscrowService } from '../../ledger/escrowService.js';
 import { BankingEngine } from './transactionEngine.js';
 import { ProviderFactory } from '../payments/providers/ProviderFactory.js';
 import { resolveProviderCode } from '../payments/financialPartnerMetadata.js';
@@ -70,6 +71,7 @@ export class ReconciliationService {
         try {
             const txService = new TransactionService();
             await txService.autoReverseHeldTransactions();
+            await new EscrowService().autoRefundExpiredUnacceptedEscrows();
             const { data: stuckTxs, error } = await sb.from('transactions')
                 .select('*')
                 .eq('status', 'processing');

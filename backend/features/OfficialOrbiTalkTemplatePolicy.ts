@@ -29,6 +29,8 @@ class OfficialOrbiTalkTemplatePolicy {
     'Agent_Commission_Paid',
     'Service_Customer_Registered',
     'Service_Access_Approved',
+    'Shared_Pot_Contribution_Confirmed',
+    'Shared_Pot_Contribution_Posted',
     'LOW_BALANCE',
     'Promo_Message',
     'Transactional_Message',

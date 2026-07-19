@@ -6972,6 +6972,15 @@ BEGIN
             v_target_vault_id := COALESCE(p_receiver_vault_id, v_agreement.source_vault_id);
         ELSIF v_agreement.status = 'RELEASE_PENDING' THEN
             IF v_agreement.expires_at IS NOT NULL AND v_agreement.expires_at < v_now THEN
+                IF v_agreement.receiver_accepted_at IS NULL AND v_agreement.receiver_accepted_by IS NULL THEN
+                    v_action := 'REFUND';
+                    p_reason := COALESCE(
+                        NULLIF(BTRIM(p_reason), ''),
+                        'PaySafe acceptance window expired before receiver confirmation.'
+                    );
+                    v_target_user_id := v_agreement.sender_id;
+                    v_target_vault_id := COALESCE(p_receiver_vault_id, v_agreement.source_vault_id);
+                ELSE
                 UPDATE public.escrow_agreements
                 SET
                     status = 'DISPUTED',
@@ -7018,10 +7027,12 @@ BEGIN
                     'flaggedReason', 'PAYSAFE_RELEASE_WINDOW_EXPIRED',
                     'idempotent', FALSE
                 );
+                END IF;
+            ELSE
+                v_action := 'RELEASE';
+                v_target_user_id := v_agreement.receiver_id;
+                v_target_vault_id := COALESCE(p_receiver_vault_id, v_agreement.receiver_vault_id);
             END IF;
-            v_action := 'RELEASE';
-            v_target_user_id := v_agreement.receiver_id;
-            v_target_vault_id := COALESCE(p_receiver_vault_id, v_agreement.receiver_vault_id);
         ELSIF v_agreement.status = 'HELD' THEN
             IF v_agreement.receiver_accepted_at IS NOT NULL OR v_agreement.receiver_accepted_by IS NOT NULL THEN
                 RETURN jsonb_build_object(

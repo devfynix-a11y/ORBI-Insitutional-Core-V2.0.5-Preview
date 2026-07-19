@@ -57,6 +57,24 @@ export class EscrowService {
         if (!recipient) throw new Error('RECIPIENT_NOT_FOUND');
         if (recipient.userId === senderId) throw new Error('PAYSAFE_SELF_ESCROW_NOT_ALLOWED');
 
+        const gatewayIntentId = typeof conditions.gatewayIntentId === 'string'
+            ? conditions.gatewayIntentId.trim()
+            : typeof conditions.gateway_intent_id === 'string'
+                ? conditions.gateway_intent_id.trim()
+                : '';
+        if (gatewayIntentId) {
+            const { data: existing, error: existingError } = await sb
+                .from('escrow_agreements')
+                .select('reference_id')
+                .eq('sender_id', senderId)
+                .contains('conditions', { gatewayIntentId })
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+            if (existingError) throw new Error('PAYSAFE_IDEMPOTENCY_LOOKUP_FAILED');
+            if (existing?.reference_id) return String(existing.reference_id);
+        }
+
         const [
             { data: accountRecords, error: accountError },
             { data: senderVaults, error: senderVaultError },
@@ -246,7 +264,10 @@ export class EscrowService {
         const senderName = String(senderAccount.full_name || 'ORBI customer').trim();
         const formattedAmount = `${currency} ${amount.toLocaleString()}`;
 
-        await this.notifySafely(senderId, 'info', 'ORBI PaySafe created', {
+        await this.notifySafely(senderId, 'info', {
+            sw: 'PaySafe imeundwa',
+            en: 'PaySafe created',
+        }, {
             sw: `Umeunda PaySafe ya ${formattedAmount} kwa ${recipient.profile.full_name}. Fedha ziko salama hadi uthibitishe release.`,
             en: `You created a ${formattedAmount} PaySafe for ${recipient.profile.full_name}. Money is safe until you confirm release.`,
         }, {
@@ -260,8 +281,11 @@ export class EscrowService {
             },
         });
 
-        await this.notifySafely(recipient.userId, 'info', 'ORBI PaySafe request received', {
-            sw: `${senderName} ametengeneza PaySafe ya ${formattedAmount} kwa ajili yako. Fedha ziko salama hadi release ithibitishwe.`,
+        await this.notifySafely(recipient.userId, 'info', {
+            sw: 'Ombi la PaySafe limepokelewa',
+            en: 'PaySafe request received',
+        }, {
+            sw: `${senderName} ameunda PaySafe ya ${formattedAmount} kwa ajili yako. Fedha ziko salama hadi release ithibitishwe.`,
             en: `${senderName} created a ${formattedAmount} PaySafe for you. Money is safe until release is confirmed.`,
         }, {
             template: 'Escrow_Request_Received',
@@ -291,8 +315,11 @@ export class EscrowService {
             ? await this.settleMerchantEscrow(referenceId, actorId)
             : await this.transition(referenceId, actorId, 'RELEASE');
 
-        await this.notifySafely(agreement.receiver_id, 'info', 'ORBI PaySafe release requested', {
-            sw: `Mtumaji ameomba ku-release PaySafe ${referenceId}. Kubali release ili fedha ziingie kwako, au kataa/fungua dispute kama kuna tatizo.`,
+        await this.notifySafely(agreement.receiver_id, 'info', {
+            sw: 'Release ya PaySafe imeombwa',
+            en: 'PaySafe release requested',
+        }, {
+            sw: `Mtumaji ameomba ku-release PaySafe ${referenceId}. Kubali release ili fedha ziingie kwako, au kataa/fungua pingamizi kama kuna tatizo.`,
             en: `The sender requested release for PaySafe ${referenceId}. Accept the release to receive funds, or reject/open a dispute if something is wrong.`,
         }, {
             template: 'Escrow_Released',
@@ -315,61 +342,115 @@ export class EscrowService {
         const agreement = await this.getAgreement(referenceId);
         if (agreement.receiver_id !== actorId) throw new Error('UNAUTHORIZED_ACCEPT');
         if (agreement.merchant_id) throw new Error('PAYSAFE_ACCEPT_NOT_SUPPORTED_FOR_MERCHANT');
-        const result = await this.transition(referenceId, actorId, 'ACCEPT');
+        const expiredBeforeReceiverConfirmation = ['HELD', 'RELEASE_PENDING'].includes(String(agreement.status || '').toUpperCase())
+            && !agreement.receiver_accepted_at
+            && !agreement.receiver_accepted_by
+            && this.isExpired(agreement);
+        const result = expiredBeforeReceiverConfirmation
+            ? await this.transition(
+                referenceId,
+                agreement.sender_id,
+                'REFUND',
+                agreement.source_vault_id,
+                'PaySafe acceptance window expired before receiver confirmation.',
+            )
+            : await this.transition(referenceId, actorId, 'ACCEPT');
         const resultStatus = String(result?.status || '').toUpperCase();
 
         if (resultStatus === 'REFUNDED') {
+            const expiredMessage = expiredBeforeReceiverConfirmation;
             await Promise.all([
-                this.notifySafely(agreement.sender_id, 'info', 'ORBI PaySafe return accepted', {
-                    sw: `Ombi la kurejesha PaySafe ${referenceId} limekubaliwa. Fedha zimerejeshwa kwenye akaunti yako.`,
-                    en: `The return request for PaySafe ${referenceId} was accepted. Funds have been returned to your account.`,
+                this.notifySafely(agreement.sender_id, 'info', {
+                    sw: 'Return ya PaySafe imekubaliwa',
+                    en: 'PaySafe return accepted',
+                }, {
+                    sw: expiredMessage
+                        ? `PaySafe ${referenceId} imerejeshwa kwa sababu muda wa mpokeaji kuthibitisha uliisha. Fedha zimerudi kwenye akaunti yako.`
+                        : `Ombi la kurejesha PaySafe ${referenceId} limekubaliwa. Fedha zimerejeshwa kwenye akaunti yako.`,
+                    en: expiredMessage
+                        ? `PaySafe ${referenceId} was returned because the recipient confirmation window expired. Funds are back in your account.`
+                        : `The return request for PaySafe ${referenceId} was accepted. Funds have been returned to your account.`,
                 }),
-                this.notifySafely(agreement.receiver_id, 'info', 'ORBI PaySafe return accepted', {
-                    sw: `Umeruhusu kurejesha PaySafe ${referenceId}. Hold hii imefungwa.`,
-                    en: `You accepted the return for PaySafe ${referenceId}. This hold is now closed.`,
+                this.notifySafely(agreement.receiver_id, 'info', {
+                    sw: 'Return ya PaySafe imekubaliwa',
+                    en: 'PaySafe return accepted',
+                }, {
+                    sw: expiredMessage
+                        ? `PaySafe ${referenceId} imefungwa kwa sababu muda wa kuthibitisha uliisha. Fedha zimerejeshwa kwa mtumaji.`
+                        : `Umeruhusu kurejesha PaySafe ${referenceId}. Hold hii imefungwa.`,
+                    en: expiredMessage
+                        ? `PaySafe ${referenceId} was closed because the confirmation window expired. Funds were returned to the sender.`
+                        : `You accepted the return for PaySafe ${referenceId}. This hold is now closed.`,
                 }),
             ]);
         } else if (resultStatus === 'RELEASED') {
             const formattedAmount = `${agreement.currency} ${Number(agreement.amount).toLocaleString()}`;
             await Promise.all([
-                this.notifySafely(agreement.sender_id, 'info', 'ORBI PaySafe release accepted', {
+                this.notifySafely(agreement.sender_id, 'info', {
+                    sw: 'Release ya PaySafe imekubaliwa',
+                    en: 'PaySafe release accepted',
+                }, {
                     sw: `Mpokeaji amekubali release ya PaySafe ${referenceId}. ${formattedAmount} imehamishwa kwake.`,
                     en: `The recipient accepted release for PaySafe ${referenceId}. ${formattedAmount} has been credited to them.`,
                 }),
-                this.notifySafely(agreement.receiver_id, 'info', 'ORBI PaySafe funds received', {
+                this.notifySafely(agreement.receiver_id, 'info', {
+                    sw: 'Fedha za PaySafe zimepokelewa',
+                    en: 'PaySafe funds received',
+                }, {
                     sw: `Umeikubali release ya PaySafe ${referenceId}. ${formattedAmount} imeingia kwenye akaunti yako.`,
                     en: `You accepted release for PaySafe ${referenceId}. ${formattedAmount} has been credited to your account.`,
                 }),
             ]);
         } else if (resultStatus === 'DISPUTED') {
             await Promise.all([
-                this.notifySafely(agreement.sender_id, 'security', 'ORBI PaySafe flagged', {
-                    sw: `PaySafe ${referenceId} imewekwa kwenye dispute kwa sababu dirisha la release limeisha. Huduma kwa wateja wataikagua.`,
+                this.notifySafely(agreement.sender_id, 'security', {
+                    sw: 'PaySafe imewekwa chini ya ukaguzi',
+                    en: 'PaySafe flagged for review',
+                }, {
+                    sw: `PaySafe ${referenceId} imewekwa chini ya ukaguzi kwa sababu dirisha la release limeisha. Huduma kwa wateja wataikagua.`,
                     en: `PaySafe ${referenceId} was flagged because the release window expired. Customer care will review it.`,
                 }),
-                this.notifySafely(agreement.receiver_id, 'security', 'ORBI PaySafe flagged', {
-                    sw: `PaySafe ${referenceId} imewekwa kwenye dispute kwa sababu dirisha la release limeisha. Huduma kwa wateja wataikagua.`,
+                this.notifySafely(agreement.receiver_id, 'security', {
+                    sw: 'PaySafe imewekwa chini ya ukaguzi',
+                    en: 'PaySafe flagged for review',
+                }, {
+                    sw: `PaySafe ${referenceId} imewekwa chini ya ukaguzi kwa sababu dirisha la release limeisha. Huduma kwa wateja wataikagua.`,
                     en: `PaySafe ${referenceId} was flagged because the release window expired. Customer care will review it.`,
                 }),
             ]);
         } else {
             await Promise.all([
-                this.notifySafely(agreement.sender_id, 'info', 'ORBI PaySafe confirmed', {
+                this.notifySafely(agreement.sender_id, 'info', {
+                    sw: 'PaySafe imethibitishwa',
+                    en: 'PaySafe confirmed',
+                }, {
                     sw: `Mpokeaji amethibitisha PaySafe ${referenceId}. Sasa unaweza ku-release fedha.`,
                     en: `The recipient confirmed PaySafe ${referenceId}. You can now release the funds.`,
                 }),
-                this.notifySafely(agreement.receiver_id, 'info', 'ORBI PaySafe confirmed', {
+                this.notifySafely(agreement.receiver_id, 'info', {
+                    sw: 'PaySafe imethibitishwa',
+                    en: 'PaySafe confirmed',
+                }, {
                     sw: `Umethibitisha PaySafe ${referenceId}. Fedha bado ziko salama hadi mtumaji afanye release.`,
                     en: `You confirmed PaySafe ${referenceId}. Funds remain safe until the sender releases them.`,
                 }),
             ]);
         }
-        await Audit.log('FINANCIAL', actorId, resultStatus === 'REFUNDED' ? 'ESCROW_RETURN_ACCEPTED' : 'ESCROW_CONFIRMED', {
+        await Audit.log(
+            'FINANCIAL',
+            expiredBeforeReceiverConfirmation ? 'system-paysafe-expiry' : actorId,
+            expiredBeforeReceiverConfirmation
+                ? 'ESCROW_AUTO_REFUNDED_UNACCEPTED_EXPIRED'
+                : resultStatus === 'REFUNDED'
+                    ? 'ESCROW_RETURN_ACCEPTED'
+                    : 'ESCROW_CONFIRMED',
+            {
             referenceId,
             senderId: agreement.sender_id,
             transactionId: agreement.transaction_id,
             idempotent: Boolean(result?.idempotent),
-        });
+            },
+        );
         return result;
     }
 
@@ -382,11 +463,17 @@ export class EscrowService {
         const result = await this.transition(referenceId, userId, 'DISPUTE', null, reason);
 
         await Promise.all([
-            this.notifySafely(agreement.sender_id, 'security', 'ORBI PaySafe dispute opened', {
+            this.notifySafely(agreement.sender_id, 'security', {
+                sw: 'Pingamizi la PaySafe limefunguliwa',
+                en: 'PaySafe dispute opened',
+            }, {
                 sw: `Malipo ya PaySafe ${referenceId} yamewekwa chini ya ukaguzi.`,
                 en: `PaySafe payment ${referenceId} has been placed under review.`,
             }),
-            this.notifySafely(agreement.receiver_id, 'security', 'ORBI PaySafe dispute opened', {
+            this.notifySafely(agreement.receiver_id, 'security', {
+                sw: 'Pingamizi la PaySafe limefunguliwa',
+                en: 'PaySafe dispute opened',
+            }, {
                 sw: `Malipo ya PaySafe ${referenceId} yamewekwa chini ya ukaguzi.`,
                 en: `PaySafe payment ${referenceId} has been placed under review.`,
             }),
@@ -409,8 +496,11 @@ export class EscrowService {
         if (resultStatus === 'RETURN_PENDING') {
             const autoRefundAt = result?.autoRefundAt ? new Date(String(result.autoRefundAt)).toISOString() : null;
             await Promise.all([
-                this.notifySafely(agreement.sender_id, 'info', 'ORBI PaySafe return requested', {
-                    sw: `Umeomba kurejesha PaySafe ${referenceId} ya ${formattedAmount}. Mpokeaji anaweza kukubali au kufungua dispute ndani ya saa 24.`,
+                this.notifySafely(agreement.sender_id, 'info', {
+                    sw: 'Return ya PaySafe imeombwa',
+                    en: 'PaySafe return requested',
+                }, {
+                    sw: `Umeomba kurejesha PaySafe ${referenceId} ya ${formattedAmount}. Mpokeaji anaweza kukubali au kufungua pingamizi ndani ya saa 24.`,
                     en: `You requested a return for ${formattedAmount} PaySafe ${referenceId}. The recipient can accept or open a dispute within 24 hours.`,
                 }, {
                     variables: {
@@ -420,8 +510,11 @@ export class EscrowService {
                         autoRefundAt,
                     },
                 }),
-                this.notifySafely(agreement.receiver_id, 'security', 'ORBI PaySafe return requested', {
-                    sw: `Mtumaji ameomba kurejesha PaySafe ${referenceId} ya ${formattedAmount}. Kubali return au fungua dispute ndani ya saa 24; ukikaa kimya fedha zitarudi kiotomatiki.`,
+                this.notifySafely(agreement.receiver_id, 'security', {
+                    sw: 'Return ya PaySafe imeombwa',
+                    en: 'PaySafe return requested',
+                }, {
+                    sw: `Mtumaji ameomba kurejesha PaySafe ${referenceId} ya ${formattedAmount}. Kubali return au fungua pingamizi ndani ya saa 24; ukikaa kimya fedha zitarudi kiotomatiki.`,
                     en: `The sender requested a return for ${formattedAmount} PaySafe ${referenceId}. Accept the return or open a dispute within 24 hours; no response will auto-return the funds.`,
                 }, {
                     variables: {
@@ -444,7 +537,10 @@ export class EscrowService {
             return result;
         }
         await Promise.all([
-            this.notifySafely(agreement.sender_id, 'info', 'ORBI PaySafe payment refunded', {
+            this.notifySafely(agreement.sender_id, 'info', {
+                sw: 'PaySafe imerejeshwa',
+                en: 'PaySafe refunded',
+            }, {
                 sw: `Malipo yako ya PaySafe ${referenceId} ya ${formattedAmount} yamerejeshwa kwenye akaunti yako.`,
                 en: `Your ${formattedAmount} PaySafe payment ${referenceId} has been refunded to your account.`,
             }, {
@@ -455,7 +551,10 @@ export class EscrowService {
                     refId: referenceId,
                 },
             }),
-            this.notifySafely(agreement.receiver_id, 'info', 'ORBI PaySafe refund completed', {
+            this.notifySafely(agreement.receiver_id, 'info', {
+                sw: 'Refund ya PaySafe imekamilika',
+                en: 'PaySafe refund completed',
+            }, {
                 sw: `PaySafe ${referenceId} ya ${formattedAmount} imerejeshwa kwa mtumaji. Hold hii imefungwa.`,
                 en: `PaySafe ${referenceId} for ${formattedAmount} was refunded to the sender. This hold is now closed.`,
             }, {
@@ -476,6 +575,100 @@ export class EscrowService {
             idempotent: Boolean(result?.idempotent),
         });
         return result;
+    }
+
+    public async autoRefundExpiredUnacceptedEscrows(): Promise<{ refunded: number; failed: number }> {
+        const sb = getAdminSupabase();
+        if (!sb) return { refunded: 0, failed: 0 };
+
+        const now = new Date().toISOString();
+        const { data, error } = await sb
+            .from('escrow_agreements')
+            .select('*')
+            .in('status', ['HELD', 'RELEASE_PENDING'])
+            .lt('expires_at', now)
+            .is('receiver_accepted_at', null)
+            .is('receiver_accepted_by', null)
+            .order('expires_at', { ascending: true })
+            .limit(50);
+
+        if (error) {
+            this.logSupabaseError('expired unaccepted escrow sweep query failed', error);
+            return { refunded: 0, failed: 0 };
+        }
+
+        let refunded = 0;
+        let failed = 0;
+        const reason = 'PaySafe acceptance window expired before receiver confirmation.';
+
+        for (const agreement of (data || []) as EscrowAgreementRecord[]) {
+            try {
+                const result = await this.transition(
+                    agreement.reference_id,
+                    agreement.sender_id,
+                    'REFUND',
+                    agreement.source_vault_id,
+                    reason,
+                );
+                const resultStatus = String(result?.status || '').toUpperCase();
+                if (resultStatus === 'REFUNDED' || result?.idempotent) {
+                    refunded++;
+                    const formattedAmount = `${agreement.currency} ${Number(agreement.amount).toLocaleString()}`;
+                    await Promise.all([
+                        this.notifySafely(agreement.sender_id, 'info', {
+                            sw: 'PaySafe imerejeshwa kiotomatiki',
+                            en: 'PaySafe auto-refunded',
+                        }, {
+                            sw: `PaySafe ${agreement.reference_id} ya ${formattedAmount} imerejeshwa kwa sababu muda wa mpokeaji kuthibitisha uliisha.`,
+                            en: `PaySafe ${agreement.reference_id} for ${formattedAmount} was returned because the recipient confirmation window expired.`,
+                        }, {
+                            eventCode: 'ESCROW_AUTO_REFUNDED',
+                            template: 'Escrow_Refunded',
+                            variables: {
+                                amount: Number(agreement.amount).toLocaleString(),
+                                currency: agreement.currency,
+                                refId: agreement.reference_id,
+                            },
+                        }),
+                        this.notifySafely(agreement.receiver_id, 'info', {
+                            sw: 'Muda wa PaySafe umeisha',
+                            en: 'PaySafe expired',
+                        }, {
+                            sw: `PaySafe ${agreement.reference_id} ya ${formattedAmount} imefungwa na kurejeshwa kwa mtumaji kwa sababu muda wa kuthibitisha uliisha.`,
+                            en: `PaySafe ${agreement.reference_id} for ${formattedAmount} was closed and returned to the sender because the confirmation window expired.`,
+                        }, {
+                            eventCode: 'ESCROW_AUTO_REFUNDED',
+                            template: 'Escrow_Refunded',
+                            variables: {
+                                amount: Number(agreement.amount).toLocaleString(),
+                                currency: agreement.currency,
+                                refId: agreement.reference_id,
+                            },
+                        }),
+                    ]);
+                    await Audit.log('FINANCIAL', 'system-paysafe-reaper', 'ESCROW_AUTO_REFUNDED_UNACCEPTED_EXPIRED', {
+                        referenceId: agreement.reference_id,
+                        senderId: agreement.sender_id,
+                        receiverId: agreement.receiver_id,
+                        transactionId: agreement.transaction_id,
+                        expiresAt: agreement.expires_at,
+                        idempotent: Boolean(result?.idempotent),
+                    });
+                }
+            } catch (error: any) {
+                failed++;
+                console.error('[PAYSAFE_LEDGER] expired unaccepted escrow auto-refund failed', {
+                    referenceId: agreement.reference_id,
+                    transactionId: agreement.transaction_id,
+                    error: error?.message || error,
+                });
+            }
+        }
+
+        if (refunded > 0 || failed > 0) {
+            console.info('[PAYSAFE_LEDGER] expired unaccepted escrow sweep complete', { refunded, failed });
+        }
+        return { refunded, failed };
     }
 
     public async getEscrow(referenceId: string, actorId: string): Promise<Record<string, any> | null> {
@@ -656,7 +849,7 @@ export class EscrowService {
     private async notifySafely(
         userId: string,
         type: 'info' | 'security',
-        subject: string,
+        subject: string | { sw: string; en: string },
         body: { sw: string; en: string },
         options: Record<string, any> = {},
     ): Promise<void> {
@@ -665,11 +858,15 @@ export class EscrowService {
             const { data: user } = sb
                 ? await sb.from('users').select('language').eq('id', userId).maybeSingle()
                 : { data: null };
+            const language = user?.language === 'sw' ? 'sw' : 'en';
+            const localizedSubject = typeof subject === 'string'
+                ? subject
+                : subject[language] || subject.en;
             await Messaging.dispatch(
                 userId,
                 type,
-                subject,
-                user?.language === 'sw' ? body.sw : body.en,
+                localizedSubject,
+                language === 'sw' ? body.sw : body.en,
                 { push: true, sms: true, email: true, ...options },
             );
         } catch (error) {

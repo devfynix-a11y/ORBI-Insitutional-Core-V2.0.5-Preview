@@ -199,7 +199,7 @@ export const registerTopLevelPublicRoutes = (app: Express, deps: TopLevelDeps) =
     });
   });
 
-  app.get('/live', (_req, res) => {
+  app.get(['/live', '/v1/health/live', '/api/v1/health/live'], (_req, res) => {
     res.json({
       status: 'ALIVE',
       node: process.env.ORBI_NODE_ID || process.env.RENDER_INSTANCE_ID || 'DPS-PRIMARY-RELAY',
@@ -208,7 +208,7 @@ export const registerTopLevelPublicRoutes = (app: Express, deps: TopLevelDeps) =
     });
   });
 
-  app.get('/ready', async (_req, res) => {
+  app.get(['/ready', '/v1/health/ready', '/api/v1/health/ready'], async (_req, res) => {
     if (isHttpShuttingDown()) {
       return res.status(503).json({
         status: 'NOT_READY',
@@ -238,7 +238,7 @@ export const registerTopLevelPublicRoutes = (app: Express, deps: TopLevelDeps) =
     }
   });
 
-  app.get('/health/deep', async (_req, res) => {
+  app.get(['/health/deep', '/v1/health/deep', '/api/v1/health/deep'], async (_req, res) => {
     try {
       const snapshot = await OperationalHealthService.captureSnapshot();
       res.status(snapshot.status === 'CRITICAL' ? 503 : 200).json({

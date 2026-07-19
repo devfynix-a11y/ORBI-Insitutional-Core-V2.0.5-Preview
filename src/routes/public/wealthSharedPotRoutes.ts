@@ -226,9 +226,13 @@ const notifyPotMembers = async (
     push: true,
     sms: true,
     email: true,
+    template: variables.template,
+    localized: variables.localized,
     eventCode: variables.eventCode || 'SHARED_POT_GOVERNANCE_UPDATED',
     variables: {
       ...variables,
+      template: undefined,
+      localized: undefined,
       recipient_user_id: userId,
     },
     metadata: {
@@ -255,21 +259,61 @@ const formatContributionAmount = (amount: any, currency: any) => {
   })}`;
 };
 
+const resolveUserDisplayName = async (sb: any, userId: string, fallback = 'A member') => {
+  const { data } = await sb
+    .from('users')
+    .select('full_name,name,email,phone,customer_id')
+    .eq('id', userId)
+    .maybeSingle();
+  const name = String(data?.full_name || data?.name || '').trim();
+  if (name) return name;
+  const email = String(data?.email || '').trim();
+  if (email) return email.split('@')[0] || fallback;
+  const customerId = String(data?.customer_id || '').trim();
+  if (customerId) return customerId;
+  const phone = String(data?.phone || '').trim();
+  if (phone) return phone;
+  return fallback;
+};
+
 const notifySharedPotContribution = async (sb: any, pot: any, contributorUserId: string, data: any, amount: any) => {
   const amountLabel = formatContributionAmount(amount, pot.currency);
   const potName = String(pot.name || 'Fungu');
+  const contributorName = await resolveUserDisplayName(sb, contributorUserId);
   const transactionId = data?.transaction?.id || null;
   const potBalance = data?.shared_pot?.current_amount ?? pot.current_amount;
+  const contributorCopy = {
+    en: {
+      subject: 'Fungu contribution received',
+      body: `Your contribution of ${amountLabel} to the ${potName} Fungu has been recorded.`,
+    },
+    sw: {
+      subject: 'Mchango wa Fungu umepokelewa',
+      body: `Mchango wako wa ${amountLabel} kwenye Fungu la ${potName} umerekodiwa.`,
+    },
+  };
+  const memberCopy = {
+    en: {
+      subject: 'New Fungu contribution',
+      body: `${contributorName} contributed ${amountLabel} to the ${potName} Fungu.`,
+    },
+    sw: {
+      subject: 'Mchango mpya wa Fungu',
+      body: `${contributorName} amechangia ${amountLabel} kwenye Fungu la ${potName}.`,
+    },
+  };
 
   await Messaging.dispatch(
     contributorUserId,
     'info',
-    'Fungu contribution received',
-    `Your contribution of ${amountLabel} to ${potName} has been recorded.`,
+    contributorCopy.en.subject,
+    contributorCopy.en.body,
     {
       push: true,
       sms: true,
       email: true,
+      template: 'Shared_Pot_Contribution_Confirmed',
+      localized: contributorCopy,
       eventCode: 'SHARED_POT_CONTRIBUTION_CONFIRMED',
       variables: {
         eventCode: 'SHARED_POT_CONTRIBUTION_CONFIRMED',
@@ -279,12 +323,14 @@ const notifySharedPotContribution = async (sb: any, pot: any, contributorUserId:
         currency: String(pot.currency || 'TZS').toUpperCase(),
         transactionId,
         potBalance,
+        contributorName,
       },
       metadata: {
         potId: pot.id,
         transactionId,
         amount: Number(amount || 0),
         currency: String(pot.currency || 'TZS').toUpperCase(),
+        contributorName,
         eventCode: 'SHARED_POT_CONTRIBUTION_CONFIRMED',
       },
     },
@@ -299,10 +345,12 @@ const notifySharedPotContribution = async (sb: any, pot: any, contributorUserId:
   await notifyPotMembers(
     sb,
     pot.id,
-    'New Fungu contribution',
-    `${amountLabel} has been added to ${potName}.`,
+    memberCopy.en.subject,
+    memberCopy.en.body,
     {
+      template: 'Shared_Pot_Contribution_Posted',
       eventCode: 'SHARED_POT_CONTRIBUTION_POSTED',
+      localized: memberCopy,
       potId: pot.id,
       potName,
       amount: amountLabel,
@@ -310,6 +358,8 @@ const notifySharedPotContribution = async (sb: any, pot: any, contributorUserId:
       transactionId,
       potBalance,
       contributorUserId,
+      contributorName,
+      actorName: contributorName,
     },
     { excludeUserIds: [contributorUserId] },
   );

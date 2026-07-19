@@ -2,6 +2,8 @@ import type { RequestHandler, Router } from 'express';
 import {
   listRegistryBackedBillProviders,
 } from '../../../backend/payments/billProviderRegistry.js';
+import { gatewayPaymentIntentService } from '../../../backend/payments/GatewayPaymentIntentService.js';
+import { Audit } from '../../../backend/security/audit.js';
 import {
   requireIdempotencyKey,
   resolveIdempotencyHeader,
@@ -31,6 +33,90 @@ const quoteErrorStatus = (message: string) => {
   if (/NOT_CONFIGURED|NOT_FOUND|REQUIRED|ACCESS_DENIED|INSUFFICIENT|BLOCK/i.test(message)) return 400;
   return 500;
 };
+
+const normalizeChallengeDecision = (value: unknown) => {
+  const decision = String(value || '').trim().toLowerCase();
+  if (['approve', 'approved', 'accept', 'accepted', 'confirm', 'confirmed'].includes(decision)) {
+    return 'approve' as const;
+  }
+  if (['reject', 'rejected', 'decline', 'declined', 'deny', 'denied', 'cancel', 'cancelled'].includes(decision)) {
+    return 'reject' as const;
+  }
+  throw new Error('SERVICE_CHALLENGE_DECISION_INVALID');
+};
+
+async function completeApprovedServiceChallengeWithPaySafeHold(
+  deps: Pick<Deps, 'LogicCore' | 'getAdminSupabase' | 'getSupabase'>,
+  actorUserId: string,
+  response: Awaited<ReturnType<typeof gatewayPaymentIntentService.respondToChallenge>>,
+) {
+  const intent = response.intent || {};
+  const requestPayload = intent.request_payload || {};
+  const requestMetadata = requestPayload.metadata || {};
+  const challengeMetadata = response.challenge?.metadata || {};
+  const merchantId = String(
+    intent.merchant_id ||
+      challengeMetadata.merchantId ||
+      challengeMetadata.merchant_id ||
+      requestMetadata.merchantId ||
+      requestMetadata.merchant_id ||
+      '',
+  ).trim();
+  if (!merchantId) throw new Error('MERCHANT_CONTEXT_REQUIRED');
+
+  const sb = deps.getAdminSupabase() || deps.getSupabase();
+  if (!sb) throw new Error('DB_OFFLINE');
+  const { data: merchant, error: merchantError } = await sb
+    .from('merchants')
+    .select('id,business_name,owner_user_id,status')
+    .eq('id', merchantId)
+    .maybeSingle();
+  if (merchantError) throw new Error(merchantError.message || 'MERCHANT_LOOKUP_FAILED');
+  if (!merchant) throw new Error('MERCHANT_NOT_FOUND');
+  if (String(merchant.status || '').toLowerCase() !== 'active') throw new Error('MERCHANT_NOT_ACTIVE');
+  const recipientUserId = String(merchant.owner_user_id || '').trim();
+  if (!recipientUserId) throw new Error('MERCHANT_OWNER_REQUIRED');
+
+  const currency = String(intent.currency || requestPayload.currency || 'TZS').toUpperCase();
+  const amount = Number(intent.amount || requestPayload.amount || 0);
+  const reference = String(intent.reference || requestPayload.reference || '').trim();
+  const serviceCode = String(intent.service_code || requestPayload.serviceCode || '').trim();
+  const description = String(
+    requestPayload.description ||
+      requestMetadata.description ||
+      `Protected checkout ${reference || intent.intent_id}`,
+  ).trim();
+
+  const paysafeReferenceId = await deps.LogicCore.createEscrow(
+    actorUserId,
+    recipientUserId,
+    amount,
+    description,
+    {
+      ...(requestMetadata || {}),
+      merchantId,
+      serviceCode,
+      orderId: requestMetadata.orderId || requestMetadata.order_id || reference || null,
+      gatewayIntentId: String(intent.intent_id),
+      gatewayChallengeId: String(response.challenge?.challenge_id || ''),
+      gatewayReference: reference || null,
+      source: 'pay_gateway_service_challenge',
+      settlementPolicy: 'paysafe_hold_required',
+      thirdPartyAuthorization: true,
+      merchantName: merchant.business_name || null,
+      currency,
+    },
+  );
+
+  return {
+    paysafeReferenceId,
+    merchant,
+    amount,
+    currency,
+    reference,
+    serviceCode,
+  };
+}
 
 type Deps = {
   authenticate: RequestHandler;
@@ -216,6 +302,117 @@ export const registerCommerceRoutes = (v1: Router, deps: Deps) => {
       res.json({ success: true, data: result });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.get('/payments/service-challenges', authenticate, async (req, res) => {
+    const session = (req as any).session;
+    try {
+      const items = await gatewayPaymentIntentService.listPendingChallengesForUser(session.sub);
+      return res.json({ success: true, data: { items } });
+    } catch (e: any) {
+      const message = e.message || 'SERVICE_CHALLENGE_LIST_FAILED';
+      return res.status(quoteErrorStatus(message)).json({ success: false, error: message });
+    }
+  });
+
+  v1.post('/payments/service-challenges/:challengeId/respond', authenticate, requireIdempotencyKey, async (req, res) => {
+    const session = (req as any).session;
+    let decision: 'approve' | 'reject';
+    try {
+      decision = normalizeChallengeDecision(req.body?.decision || req.body?.action || req.body?.status);
+    } catch (e: any) {
+      return res.status(400).json({ success: false, error: e.message });
+    }
+
+    try {
+      const idempotencyKey = String(resolveIdempotencyHeader(req)).trim();
+      const response = await gatewayPaymentIntentService.respondToChallenge({
+        challengeId: String(req.params.challengeId || '').trim(),
+        userId: session.sub,
+        decision,
+        idempotencyKey,
+        metadata: {
+          channel: 'mobile_app',
+          device_id: req.get('x-device-id') || req.get('x-orbi-device-id') || null,
+          app_id: req.get('x-orbi-app-id') || null,
+        },
+      });
+
+      let event = response.event;
+      if (decision === 'approve') {
+        try {
+          const hold = await completeApprovedServiceChallengeWithPaySafeHold(
+            { LogicCore, getAdminSupabase, getSupabase },
+            session.sub,
+            response,
+          );
+          event = {
+            ...event,
+            status: 'completed',
+            message: 'ORBI PaySafe hold created successfully.',
+            transactionId: hold.paysafeReferenceId,
+            raw: {
+              ...(event.raw || {}),
+              status: 'payment_held',
+              paysafeReferenceId: hold.paysafeReferenceId,
+              merchantId: hold.merchant.id,
+              merchantName: hold.merchant.business_name || null,
+              reference: hold.reference,
+              amount: hold.amount,
+              currency: hold.currency,
+            },
+          };
+          await gatewayPaymentIntentService.updateIntentEvent(event.intentId, event, 'COMPLETED');
+        } catch (holdError: any) {
+          event = {
+            ...event,
+            status: 'failed',
+            message: holdError.message || 'ORBI PaySafe hold failed after authorization.',
+            raw: {
+              ...(event.raw || {}),
+              status: 'payment_hold_failed',
+              error: holdError.message || 'PAYSAFE_HOLD_FAILED',
+            },
+          };
+          await gatewayPaymentIntentService.updateIntentEvent(event.intentId, event, 'FAILED').catch(() => undefined);
+        }
+      }
+
+      const gatewayDelivery = await gatewayPaymentIntentService
+        .deliverServicePaymentEvent(event)
+        .catch((error: any) => ({
+          attempted: true,
+          delivered: false,
+          error: error.message || 'PAY_GATEWAY_SERVICE_PAYMENT_EVENT_FAILED',
+        }));
+
+      await Audit.log('FINANCIAL', session.sub, 'SERVICE_PAYMENT_CHALLENGE_RESPONDED', {
+        challengeId: req.params.challengeId,
+        decision,
+        intentId: event.intentId,
+        serviceCode: event.serviceCode,
+        gatewayDelivery,
+        replayed: response.replayed === true,
+      });
+
+      return res.json({
+        success: true,
+        data: {
+          ...response.event,
+          ...event,
+          gatewayDelivery,
+          replayed: response.replayed === true,
+        },
+      });
+    } catch (e: any) {
+      const message = e.message || 'SERVICE_CHALLENGE_RESPONSE_FAILED';
+      await Audit.log('FINANCIAL', session.sub, 'SERVICE_PAYMENT_CHALLENGE_RESPONSE_FAILED', {
+        challengeId: req.params.challengeId,
+        decision,
+        error: message,
+      }).catch(() => undefined);
+      return res.status(quoteErrorStatus(message)).json({ success: false, error: message });
     }
   });
 

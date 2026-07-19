@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { URL } from 'url';
 
 import { getAdminSupabase } from '../supabaseClient.js';
 
@@ -20,6 +21,35 @@ type PersistIntentInput = {
     expiresAt?: string;
     metadata?: Record<string, unknown>;
   };
+};
+
+type ServicePaymentCoreEvent = {
+  intentId: string;
+  serviceCode: string;
+  status: 'requires_action' | 'submitted_to_core' | 'processing' | 'pending' | 'completed' | 'failed';
+  message?: string;
+  transactionId?: string;
+  challenge?: {
+    type: 'PIN' | 'OTP' | 'PASSKEY' | 'BIOMETRIC' | '3DS';
+    challengeId: string;
+    prompt: string;
+    expiresAt?: string;
+    delivery?: {
+      channel?: 'sms' | 'email' | 'push' | 'in_app';
+      destinationHint?: string;
+    };
+    metadata?: Record<string, unknown>;
+  };
+  raw?: Record<string, unknown>;
+};
+
+type ChallengeDecision = 'approve' | 'reject';
+type ChallengeType = NonNullable<ServicePaymentCoreEvent['challenge']>['type'];
+type ChallengeResponseResult = {
+  event: ServicePaymentCoreEvent;
+  intent: any;
+  challenge: any;
+  replayed: boolean;
 };
 
 const stableSerialize = (value: unknown): string => {
@@ -76,6 +106,298 @@ export class GatewayPaymentIntentService {
       p_error: errorMessage || null,
     });
     if (error) throw new Error('GATEWAY_EVENT_DELIVERY_RECORD_FAILED');
+  }
+
+  async listPendingChallengesForUser(userId: string) {
+    const sb = getAdminSupabase();
+    if (!sb) throw new Error('SERVICE_ROLE_REQUIRED');
+
+    const { data: challenges, error } = await sb
+      .from('gateway_payment_challenges')
+      .select('id,challenge_id,challenge_type,status,expires_at,metadata,created_at,intent_id')
+      .eq('customer_user_id', userId)
+      .eq('status', 'PENDING')
+      .gt('expires_at', new Date().toISOString())
+      .order('created_at', { ascending: false });
+    if (error) throw new Error(error.message || 'GATEWAY_CHALLENGE_LIST_FAILED');
+
+    const intentIds = Array.from(new Set((challenges || []).map((row: any) => row.intent_id).filter(Boolean)));
+    const intentByRowId: Record<string, any> = {};
+    if (intentIds.length > 0) {
+      const { data: intents, error: intentError } = await sb
+        .from('gateway_payment_intents')
+        .select('id,intent_id,service_code,reference,operation,amount,currency,status,response_payload,created_at')
+        .in('id', intentIds);
+      if (intentError) throw new Error(intentError.message || 'GATEWAY_INTENT_LIST_FAILED');
+      for (const intent of intents || []) intentByRowId[String(intent.id)] = intent;
+    }
+
+    return (challenges || []).map((challenge: any) => ({
+      id: challenge.challenge_id,
+      type: challenge.challenge_type,
+      status: challenge.status,
+      expiresAt: challenge.expires_at,
+      metadata: challenge.metadata || {},
+      intent: intentByRowId[String(challenge.intent_id)] || null,
+      createdAt: challenge.created_at,
+    }));
+  }
+
+  async respondToChallenge(input: {
+    challengeId: string;
+    userId: string;
+    decision: ChallengeDecision;
+    idempotencyKey: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<ChallengeResponseResult> {
+    const sb = getAdminSupabase();
+    if (!sb) throw new Error('SERVICE_ROLE_REQUIRED');
+
+    const { data: challenge, error } = await sb
+      .from('gateway_payment_challenges')
+      .select('id,challenge_id,customer_user_id,challenge_type,status,expires_at,metadata,intent_id')
+      .eq('challenge_id', input.challengeId)
+      .maybeSingle();
+    if (error) throw new Error(error.message || 'GATEWAY_CHALLENGE_LOOKUP_FAILED');
+    if (!challenge) throw new Error('GATEWAY_CHALLENGE_NOT_FOUND');
+    if (String(challenge.customer_user_id) !== String(input.userId)) {
+      throw new Error('GATEWAY_CHALLENGE_ACCESS_DENIED');
+    }
+
+    const { data: intent, error: intentError } = await sb
+      .from('gateway_payment_intents')
+      .select('*')
+      .eq('id', challenge.intent_id)
+      .maybeSingle();
+    if (intentError) throw new Error(intentError.message || 'GATEWAY_INTENT_LOOKUP_FAILED');
+    if (!intent) throw new Error('GATEWAY_INTENT_NOT_FOUND');
+
+    const existingMetadata = challenge.metadata && typeof challenge.metadata === 'object'
+      ? challenge.metadata as Record<string, unknown>
+      : {};
+    const existingDecision = String(existingMetadata.response_decision || '').toLowerCase();
+    const existingKey = String(existingMetadata.response_idempotency_key || '');
+    const terminal = ['VERIFIED', 'REJECTED', 'EXPIRED', 'CANCELLED'].includes(String(challenge.status));
+    if (terminal) {
+      if (existingKey && existingKey === input.idempotencyKey && existingDecision === input.decision) {
+        const storedEvent = intent.response_payload as ServicePaymentCoreEvent | null;
+        if (storedEvent && typeof storedEvent === 'object' && typeof storedEvent.status === 'string') {
+          return {
+            event: storedEvent,
+            intent,
+            challenge,
+            replayed: true,
+          };
+        }
+        return this.buildChallengeResponseEvent(intent, challenge, input.decision, true);
+      }
+      throw new Error(`GATEWAY_CHALLENGE_${String(challenge.status).toUpperCase()}`);
+    }
+
+    const now = new Date();
+    if (new Date(String(challenge.expires_at)).getTime() <= now.getTime()) {
+      const expiredMetadata = {
+        ...existingMetadata,
+        expired_at: now.toISOString(),
+      };
+      await sb
+        .from('gateway_payment_challenges')
+        .update({ status: 'EXPIRED', metadata: expiredMetadata })
+        .eq('id', challenge.id);
+      await sb
+        .from('gateway_payment_intents')
+        .update({
+          status: 'EXPIRED',
+          response_payload: {
+            ...(intent.response_payload || {}),
+            status: 'failed',
+            message: 'Customer authorization expired before confirmation.',
+          },
+          updated_at: now.toISOString(),
+        })
+        .eq('id', intent.id);
+      throw new Error('GATEWAY_CHALLENGE_EXPIRED');
+    }
+
+    const nextChallengeStatus = input.decision === 'approve' ? 'VERIFIED' : 'REJECTED';
+    const nextIntentStatus = input.decision === 'approve' ? 'AUTHORIZED' : 'CANCELLED';
+    const responseMetadata = {
+      ...existingMetadata,
+      ...(input.metadata || {}),
+      response_decision: input.decision,
+      response_idempotency_key: input.idempotencyKey,
+      responded_at: now.toISOString(),
+      responded_by: input.userId,
+    };
+    const responseResult = this.buildChallengeResponseEvent(
+      intent,
+      { ...challenge, metadata: responseMetadata },
+      input.decision,
+      false,
+    );
+
+    const { error: challengeUpdateError } = await sb
+      .from('gateway_payment_challenges')
+      .update({
+        status: nextChallengeStatus,
+        metadata: responseMetadata,
+        verified_at: input.decision === 'approve' ? now.toISOString() : null,
+        rejected_at: input.decision === 'reject' ? now.toISOString() : null,
+      })
+      .eq('id', challenge.id);
+    if (challengeUpdateError) throw new Error(challengeUpdateError.message || 'GATEWAY_CHALLENGE_UPDATE_FAILED');
+
+    const responsePayload = {
+      ...(intent.response_payload || {}),
+      ...responseResult.event,
+    };
+    const { error: intentUpdateError } = await sb
+      .from('gateway_payment_intents')
+      .update({
+        status: nextIntentStatus,
+        response_payload: responsePayload,
+        updated_at: now.toISOString(),
+      })
+      .eq('id', intent.id);
+    if (intentUpdateError) throw new Error(intentUpdateError.message || 'GATEWAY_INTENT_UPDATE_FAILED');
+
+    return {
+      event: responseResult.event,
+      intent: { ...intent, status: nextIntentStatus, response_payload: responsePayload },
+      challenge: { ...challenge, status: nextChallengeStatus, metadata: responseMetadata },
+      replayed: false,
+    };
+  }
+
+  async deliverServicePaymentEvent(event: ServicePaymentCoreEvent): Promise<Record<string, unknown>> {
+    const baseUrl = String(
+      process.env.ORBI_PAY_GATEWAY_INTERNAL_BASE_URL ||
+        process.env.ORBI_PAY_GATEWAY_BASE_URL ||
+        '',
+    ).trim();
+    if (!baseUrl) return { attempted: false, delivered: false, error: 'ORBI_PAY_GATEWAY_BASE_URL_NOT_CONFIGURED' };
+    const path = process.env.ORBI_PAY_GATEWAY_SERVICE_PAYMENT_EVENT_PATH || '/v1/internal/core/service-payment-events';
+    const endpoint = new URL(path, baseUrl);
+    const body = JSON.stringify(event);
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        ...this.buildSignedCoreToPayGatewayHeaders('POST', endpoint.pathname, event),
+        'content-length': Buffer.byteLength(body).toString(),
+      },
+      body,
+    });
+    let payload: any = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = { raw: await response.text().catch(() => '') };
+    }
+    return {
+      attempted: true,
+      delivered: response.ok,
+      statusCode: response.status,
+      payload,
+    };
+  }
+
+  async updateIntentEvent(intentId: string, event: ServicePaymentCoreEvent, status?: string) {
+    const sb = getAdminSupabase();
+    if (!sb) throw new Error('SERVICE_ROLE_REQUIRED');
+    const normalizedStatus = String(status || event.status || '').toUpperCase();
+    const patch: Record<string, unknown> = {
+      status: normalizedStatus === 'COMPLETED'
+        ? 'COMPLETED'
+        : normalizedStatus === 'FAILED'
+          ? 'FAILED'
+          : normalizedStatus === 'CANCELLED'
+            ? 'CANCELLED'
+            : normalizedStatus === 'PROCESSING'
+              ? 'PROCESSING'
+              : 'AUTHORIZED',
+      response_payload: event as unknown as Record<string, unknown>,
+      updated_at: new Date().toISOString(),
+    };
+    if (patch.status === 'COMPLETED') patch.completed_at = new Date().toISOString();
+    if (patch.status === 'FAILED') patch.failed_at = new Date().toISOString();
+
+    const { error } = await sb
+      .from('gateway_payment_intents')
+      .update(patch)
+      .eq('intent_id', intentId);
+    if (error) throw new Error(error.message || 'GATEWAY_INTENT_EVENT_UPDATE_FAILED');
+  }
+
+  private buildChallengeResponseEvent(
+    intent: any,
+    challenge: any,
+    decision: ChallengeDecision,
+    replayed: boolean,
+  ): ChallengeResponseResult {
+    const approved = decision === 'approve';
+    return {
+      event: {
+        intentId: String(intent.intent_id),
+        serviceCode: String(intent.service_code),
+        status: approved ? 'submitted_to_core' : 'failed',
+        message: approved
+          ? 'Customer authorization approved. Payment processing may continue.'
+          : 'Customer declined the payment authorization request.',
+        challenge: {
+          type: String(challenge.challenge_type || 'PIN') as ChallengeType,
+          challengeId: String(challenge.challenge_id),
+          prompt: approved ? 'Authorization approved.' : 'Authorization declined.',
+          expiresAt: challenge.expires_at ? String(challenge.expires_at) : undefined,
+          delivery: { channel: 'in_app' as const, destinationHint: 'ORBI mobile app' },
+          metadata: challenge.metadata || {},
+        },
+        raw: {
+          decision,
+          replayed,
+          reference: intent.reference,
+          operation: intent.operation,
+          amount: Number(intent.amount || 0),
+          currency: intent.currency,
+          customerId: intent.customer_user_id || null,
+          merchantId: intent.merchant_id || null,
+        },
+      } satisfies ServicePaymentCoreEvent,
+      intent,
+      challenge,
+      replayed,
+    };
+  }
+
+  private buildSignedCoreToPayGatewayHeaders(method: string, path: string, body: unknown): Record<string, string> {
+    const signingSecret = process.env.WORKER_SIGNING_SECRET || process.env.WORKER_SECRET || '';
+    if (!signingSecret) throw new Error('WORKER_SIGNING_SECRET_NOT_CONFIGURED');
+    const workerId = process.env.ORBI_CORE_PAY_GATEWAY_WORKER_ID || 'orbi-core';
+    const scopes = 'gateway:service-payments:result';
+    const timestamp = new Date().toISOString();
+    const nonce = crypto.randomUUID();
+    const requestId = crypto.randomUUID();
+    const bodySha256 = this.hashRequest(body as Record<string, unknown>);
+    const canonicalPayload = [
+      method.toUpperCase(),
+      path,
+      workerId,
+      scopes,
+      timestamp,
+      nonce,
+      requestId,
+      bodySha256,
+    ].join('\n');
+    const signature = crypto.createHmac('sha256', signingSecret).update(canonicalPayload).digest('hex');
+    return {
+      'content-type': 'application/json',
+      'x-worker-id': workerId,
+      'x-worker-scopes': scopes,
+      'x-worker-request-id': requestId,
+      'x-worker-timestamp': timestamp,
+      'x-worker-nonce': nonce,
+      'x-worker-signature': signature,
+      'x-worker-key-id': process.env.WORKER_KEY_ID || 'orbi-core-v1',
+    };
   }
 }
 

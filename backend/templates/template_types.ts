@@ -132,6 +132,20 @@ export interface TemplatePayloads {
         actorLabel: string;
         refId?: string;
     };
+    Shared_Pot_Contribution_Confirmed: {
+        amount: string | number;
+        potName: string;
+        contributorName?: string;
+        currency?: string;
+        refId?: string;
+    };
+    Shared_Pot_Contribution_Posted: {
+        contributorName: string;
+        amount: string | number;
+        potName: string;
+        currency?: string;
+        refId?: string;
+    };
     LOW_BALANCE: {
         name: string;
         threshold: string | number;

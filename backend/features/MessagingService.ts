@@ -412,12 +412,20 @@ CEO, ORBI`
             brand?: NotificationBrandContext | NotificationBrand,
             systemCustomBypass?: boolean,
             metadata?: Record<string, any>,
+            localized?: {
+                en?: { subject: string; body: string },
+                sw?: { subject: string; body: string },
+            },
         } = {}
     ): Promise<UserMessage | null> {
         const sb = getAdminSupabase();
         
         // Check user profile and preferences before dispatching
         const profile = await this.getUserProfile(userId);
+        const language = String(profile.language || 'en').toLowerCase().startsWith('sw') ? 'sw' : 'en';
+        const localizedCopy = options.localized?.[language] || options.localized?.en;
+        const effectiveSubject = localizedCopy?.subject || subject;
+        const effectiveBody = localizedCopy?.body || body;
         
         const isAllowed = (cat: string) => {
             if (cat === 'security') return profile.notif_security;
@@ -442,16 +450,16 @@ CEO, ORBI`
         const isTransactional = ['security', 'update', 'info'].includes(category);
         const templatePlan = officialOrbiTalkTemplatePolicy.resolve({
             category,
-            subject,
-            body,
+            subject: effectiveSubject,
+            body: effectiveBody,
             refId,
             template: options.template,
             variables: options.variables,
             systemCustomBypass: options.systemCustomBypass,
         });
 
-        let displaySubject = subject;
-        let displayBody = body;
+        let displaySubject = effectiveSubject;
+        let displayBody = effectiveBody;
         const createdAtUtc = new Date().toISOString();
         const timeContext = this.buildTimeContext(profile, options.variables, createdAtUtc);
 
@@ -512,7 +520,6 @@ CEO, ORBI`
                            profile.nationality?.toLowerCase().includes('tz') || 
                            profile.phone?.startsWith('+255') ||
                            profile.id_type === 'NIDA';
-        const language = profile.language || 'en';
         const eventCode = String(options.eventCode || '').toUpperCase();
         const templateName = String(templatePlan.templateName || options.template || '').toUpperCase();
         const isSecurityMessage = category === 'security';

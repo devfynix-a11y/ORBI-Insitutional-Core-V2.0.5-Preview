@@ -750,5 +750,109 @@
     "body": "ORBI PaySafe: Kumb {{refId}}. Refund ya {{currency}} {{amount}} imekamilika. Hold ya PaySafe imefungwa.",
     "channel": "sms",
     "messageType": "transactional"
+  },
+  {
+    "name": "Shared_Pot_Contribution_Confirmed",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI Fungu: Ref {{refId}}. Your contribution of {{amount}} to the {{potName}} Fungu has been recorded.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Shared_Pot_Contribution_Confirmed",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI Fungu: Kumb {{refId}}. Mchango wako wa {{amount}} kwenye Fungu la {{potName}} umerekodiwa.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Shared_Pot_Contribution_Posted",
+    "language": "en",
+    "subject": "",
+    "body": "ORBI Fungu: Ref {{refId}}. {{contributorName}} contributed {{amount}} to the {{potName}} Fungu.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Shared_Pot_Contribution_Posted",
+    "language": "sw",
+    "subject": "",
+    "body": "ORBI Fungu: Kumb {{refId}}. {{contributorName}} amechangia {{amount}} kwenye Fungu la {{potName}}.",
+    "channel": "sms",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Shared_Pot_Contribution_Confirmed",
+    "language": "en",
+    "subject": "Fungu contribution received",
+    "body": "Your contribution of {{amount}} to the {{potName}} Fungu has been recorded.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Shared_Pot_Contribution_Confirmed",
+    "language": "sw",
+    "subject": "Mchango wa Fungu umepokelewa",
+    "body": "Mchango wako wa {{amount}} kwenye Fungu la {{potName}} umerekodiwa.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Shared_Pot_Contribution_Posted",
+    "language": "en",
+    "subject": "New Fungu contribution",
+    "body": "{{contributorName}} contributed {{amount}} to the {{potName}} Fungu.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Shared_Pot_Contribution_Posted",
+    "language": "sw",
+    "subject": "Mchango mpya wa Fungu",
+    "body": "{{contributorName}} amechangia {{amount}} kwenye Fungu la {{potName}}.",
+    "channel": "push",
+    "messageType": "transactional"
+  },
+  {
+    "name": "Shared_Pot_Contribution_Confirmed",
+    "language": "en",
+    "subject": "Fungu contribution received",
+    "body": "Hello,\n\nYour Fungu contribution has been recorded.\n\nReference: {{refId}}\nFungu: {{potName}}\nAmount: {{amount}}\n\nThank you for keeping your group contribution up to date.",
+    "channel": "email",
+    "messageType": "transactional",
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
+  },
+  {
+    "name": "Shared_Pot_Contribution_Confirmed",
+    "language": "sw",
+    "subject": "Mchango wa Fungu umepokelewa",
+    "body": "Habari,\n\nMchango wako wa Fungu umerekodiwa.\n\nKumbukumbu: {{refId}}\nFungu: {{potName}}\nKiasi: {{amount}}\n\nAsante kwa kuendeleza mchango wa kikundi chako.",
+    "channel": "email",
+    "messageType": "transactional",
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
+  },
+  {
+    "name": "Shared_Pot_Contribution_Posted",
+    "language": "en",
+    "subject": "New Fungu contribution",
+    "body": "Hello,\n\n{{contributorName}} contributed {{amount}} to the {{potName}} Fungu.\n\nReference: {{refId}}\nCurrent status is available in your ORBI app.",
+    "channel": "email",
+    "messageType": "transactional",
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
+  },
+  {
+    "name": "Shared_Pot_Contribution_Posted",
+    "language": "sw",
+    "subject": "Mchango mpya wa Fungu",
+    "body": "Habari,\n\n{{contributorName}} amechangia {{amount}} kwenye Fungu la {{potName}}.\n\nKumbukumbu: {{refId}}\nTaarifa kamili zinapatikana kwenye app ya ORBI.",
+    "channel": "email",
+    "messageType": "transactional",
+    "fromEmail": "ORBI Support <support@orbifinancial.com>",
+    "replyTo": "support@orbifinancial.com"
   }
 ]

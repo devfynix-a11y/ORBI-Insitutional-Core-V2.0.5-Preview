@@ -9,6 +9,7 @@ import { Server as LogicCore } from '../../../backend/server.js';
 import { Webhooks } from '../../../backend/payments/webhookHandler.js';
 import { platformFeeService } from '../../../backend/payments/PlatformFeeService.js';
 import { gatewayPaymentIntentService } from '../../../backend/payments/GatewayPaymentIntentService.js';
+import { Messaging } from '../../../backend/features/MessagingService.js';
 import {
   createInternalWorkerMiddleware,
   getInternalAuditMetadata,
@@ -67,9 +68,16 @@ const PaySafeBalanceRequestSchema = z.object({
   serviceCode: z.string().min(1),
   merchantId: z.string().optional(),
   userId: z.string().optional(),
+  customerId: z.string().optional(),
   email: z.string().email().optional(),
   phone: z.string().optional(),
   includeHistory: z.boolean().optional().default(false),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+});
+
+const IdentityResolveRequestSchema = z.object({
+  serviceCode: z.string().min(1),
+  identifier: z.string().trim().min(3).max(120),
   metadata: z.record(z.string(), z.unknown()).default({}),
 });
 
@@ -320,14 +328,25 @@ const findServicePaymentCustomer = async (customer: z.infer<typeof ServicePaymen
   const sb = getAdminSupabase() || getSupabase();
   if (!sb) throw new Error('DB_OFFLINE');
   const userId = String(customer?.userId || '').trim();
+  const customerId = String((customer as Record<string, unknown> | undefined)?.customerId || '').trim();
   const email = String(customer?.email || '').trim().toLowerCase();
   const phone = normalizePhoneCandidate(customer?.phone);
 
   if (userId && uuidPattern.test(userId)) {
     const { data, error } = await sb
       .from('users')
-      .select('id, full_name, email, phone, account_status')
+      .select('id, full_name, email, phone, customer_id, account_status')
       .eq('id', userId)
+      .maybeSingle();
+    if (error) throw error;
+    if (data) return data;
+  }
+
+  if (customerId) {
+    const { data, error } = await sb
+      .from('users')
+      .select('id, full_name, email, phone, customer_id, account_status')
+      .ilike('customer_id', customerId)
       .maybeSingle();
     if (error) throw error;
     if (data) return data;
@@ -336,7 +355,7 @@ const findServicePaymentCustomer = async (customer: z.infer<typeof ServicePaymen
   if (email) {
     const { data, error } = await sb
       .from('users')
-      .select('id, full_name, email, phone, account_status')
+      .select('id, full_name, email, phone, customer_id, account_status')
       .ilike('email', email)
       .maybeSingle();
     if (error) throw error;
@@ -346,7 +365,7 @@ const findServicePaymentCustomer = async (customer: z.infer<typeof ServicePaymen
   if (phone) {
     const { data, error } = await sb
       .from('users')
-      .select('id, full_name, email, phone, account_status')
+      .select('id, full_name, email, phone, customer_id, account_status')
       .or(`phone.eq.${phone},phone.eq.${phone.replace(/^\+/, '')}`)
       .limit(1)
       .maybeSingle();
@@ -358,12 +377,13 @@ const findServicePaymentCustomer = async (customer: z.infer<typeof ServicePaymen
 };
 
 const findPaySafeBalanceUser = async (request: z.infer<typeof PaySafeBalanceRequestSchema>) =>
-  request.userId || request.email || request.phone
+  request.userId || request.customerId || request.email || request.phone
     ? findServicePaymentCustomer({
         userId: request.userId,
+        customerId: request.customerId,
         email: request.email,
         phone: request.phone,
-      })
+      } as any)
     : null;
 
 const numberFromDb = (value: unknown): number => {
@@ -967,6 +987,7 @@ export const registerInternalRoutes = (internal: Router) => {
               paySafeFundingRoute,
               merchantId: merchantContext?.merchant?.id || null,
               merchantName: merchantContext?.merchant?.business_name || null,
+              merchantEscrowWalletId: merchantContext?.escrowWallet?.id || null,
               merchantWalletsResolved: Boolean(merchantContext?.escrowWallet),
               feeQuote: merchantContext?.feeQuote || null,
             },
@@ -1022,6 +1043,57 @@ export const registerInternalRoutes = (internal: Router) => {
       }
       const outboxEventKey = String(persistence.outboxEventKey || '');
 
+      if (event.status === 'requires_action' && event.challenge && resolvedCustomer?.id) {
+        const merchantName = String(merchantContext?.merchant?.business_name || request.serviceCode || 'ORBI service');
+        const amountText = `${request.currency.toUpperCase()} ${Number(request.amount || 0).toLocaleString('en-US')}`;
+        await Messaging.dispatch(
+          String(resolvedCustomer.id),
+          'update',
+          'Approve ORBI payment request',
+          `Approve ${amountText} for ${merchantName}. Reference ${request.reference}.`,
+          {
+            push: true,
+            email: false,
+            sms: false,
+            template: 'SERVICE_PAYMENT_AUTHORIZATION_REQUIRED',
+            eventCode: 'SERVICE_PAYMENT_AUTHORIZATION_REQUIRED',
+            variables: {
+              amount: request.amount,
+              currency: request.currency,
+              serviceName: merchantName,
+              reference: request.reference,
+            },
+            localized: {
+              en: {
+                subject: 'Approve ORBI payment request',
+                body: `Approve ${amountText} for ${merchantName}. Reference ${request.reference}.`,
+              },
+              sw: {
+                subject: 'Thibitisha ombi la malipo ya ORBI',
+                body: `Thibitisha ${amountText} kwa ${merchantName}. Kumbukumbu ${request.reference}.`,
+              },
+            },
+            metadata: {
+              source: 'pay_gateway',
+              category: 'service_payment_authorization',
+              servicePaymentChallenge: {
+                challengeId: event.challenge.challengeId,
+                intentId: event.intentId,
+                serviceCode: event.serviceCode,
+                reference: request.reference,
+                amount: request.amount,
+                currency: request.currency,
+                operation: request.operation,
+                expiresAt: event.challenge.expiresAt,
+                merchantName,
+              },
+            },
+          },
+        ).catch((error: any) => {
+          console.warn('[PayGateway] service authorization notification failed', error?.message || error);
+        });
+      }
+
       const gatewayDelivery = await postServicePaymentEventToPayGateway(event).catch((error: any) => ({
         attempted: true,
         delivered: false,
@@ -1076,6 +1148,64 @@ export const registerInternalRoutes = (internal: Router) => {
       });
       return res.status(message === 'DB_OFFLINE' ? 503 : 500).json({ success: false, error: message });
     }
+  });
+
+  internal.post('/pay-gateway/identity-resolve', requireWorkerScope(['gateway:identity:read']), async (req, res) => {
+    const parsed = IdentityResolveRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        error: 'IDENTITY_RESOLVE_REQUEST_INVALID',
+        issues: parsed.error.issues.map((issue) => ({
+          path: issue.path.join('.'),
+          message: issue.message,
+        })),
+      });
+    }
+
+    const workerId = String((req as any).internalWorker?.id || req.get('x-worker-id') || 'payment-gateway');
+    const identifier = parsed.data.identifier.trim();
+    const normalizedPhone = normalizePhoneCandidate(identifier);
+    const phoneDigits = normalizedPhone.replace(/\D/g, '');
+    const identifierIsEmail = identifier.includes('@');
+    const identifierIsUuid = uuidPattern.test(identifier);
+    const identifierIsPhone = !identifierIsEmail && !identifierIsUuid && phoneDigits.length >= 7;
+    const customer = await findServicePaymentCustomer({
+      userId: identifierIsUuid ? identifier : undefined,
+      customerId: !identifierIsEmail && !identifierIsUuid && !identifierIsPhone ? identifier : undefined,
+      email: identifierIsEmail ? identifier : undefined,
+      phone: identifierIsPhone ? normalizedPhone : undefined,
+    } as any).catch((error: any) => {
+      throw error;
+    });
+
+    if (!customer) {
+      await Audit.log('FINANCIAL', workerId, 'PAY_GATEWAY_IDENTITY_RESOLVE_NOT_FOUND', {
+        serviceCode: parsed.data.serviceCode,
+        identifierType: identifierIsEmail ? 'email' : identifierIsPhone ? 'phone' : identifierIsUuid ? 'user_id' : 'customer_id',
+        ...getInternalAuditMetadata(req),
+      });
+      return res.status(404).json({ success: false, error: 'IDENTITY_NOT_FOUND' });
+    }
+
+    const activeForPayments = ['active', 'verified'].includes(String(customer.account_status || '').toLowerCase());
+    await Audit.log('FINANCIAL', customer.id, 'PAY_GATEWAY_IDENTITY_RESOLVED', {
+      serviceCode: parsed.data.serviceCode,
+      activeForPayments,
+      ...getInternalAuditMetadata(req),
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        id: customer.id,
+        customerId: customer.customer_id || null,
+        displayName: customer.full_name || null,
+        emailHint: maskEmail(customer.email) || null,
+        phoneHint: maskPhone(customer.phone) || null,
+        activeForPayments,
+      },
+    });
   });
 
   internal.post('/pay-gateway/paysafe-balances', requireWorkerScope(['gateway:paysafe-balances:read']), async (req, res) => {

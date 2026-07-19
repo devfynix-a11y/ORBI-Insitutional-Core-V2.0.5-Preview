@@ -5,6 +5,7 @@ import { operatorAlertService } from '../../../backend/infrastructure/OperatorAl
 import { RedisManager } from '../../../backend/enterprise/infrastructure/RedisManager.js';
 import { Audit } from '../../../backend/security/audit.js';
 import { getAdminSupabase, getSupabase } from '../../../backend/supabaseClient.js';
+import { requireIdempotencyKey } from '../../middleware/security/idempotency.js';
 import {
   CONFIG_COMMISSION_VIEW_ROLES,
   CONFIG_FX_VIEW_ROLES,
@@ -329,7 +330,7 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
-  v1.post('/escrow/create', authenticate as any, async (req, res) => {
+  v1.post('/escrow/create', authenticate as any, requireIdempotencyKey, async (req, res) => {
     const {
       recipientCustomerId,
       recipient_customer_id,
@@ -369,7 +370,7 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
-  v1.post('/escrow/release', authenticate as any, async (req, res) => {
+  v1.post('/escrow/release', authenticate as any, requireIdempotencyKey, async (req, res) => {
     const { referenceId } = req.body;
     const userId = (req as any).session.sub;
     try {
@@ -385,7 +386,7 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
-  v1.post('/escrow/accept', authenticate as any, async (req, res) => {
+  v1.post('/escrow/accept', authenticate as any, requireIdempotencyKey, async (req, res) => {
     const { referenceId } = req.body;
     const userId = (req as any).session.sub;
     try {
@@ -401,7 +402,7 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
-  v1.post('/escrow/dispute', authenticate as any, async (req, res) => {
+  v1.post('/escrow/dispute', authenticate as any, requireIdempotencyKey, async (req, res) => {
     const { referenceId, reason } = req.body;
     const userId = (req as any).session.sub;
     try {
@@ -417,7 +418,7 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
-  v1.post('/escrow/refund', authenticate as any, async (req, res) => {
+  v1.post('/escrow/refund', authenticate as any, requireIdempotencyKey, async (req, res) => {
     const { referenceId, reason } = req.body;
     const userId = (req as any).session.sub;
 
