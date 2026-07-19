@@ -336,15 +336,21 @@ export const registerCommerceRoutes = (v1: Router, deps: Deps) => {
       const challengeMetadata = pending.challenge?.metadata || {};
       if (decision === 'approve' && challengeMetadata.otcRequired === true) {
         const otcRequestId = String(
-          req.body?.otc_request_id ||
+          req.body?.otcRequestId ||
+            req.body?.otpRequestId ||
+            req.body?.requestId ||
+            req.body?.otc_request_id ||
             req.body?.otp_request_id ||
             challengeMetadata.otcRequestId ||
             '',
         ).trim();
         const otcCode = String(
-          req.body?.otc_code ||
+          req.body?.otcCode ||
+            req.body?.otpCode ||
+            req.body?.otc_code ||
             req.body?.otp_code ||
             req.body?.code ||
+            req.body?.pin ||
             '',
         ).trim();
         if (!otcRequestId || !otcCode) {

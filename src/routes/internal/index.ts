@@ -1297,13 +1297,18 @@ export const registerInternalRoutes = (internal: Router) => {
       const isTerminalReplay = ['VERIFIED', 'REJECTED', 'EXPIRED', 'CANCELLED'].includes(challengeStatus);
       if (decision === 'approve' && !isTerminalReplay && challengeMetadata.otcRequired === true) {
         const otcRequestId = String(
-          req.body?.otc_request_id ||
+          req.body?.otcRequestId ||
+            req.body?.otpRequestId ||
+            req.body?.requestId ||
+            req.body?.otc_request_id ||
             req.body?.otp_request_id ||
             challengeMetadata.otcRequestId ||
             '',
         ).trim();
         const otcCode = String(
-          req.body?.otc_code ||
+          req.body?.otcCode ||
+            req.body?.otpCode ||
+            req.body?.otc_code ||
             req.body?.otp_code ||
             req.body?.code ||
             req.body?.pin ||
