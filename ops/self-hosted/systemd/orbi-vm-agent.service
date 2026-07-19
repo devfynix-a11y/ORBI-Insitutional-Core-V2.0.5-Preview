@@ -1,5 +1,5 @@
 [Unit]
-Description=ORBI VM Agent
+Description=ORBI Self Hosted Agent
 After=network-online.target docker.service orbi-stack.service
 Wants=network-online.target
 
@@ -11,7 +11,7 @@ WorkingDirectory=/opt/orbi/core
 EnvironmentFile=/etc/orbi/core.env
 Environment=ORBI_CORE_ENV_FILE=/etc/orbi/core.env
 Environment=ORBI_OPS_AGENT_ROOT=/opt/orbi/core
-Environment=ORBI_OPS_AGENT_ID=orbi-vm-agent-primary
+Environment=ORBI_OPS_AGENT_ID=orbi-self-hosted-agent-primary
 Environment=ORBI_OPS_AGENT_POLL_MS=15000
 Environment=ORBI_OPS_AGENT_COMMAND_TIMEOUT_MS=1200000
 # Set this in /etc/orbi/core.env when DATABASE_URL points to Docker DNS.

@@ -11,6 +11,7 @@ import { platformFeeService } from '../../../backend/payments/PlatformFeeService
 import { gatewayPaymentIntentService } from '../../../backend/payments/GatewayPaymentIntentService.js';
 import { Messaging } from '../../../backend/features/MessagingService.js';
 import { OTPService } from '../../../backend/security/otpService.js';
+import { Identity } from '../../../iam/identityService.js';
 import {
   createInternalWorkerMiddleware,
   getInternalAuditMetadata,
@@ -1192,24 +1193,21 @@ export const registerInternalRoutes = (internal: Router) => {
 
     const workerId = String((req as any).internalWorker?.id || req.get('x-worker-id') || 'payment-gateway');
     const identifier = parsed.data.identifier.trim();
-    const normalizedPhone = normalizePhoneCandidate(identifier);
-    const phoneDigits = normalizedPhone.replace(/\D/g, '');
     const identifierIsEmail = identifier.includes('@');
     const identifierIsUuid = uuidPattern.test(identifier);
-    const identifierIsPhone = !identifierIsEmail && !identifierIsUuid && phoneDigits.length >= 7;
-    const customer = await findServicePaymentCustomer({
-      userId: identifierIsUuid ? identifier : undefined,
-      customerId: !identifierIsEmail && !identifierIsUuid && !identifierIsPhone ? identifier : undefined,
-      email: identifierIsEmail ? identifier : undefined,
-      phone: identifierIsPhone ? normalizedPhone : undefined,
-    } as any).catch((error: any) => {
-      throw error;
-    });
+    const resolvedPublicProfile = identifierIsUuid
+      ? null
+      : await Identity.lookupUser(identifier).catch((error: any) => {
+          throw error;
+        });
+    const customer = resolvedPublicProfile
+      ? await findServicePaymentCustomer({ userId: resolvedPublicProfile.id } as any)
+      : await findServicePaymentCustomer({ userId: identifierIsUuid ? identifier : undefined } as any);
 
     if (!customer) {
       await Audit.log('FINANCIAL', workerId, 'PAY_GATEWAY_IDENTITY_RESOLVE_NOT_FOUND', {
         serviceCode: parsed.data.serviceCode,
-        identifierType: identifierIsEmail ? 'email' : identifierIsPhone ? 'phone' : identifierIsUuid ? 'user_id' : 'customer_id',
+        identifierType: identifierIsEmail ? 'email' : identifierIsUuid ? 'user_id' : 'public_identifier',
         ...getInternalAuditMetadata(req),
       });
       return res.status(404).json({ success: false, error: 'IDENTITY_NOT_FOUND' });

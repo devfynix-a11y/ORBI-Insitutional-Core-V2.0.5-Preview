@@ -38,7 +38,7 @@ services:
       ORBI_SHOP_MERCHANT_ID: ${ORBI_SHOP_MERCHANT_ID}
     volumes:
       - ../../../ORBI PAY GATEWAY/config/providers.example.json:/app/config/providers.json:ro
-      - ../../../ORBI PAY GATEWAY/config/services.example.json:/app/config/services.json:ro
+      - ../../../ORBI PAY GATEWAY/config/services.json:/app/config/services.json:ro
     ports:
       - "${ORBI_PAY_GATEWAY_BIND_ADDRESS:-127.0.0.1}:3100:3100"
     healthcheck:
