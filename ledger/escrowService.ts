@@ -124,13 +124,8 @@ export class EscrowService {
         if (!recipientAccount || String(recipientAccount.account_status || '').toLowerCase() !== 'active') {
             throw new Error('PAYSAFE_RECIPIENT_ACCOUNT_NOT_ACTIVE');
         }
-        const senderRegistryType = String(senderAccount.registry_type || '').toUpperCase();
-        const recipientRegistryType = String(recipientAccount.registry_type || '').toUpperCase();
         if (merchantError) throw new Error('PAYSAFE_MERCHANT_LOOKUP_FAILED');
         const isMerchantEscrow = Boolean(merchantId);
-        if (senderRegistryType !== 'CONSUMER') {
-            throw new Error('PAYSAFE_SENDER_REGISTRY_INVALID');
-        }
         if (isMerchantEscrow) {
             if (!merchant) throw new Error('PAYSAFE_MERCHANT_NOT_FOUND');
             if (String(merchant.status || '').toLowerCase() !== 'active') {
@@ -139,11 +134,6 @@ export class EscrowService {
             if (String(merchant.owner_user_id || '') !== recipient.userId) {
                 throw new Error('PAYSAFE_MERCHANT_RECIPIENT_MISMATCH');
             }
-            if (recipientRegistryType !== 'MERCHANT') {
-                throw new Error('PAYSAFE_RECIPIENT_REGISTRY_INVALID');
-            }
-        } else if (recipientRegistryType !== 'CONSUMER') {
-            throw new Error('PAYSAFE_RECIPIENT_REGISTRY_INVALID');
         }
         if (senderVaultError || recipientVaultError) throw new Error('PAYSAFE_VAULT_LOOKUP_FAILED');
         const isUsableVault = (vault: any) => !Boolean(vault.is_locked)
