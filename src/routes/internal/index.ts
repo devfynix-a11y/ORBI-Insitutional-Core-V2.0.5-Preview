@@ -611,6 +611,9 @@ const resolveServiceMerchantContext = async (
   if (String(merchant.status || '').toLowerCase() !== 'active') {
     throw new Error('MERCHANT_NOT_ACTIVE');
   }
+  if (!String(merchant.owner_user_id || '').trim()) {
+    throw new Error('MERCHANT_OWNER_REQUIRED');
+  }
 
   const resolveWalletByType = async (types: string[]) => {
     const { data, error } = await sb
