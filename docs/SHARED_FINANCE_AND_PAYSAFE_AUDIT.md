@@ -106,6 +106,7 @@ tests are complete.
 - [x] Atomic PaySafe refund implemented; staging DB validation remains.
 - [x] Merchant PaySafe settlement and fee lifecycle implemented; main/reset schema parity and staging RPC rollout verified.
 - [x] Durable Gateway intent, challenge, request replay, and result-event outbox store implemented; staging RPC rollout verified.
+- [x] ORBI Pay Gateway hosted checkout can complete merchant PaySafe creation through Core challenge verification and persist a protected `HELD` escrow for merchant/service payments.
 - [x] Atomic Shared Pot contribution, withdrawal, owner membership, and invitation response implemented; staging RPC rollout verified, concurrency mutation validation remains.
 - [ ] Atomic Shared Budget lifecycle.
 
@@ -118,11 +119,10 @@ tests are complete.
 - **P1 - Merchant settlement reversal:** The merchant PaySafe settlement record
   supports a reversed state, but an atomic reversal/chargeback RPC with balanced
   ledger legs and dual-control authorization is still required.
-- **P0 - Core-verified gateway authorization:** Durable challenges must only be
-  consumed after ORBI Core verifies PIN, OTP, passkey, or biometric evidence.
-  Add the authenticated mobile confirmation endpoint and atomic
-  challenge-consume/execution RPC; Pay Gateway must never verify ORBI
-  credentials on Core's behalf.
+- **P1 - Challenge-auth expansion:** Hosted Gateway challenge now routes
+  authorization back through Core verification before PaySafe hold creation.
+  Add passkey/biometric challenge modes and mobile deep-link continuation while
+  keeping Core as the only ORBI credential authority.
 - **P1 - Gateway result outbox worker:** Result events are now persisted before
   delivery. Add a background worker that claims failed/pending outbox rows with
   `SKIP LOCKED`, retries with backoff, and alerts on terminal exhaustion.

@@ -108,6 +108,10 @@ Core validates:
 - an active PaySafe escrow wallet exists for that merchant (`paysafe_escrow`, `escrow`, or `holding`)
 - an active settlement wallet exists for that merchant when settlement reporting or payout flow needs it (`settlement` or `operating`)
 - merchant fee quote can be resolved or reported as unresolved
+- merchant/service PaySafe recipient validity comes from the registration
+  protocol: active customer account, active merchant record, merchant owner
+  linkage, active wallets, and ledger invariants. Registry type is identity
+  context and must not be hardcoded as a payment permission shortcut.
 
 Ledger posting remains a Core responsibility. Pay Gateway only carries the merchant context and request envelope.
 
@@ -143,6 +147,18 @@ Required worker scope:
 ```txt
 gateway:service-payments:result
 ```
+
+Successful ORBI hosted checkout baseline:
+
+1. Pay Gateway creates a durable payment intent.
+2. Core returns a challenge when customer authorization is required.
+3. Hosted challenge submits the response back to Core through the signed
+   Gateway worker route.
+4. Core verifies the OTP/PIN/passkey evidence.
+5. Core creates the PaySafe hold and records an `escrow_agreements` row with
+   status `HELD`.
+6. Gateway marks the intent `COMPLETED` with raw status `payment_held`.
+7. Merchant checkout receives the result event or return URL continuation.
 
 ## PaySafe Balance Read For Seller Portals
 
