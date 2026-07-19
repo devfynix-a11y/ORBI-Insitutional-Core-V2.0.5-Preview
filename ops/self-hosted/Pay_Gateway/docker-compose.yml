@@ -26,7 +26,7 @@ services:
       ORBI_CORE_TRUSTED_MERCHANT_SETTLEMENTS_PATH: ${ORBI_CORE_TRUSTED_MERCHANT_SETTLEMENTS_PATH:-/api/internal/pay-gateway/merchant-settlements}
       ORBI_CORE_CALLBACK_TIMEOUT_MS: ${ORBI_CORE_CALLBACK_TIMEOUT_MS:-30000}
       PAYMENT_GATEWAY_WORKER_ID: ${PAYMENT_GATEWAY_WORKER_ID:-orbi-payment-gateway}
-      PAYMENT_GATEWAY_WORKER_SCOPES: ${PAYMENT_GATEWAY_WORKER_SCOPES:-gateway:events:write,gateway:service-payments:write,gateway:service-payments:result,gateway:paysafe-balances:read,gateway:merchant-payments:read,gateway:merchant-settlements:read}
+      PAYMENT_GATEWAY_WORKER_SCOPES: ${PAYMENT_GATEWAY_WORKER_SCOPES:-gateway:events:write,gateway:service-payments:write,gateway:service-payments:result,gateway:identity:read,gateway:paysafe-balances:read,gateway:merchant-payments:read,gateway:merchant-settlements:read}
       WORKER_SIGNING_SECRET: ${WORKER_SIGNING_SECRET}
       WORKER_KEY_ID: ${WORKER_KEY_ID:-payment-gateway-v1}
       PAYMENT_GATEWAY_INTERNAL_MTLS_ENABLED: ${PAYMENT_GATEWAY_INTERNAL_MTLS_ENABLED:-false}
