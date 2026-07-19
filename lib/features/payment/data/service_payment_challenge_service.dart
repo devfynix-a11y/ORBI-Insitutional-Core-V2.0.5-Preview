@@ -18,6 +18,28 @@ class ServicePaymentChallengeService {
     return '$safePrefix-${_uuid.v4()}';
   }
 
+  Future<List<Map<String, dynamic>>> listPending() async {
+    final path =
+        AppConfig.endpoints['servicePaymentChallenges'] ??
+        '/payments/service-challenges';
+
+    try {
+      final response = await _dio.get(path);
+      final raw = response.data;
+      final data = raw is Map ? raw['data'] : raw;
+      final items = data is Map ? data['items'] : data;
+      if (items is List) {
+        return items
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList(growable: false);
+      }
+      return const <Map<String, dynamic>>[];
+    } on DioException catch (error) {
+      throw ServicePaymentChallengeException(_extractDioMessage(error));
+    }
+  }
+
   Future<Map<String, dynamic>> respond({
     required String challengeId,
     required String decision,

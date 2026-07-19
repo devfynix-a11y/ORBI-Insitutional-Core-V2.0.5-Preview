@@ -37,6 +37,7 @@ import 'widgets/payment_merchant_hub.dart';
 import 'widgets/payment_orbi_pay_sheet.dart';
 import 'widgets/payment_scan_feedback.dart';
 import 'widgets/payment_scan_panels.dart';
+import 'service_payment_requests_screen.dart';
 
 enum _MerchantPayMode { number, qr, receipt }
 
@@ -257,7 +258,7 @@ class _PaymentScreenState extends State<PaymentScreen>
     super.initState();
     _paymentController = PaymentController()
       ..addListener(_handlePaymentControllerChange);
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     _scannerPulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1800),
@@ -1365,6 +1366,10 @@ class _PaymentScreenState extends State<PaymentScreen>
               icon: const Icon(Icons.storefront_rounded),
               text: l10n.paymentTabMerchants,
             ),
+            Tab(
+              icon: const Icon(Icons.verified_user_rounded),
+              text: _isSwahili ? 'Maombi' : 'Requests',
+            ),
           ],
         ),
       ),
@@ -1397,7 +1402,11 @@ class _PaymentScreenState extends State<PaymentScreen>
               Expanded(
                 child: TabBarView(
                   controller: _tabController,
-                  children: [_buildBillsHub(), _buildMerchantHub()],
+                  children: [
+                    _buildBillsHub(),
+                    _buildMerchantHub(),
+                    const ServicePaymentRequestsScreen(),
+                  ],
                 ),
               ),
             ],
