@@ -70,7 +70,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final token = await auth.getValidAccessToken();
     if (!mounted || token == null || token.isEmpty) return;
 
-    await dashboard.fetchDashboardData(token);
+    await dashboard.fetchDashboardData(token, forceRefresh: true);
     if (!showErrorStatus || !mounted) return;
     final error = dashboard.error;
     if (error != null && error.isNotEmpty) {

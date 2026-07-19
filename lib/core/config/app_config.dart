@@ -356,6 +356,9 @@ class AppConfig {
     'merchantPaymentSettle': '/merchant/payments/settle',
     'orbiPayPreview': '/payments/orbi-pay/preview',
     'orbiPaySettle': '/payments/orbi-pay/settle',
+    'servicePaymentChallenges': '/payments/service-challenges',
+    'servicePaymentChallengeRespondTemplate':
+        '/payments/service-challenges/{challengeId}/respond',
     'billPayProviders': '/payments/bills/providers',
     'billPayPreview': '/payments/bills/preview',
     'billPaySettle': '/payments/bills/settle',

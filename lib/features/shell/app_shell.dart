@@ -98,6 +98,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    if (widget.screensOverride != null) {
+      _bootstrapDone = true;
+    }
     WidgetsBinding.instance.addObserver(this);
     ShellNavigationSignal.selectedTab.addListener(_handleShellTabSignal);
   }
@@ -126,6 +129,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 
   void _scheduleBootstrap() {
+    if (widget.screensOverride != null) return;
     if (_bootstrapDone || _bootstrapInProgress || _bootstrapScheduled) return;
     _bootstrapScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -160,41 +164,48 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       final walletService = WalletService();
       final bootstrapService = AppBootstrapService();
 
+      await bootstrapService
+          .fetchInitialSnapshot(token)
+          .then((_) {})
+          .timeout(
+            const Duration(seconds: 5),
+            onTimeout: () {
+              debugPrint('[SHELL_BOOT] app bootstrap snapshot timed out');
+            },
+          );
+
+      await dashboardController
+          .fetchDashboardData(
+            token,
+            optionalTimeout: const Duration(seconds: 2),
+            requiredTimeout: const Duration(seconds: 8),
+            forceRefresh: true,
+          )
+          .timeout(const Duration(seconds: 12));
+      if (!dashboardController.hasData) {
+        throw StateError('DASHBOARD_BOOT_EMPTY');
+      }
+
       await Future.wait<void>([
-        bootstrapService.fetchInitialSnapshot(token).then((_) {}).timeout(
-          const Duration(seconds: 10),
-          onTimeout: () {
-            debugPrint('[SHELL_BOOT] app bootstrap snapshot timed out');
-          },
-        ),
-        dashboardController
-            .fetchDashboardData(
-              token,
-              optionalTimeout: const Duration(seconds: 3),
-              requiredTimeout: const Duration(seconds: 5),
-            )
-            .timeout(
-              const Duration(seconds: 12),
-              onTimeout: () {
-                debugPrint('[SHELL_BOOT] dashboard critical hydration timed out');
-              },
-            ),
         profileController.loadProfile().timeout(
           const Duration(seconds: 8),
           onTimeout: () {
             debugPrint('[SHELL_BOOT] profile critical hydration timed out');
           },
         ),
-        walletService.getWallets().then((_) {}).timeout(
-          const Duration(seconds: 8),
-          onTimeout: () {
-            debugPrint('[SHELL_BOOT] wallets critical hydration timed out');
-          },
-        ),
+        walletService
+            .getWallets()
+            .then((_) {})
+            .timeout(
+              const Duration(seconds: 8),
+              onTimeout: () {
+                debugPrint('[SHELL_BOOT] wallets critical hydration timed out');
+              },
+            ),
       ]).timeout(
-        const Duration(seconds: 16),
+        const Duration(seconds: 8),
         onTimeout: () {
-          debugPrint('[SHELL_BOOT] critical hydration budget reached');
+          debugPrint('[SHELL_BOOT] supporting hydration budget reached');
           return <void>[];
         },
       );
@@ -216,16 +227,17 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           if (!dashboardController.hasData) {
             await _runDeferredBootstrapTask(
               'dashboard_retry',
-              () => dashboardController.fetchDashboardData(token).timeout(
-                const Duration(seconds: 24),
-              ),
+              () => dashboardController
+                  .fetchDashboardData(token, forceRefresh: true)
+                  .timeout(const Duration(seconds: 24)),
               l10n,
             );
           }
           await Future.wait<void>([
             _runDeferredBootstrapTask(
               'auth_profile_refresh',
-              () => _auth?.refreshCurrentProfile().timeout(
+              () =>
+                  _auth?.refreshCurrentProfile().timeout(
                     const Duration(seconds: 8),
                   ) ??
                   Future<void>.value(),
@@ -233,16 +245,16 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             ),
             _runDeferredBootstrapTask(
               'notifications',
-              () => notificationController.fetch(token).timeout(
-                const Duration(seconds: 12),
-              ),
+              () => notificationController
+                  .fetch(token)
+                  .timeout(const Duration(seconds: 12)),
               l10n,
             ),
             _runDeferredBootstrapTask(
               'goals',
-              () => goalsController.loadAll(token, notify: false).timeout(
-                const Duration(seconds: 14),
-              ),
+              () => goalsController
+                  .loadAll(token, notify: false)
+                  .timeout(const Duration(seconds: 14)),
               l10n,
             ),
             _runDeferredBootstrapTask(
@@ -373,7 +385,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   void _startRealtimeWatchdog() {
     _realtimeWatchdogTimer?.cancel();
-    _realtimeWatchdogTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+    _realtimeWatchdogTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       if (!mounted) return;
       if (_auth?.isAuthenticated != true || _auth?.isReauthLocked == true) {
         return;
@@ -392,7 +404,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         final token = await _auth?.getValidAccessToken();
         if (!mounted) return;
         if (token == null || token.isEmpty) return;
-        await dashboard.fetchDashboardData(token);
+        await dashboard.fetchDashboardData(token, forceRefresh: true);
       },
     );
   }

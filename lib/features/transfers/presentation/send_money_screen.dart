@@ -466,6 +466,8 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
   bool _isSubmittingExternal = false;
   bool _loadingSourceWallets = false;
   bool _loadingBudgetCategories = false;
+  int _internalStep = 0;
+  int _externalStep = 0;
   String? _lookupError;
   String? _agentLookupError;
   String? _sourceWalletError;
@@ -829,25 +831,25 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
   List<String> _walletIdentifierCandidates(Map<String, dynamic> wallet) {
     final metadata = _walletMetadata(wallet);
     return [
-      wallet['id'],
-      wallet['wallet_id'],
-      wallet['walletId'],
-      wallet['wallet_uuid'],
-      wallet['walletUuid'],
-      wallet['source_wallet_id'],
-      wallet['sourceWalletId'],
-      wallet['operating_wallet_id'],
-      wallet['operatingWalletId'],
-      metadata['id'],
-      metadata['wallet_id'],
-      metadata['walletId'],
-      metadata['wallet_uuid'],
-      metadata['walletUuid'],
-      metadata['source_wallet_id'],
-      metadata['sourceWalletId'],
-      metadata['operating_wallet_id'],
-      metadata['operatingWalletId'],
-    ]
+          wallet['id'],
+          wallet['wallet_id'],
+          wallet['walletId'],
+          wallet['wallet_uuid'],
+          wallet['walletUuid'],
+          wallet['source_wallet_id'],
+          wallet['sourceWalletId'],
+          wallet['operating_wallet_id'],
+          wallet['operatingWalletId'],
+          metadata['id'],
+          metadata['wallet_id'],
+          metadata['walletId'],
+          metadata['wallet_uuid'],
+          metadata['walletUuid'],
+          metadata['source_wallet_id'],
+          metadata['sourceWalletId'],
+          metadata['operating_wallet_id'],
+          metadata['operatingWalletId'],
+        ]
         .map(_safeDatabaseIdentifier)
         .where((value) => value.isNotEmpty)
         .toList(growable: false);
@@ -1338,14 +1340,16 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     for (final goal in goals) {
       final goalId = _pickString([goal['id'], goal['goalId'], goal['goal_id']]);
       if (goalId.isEmpty) continue;
-      final sourceWalletId = _safeUuid(_pickString([
-        goal['sourceWalletId'],
-        goal['source_wallet_id'],
-        goal['walletId'],
-        goal['wallet_id'],
-        goal['operating_wallet_id'],
-        goal['operatingWalletId'],
-      ]));
+      final sourceWalletId = _safeUuid(
+        _pickString([
+          goal['sourceWalletId'],
+          goal['source_wallet_id'],
+          goal['walletId'],
+          goal['wallet_id'],
+          goal['operating_wallet_id'],
+          goal['operatingWalletId'],
+        ]),
+      );
       items.add({
         'wallet_id': 'goal::$goalId',
         'name': _pickString([goal['name'], goal['title']]),
@@ -1388,11 +1392,13 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
   String _transferSourceWalletId(Map<String, dynamic> wallet) {
     if (!_isGoalSourceWallet(wallet)) return _walletId(wallet);
     final metadata = _walletMetadata(wallet);
-    final sourceWalletId = _safeUuid(_pickString([
-      metadata['source_wallet_id'],
-      wallet['source_wallet_id'],
-      wallet['sourceWalletId'],
-    ]));
+    final sourceWalletId = _safeUuid(
+      _pickString([
+        metadata['source_wallet_id'],
+        wallet['source_wallet_id'],
+        wallet['sourceWalletId'],
+      ]),
+    );
     if (sourceWalletId.isNotEmpty) return sourceWalletId;
     return _resolveOperatingWalletId();
   }
@@ -1401,6 +1407,9 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     _markUserActivity();
     _lookupDebounce?.cancel();
     final query = value.trim();
+    if (_internalStep != 0) {
+      setState(() => _internalStep = 0);
+    }
 
     if (query.isEmpty) {
       _lookupGeneration++;
@@ -2118,41 +2127,44 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
       'externalRail': _externalRail.name,
       'amountPresent': payload['amount'] != null,
       'currencyPresent': _pickString([payload['currency']]).isNotEmpty,
-      'quoteIdPresent': _pickString([payload['quoteId'], payload['quote_id']])
-          .isNotEmpty,
-      'quoteHashPresent':
-          _pickString([payload['quoteHash'], payload['quote_hash']])
-              .isNotEmpty,
-      'sourceWalletPresent':
-          _pickString([
-            payload['source_wallet_id'],
-            payload['sourceWalletId'],
-            payload['sourceWallet'],
-          ]).isNotEmpty,
-      'targetWalletPresent':
-          _pickString([
-            payload['target_wallet_id'],
-            payload['targetWalletId'],
-            payload['recipient_customer_id'],
-            payload['recipient_id'],
-          ]).isNotEmpty,
+      'quoteIdPresent': _pickString([
+        payload['quoteId'],
+        payload['quote_id'],
+      ]).isNotEmpty,
+      'quoteHashPresent': _pickString([
+        payload['quoteHash'],
+        payload['quote_hash'],
+      ]).isNotEmpty,
+      'sourceWalletPresent': _pickString([
+        payload['source_wallet_id'],
+        payload['sourceWalletId'],
+        payload['sourceWallet'],
+      ]).isNotEmpty,
+      'targetWalletPresent': _pickString([
+        payload['target_wallet_id'],
+        payload['targetWalletId'],
+        payload['recipient_customer_id'],
+        payload['recipient_id'],
+      ]).isNotEmpty,
       'geoSource': _pickString([geo['source']]),
       'geoPrecision': _pickString([geo['precision']]),
       'geoFallback': risk['locationFallback'] == true,
       'geoFallbackReason': _pickString([risk['locationFallbackReason']]),
       'locationAgeSeconds': risk['locationAgeSeconds'],
-      'networkPublicIpPresent':
-          _pickString([risk['networkPublicIp'], geo['publicIp']]).isNotEmpty,
+      'networkPublicIpPresent': _pickString([
+        risk['networkPublicIp'],
+        geo['publicIp'],
+      ]).isNotEmpty,
       'timezoneOffset': _pickString([time['timezone_offset']]),
       'deviceModel': _pickString([device['deviceModel'], device['model']]),
       'devicePlatform': _pickString([device['platform']]),
       'sdkInt': device['sdkInt'],
       'appVersion': AppConfig.appVersion,
     }..removeWhere((_, value) {
-        if (value == null) return true;
-        if (value is String && value.trim().isEmpty) return true;
-        return false;
-      });
+      if (value == null) return true;
+      if (value is String && value.trim().isEmpty) return true;
+      return false;
+    });
   }
 
   Future<Map<String, dynamic>> _loadDeviceDiagnostics() {
@@ -2217,8 +2229,8 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
         );
         continue;
       }
-      final failureCategory = attempt.statusCode >= 200 &&
-              attempt.statusCode < 300
+      final failureCategory =
+          attempt.statusCode >= 200 && attempt.statusCode < 300
           ? null
           : _classifyTransactionFailure(
               statusCode: attempt.statusCode,
@@ -2782,8 +2794,9 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     String? responseBody,
     String? error,
   }) {
-    final haystack =
-        '${responseBody ?? ''} ${error ?? ''}'.trim().toLowerCase();
+    final haystack = '${responseBody ?? ''} ${error ?? ''}'
+        .trim()
+        .toLowerCase();
     if (haystack.contains('geo') ||
         haystack.contains('location') ||
         haystack.contains('gps')) {
@@ -2943,19 +2956,25 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
       'amountPresent': payload['amount'] != null,
       'currency': _pickString([payload['currency']]),
       'descriptionLength': _pickString([payload['description']]).length,
-      'hasQuoteId': _pickString([payload['quoteId'], payload['quote_id']])
-          .isNotEmpty,
-      'hasQuoteHash':
-          _pickString([payload['quoteHash'], payload['quote_hash']])
-              .isNotEmpty,
-      'hasRecipientCustomerId':
-          _pickString([payload['recipient_customer_id']]).isNotEmpty,
+      'hasQuoteId': _pickString([
+        payload['quoteId'],
+        payload['quote_id'],
+      ]).isNotEmpty,
+      'hasQuoteHash': _pickString([
+        payload['quoteHash'],
+        payload['quote_hash'],
+      ]).isNotEmpty,
+      'hasRecipientCustomerId': _pickString([
+        payload['recipient_customer_id'],
+      ]).isNotEmpty,
       'hasRecipientId': _pickString([payload['recipientId']]).isNotEmpty,
-      'hasSourceWalletId':
-          _pickString([payload['sourceWalletId'], payload['source_wallet_id']])
-              .isNotEmpty,
-      'sourceWalletUuidValid':
-          _canonicalSourceWalletIdFromPayload(payload).isNotEmpty,
+      'hasSourceWalletId': _pickString([
+        payload['sourceWalletId'],
+        payload['source_wallet_id'],
+      ]).isNotEmpty,
+      'sourceWalletUuidValid': _canonicalSourceWalletIdFromPayload(
+        payload,
+      ).isNotEmpty,
       if (_canonicalSourceWalletIdFromPayload(payload).isNotEmpty)
         'sourceWalletUuidTail': _canonicalSourceWalletIdFromPayload(
           payload,
@@ -3479,7 +3498,8 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     nestedData['transactionId'] = data['transactionId'];
     response['data'] = nestedData;
     response['status'] = status;
-    response['success'] = _isFinalSettlementSuccess(status) ||
+    response['success'] =
+        _isFinalSettlementSuccess(status) ||
         response['success'] == true ||
         nestedData['success'] == true;
     return response;
@@ -3803,8 +3823,8 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
         );
         continue;
       }
-      final failureCategory = attempt.statusCode >= 200 &&
-              attempt.statusCode < 300
+      final failureCategory =
+          attempt.statusCode >= 200 && attempt.statusCode < 300
           ? null
           : _classifyTransactionFailure(
               statusCode: attempt.statusCode,
@@ -4970,10 +4990,8 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
                     width: 112,
                     height: 44,
                     fit: BoxFit.contain,
-                    errorBuilder: (_, _, _) => const OrbiLogoV2(
-                      width: 112,
-                      color: Colors.black,
-                    ),
+                    errorBuilder: (_, _, _) =>
+                        const OrbiLogoV2(width: 112, color: Colors.black),
                   ),
                   const SizedBox(height: 10),
                   const Text(
@@ -5136,29 +5154,29 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
                       border: Border.all(color: const Color(0xFFBFDBFE)),
                     ),
                     child: Column(
-                    children: [
-                      _barcodeStrip(
-                        barcodeValue,
-                        ui: ui.copyWith(
-                          card: receiptPaper,
-                          borderStrong: receiptBorder,
-                          textPrimary: receiptInk,
+                      children: [
+                        _barcodeStrip(
+                          barcodeValue,
+                          ui: ui.copyWith(
+                            card: receiptPaper,
+                            borderStrong: receiptBorder,
+                            textPrimary: receiptInk,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 7),
-                      Text(
-                        barcodeValue,
-                        textAlign: TextAlign.center,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: receiptMutedInk,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
+                        const SizedBox(height: 7),
+                        Text(
+                          barcodeValue,
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: receiptMutedInk,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 12),
                   const Text(
@@ -5233,7 +5251,10 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     }
   }
 
-  void _finishSettleResult(BuildContext dialogContext, {required bool success}) {
+  void _finishSettleResult(
+    BuildContext dialogContext, {
+    required bool success,
+  }) {
     Navigator.of(dialogContext).pop();
     if (!success) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -5321,7 +5342,8 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
         ? _buildSourceContext(walletId: operatingWalletId)
         : {
             'selection': sourceWallet,
-            if (_safeUuid(walletId).isNotEmpty) 'wallet_id': _safeUuid(walletId),
+            if (_safeUuid(walletId).isNotEmpty)
+              'wallet_id': _safeUuid(walletId),
             if (walletName.isNotEmpty) 'wallet_name': walletName,
           };
     final effectiveWalletId = sourceWallet == 'internal'
@@ -6210,6 +6232,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
   Future<void> _submitExternalTransfer() async {
     _markUserActivity();
     if (_isSubmittingExternal || _isSubmittingInternal) return;
+    if (!_ensureExternalFlowReadyForSubmit()) return;
     final valid = _externalFormKey.currentState?.validate() ?? false;
     if (!valid) return;
     if (widget.externalExperience == ExternalExperience.withdraw &&
@@ -6761,7 +6784,378 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
     );
   }
 
+  Widget _internalStepProgress() {
+    final ui = OrbiTheme.uiOf(context);
+    final steps = [
+      _isSw ? 'Mpokeaji' : 'Recipient',
+      _isSw ? 'Source' : 'Source',
+      _isSw ? 'Kiasi' : 'Amount',
+    ];
+    return Row(
+      children: [
+        for (var i = 0; i < steps.length; i++) ...[
+          Expanded(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+              decoration: BoxDecoration(
+                color: i <= _internalStep
+                    ? _flowAccent.withValues(alpha: 0.12)
+                    : ui.cardMuted,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: i <= _internalStep
+                      ? _flowAccent.withValues(alpha: 0.32)
+                      : ui.border,
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    width: 20,
+                    height: 20,
+                    decoration: BoxDecoration(
+                      color: i < _internalStep
+                          ? _flowAccent
+                          : Colors.transparent,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: i <= _internalStep ? _flowAccent : ui.border,
+                      ),
+                    ),
+                    alignment: Alignment.center,
+                    child: i < _internalStep
+                        ? const Icon(
+                            Icons.check_rounded,
+                            size: 13,
+                            color: Colors.white,
+                          )
+                        : Text(
+                            '${i + 1}',
+                            style: TextStyle(
+                              color: i <= _internalStep
+                                  ? _flowAccent
+                                  : ui.textMuted,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      steps[i],
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: i <= _internalStep
+                            ? ui.textPrimary
+                            : ui.textMuted,
+                        fontSize: 11.2,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (i != steps.length - 1) const SizedBox(width: 8),
+        ],
+      ],
+    );
+  }
+
+  Widget _internalStepSummary({
+    required int step,
+    required IconData icon,
+    required String title,
+    required String value,
+    required VoidCallback onTap,
+  }) {
+    final ui = OrbiTheme.uiOf(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(13),
+        decoration: BoxDecoration(
+          color: ui.cardMuted.withValues(alpha: 0.76),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: ui.border),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: _flowAccent.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, color: _flowAccent, size: 18),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '$step. $title',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: ui.textMuted,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: ui.textPrimary,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.edit_rounded, color: ui.textMuted, size: 18),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _internalStepFooter({
+    required String label,
+    required VoidCallback? onPressed,
+    IconData icon = Icons.arrow_forward_rounded,
+  }) {
+    return _primaryActionButton(onPressed: onPressed, icon: icon, label: label);
+  }
+
+  String _internalSourceSummaryLabel() {
+    final wallet = _effectiveInternalWallet();
+    if (wallet == null) {
+      return AppLocalizations.of(context)!.sendMoneyOperatingWalletAutoTitle;
+    }
+    final name = _walletName(wallet);
+    return name.isEmpty
+        ? AppLocalizations.of(context)!.sendMoneyOperatingWalletAutoTitle
+        : name;
+  }
+
+  Widget _internalRecipientStep() {
+    return _sectionCard(
+      title: AppLocalizations.of(context)!.sendMoneySectionRecipientTitle,
+      icon: Icons.person_search_rounded,
+      subtitle: AppLocalizations.of(context)!.sendMoneySectionRecipientSubtitle,
+      child: Column(
+        children: [
+          TextFormField(
+            controller: _recipientIdController,
+            onChanged: _onRecipientIdChanged,
+            textCapitalization: TextCapitalization.characters,
+            inputFormatters: [_RecipientSearchInputFormatter()],
+            decoration: _fieldDecoration(
+              label: AppLocalizations.of(context)!.sendMoneyRecipientFieldLabel,
+              hint: AppLocalizations.of(context)!.sendMoneyRecipientFieldHint,
+              icon: Icons.badge_outlined,
+              helperText: AppLocalizations.of(
+                context,
+              )!.sendMoneySearchMinCharsMessage,
+              suffixIcon: _lookupLoading
+                  ? const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  : null,
+            ),
+            validator: (value) {
+              final input = (value ?? '').trim();
+              if (input.isEmpty) {
+                return AppLocalizations.of(
+                  context,
+                )!.sendMoneyRecipientRequiredMessage;
+              }
+              if (input.length < 5) {
+                return AppLocalizations.of(
+                  context,
+                )!.sendMoneySearchMinCharsLongMessage;
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 8),
+          if (_lookupError != null)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                _lookupError!,
+                style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+              ),
+            ),
+          if (_recipientPreview != null) ...[
+            const SizedBox(height: 12),
+            _RecipientPreviewCard(data: _recipientPreview!),
+          ],
+          const SizedBox(height: 14),
+          _internalStepFooter(
+            label: _isSw ? 'Endelea kuchagua source' : 'Continue to source',
+            onPressed: _recipientPreview == null || _lookupLoading
+                ? null
+                : () {
+                    _markUserActivity();
+                    setState(() => _internalStep = 1);
+                  },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _internalSourceStep() {
+    return _sectionCard(
+      title: AppLocalizations.of(context)!.sendMoneySectionSourceWalletTitle,
+      icon: Icons.account_balance_wallet_rounded,
+      subtitle: AppLocalizations.of(
+        context,
+      )!.sendMoneySectionSourceWalletSubtitle,
+      child: Column(
+        children: [
+          _buildInternalSourceWalletList(),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => setState(() => _internalStep = 0),
+                  icon: const Icon(Icons.arrow_back_rounded),
+                  label: Text(_isSw ? 'Rudi' : 'Back'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 2,
+                child: _internalStepFooter(
+                  label: _isSw ? 'Endelea kwenye kiasi' : 'Continue to amount',
+                  onPressed: () {
+                    _markUserActivity();
+                    setState(() => _internalStep = 2);
+                  },
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _internalAmountStep() {
+    return _sectionCard(
+      title: AppLocalizations.of(context)!.sendMoneySectionAmountNoteTitle,
+      icon: Icons.payments_rounded,
+      subtitle: AppLocalizations.of(
+        context,
+      )!.sendMoneySectionAmountNoteSubtitle,
+      child: Column(
+        children: [
+          OrbiAmountField(
+            controller: _internalAmountController,
+            onChanged: (_) => setState(() {}),
+            inputFormatters: [AmountInputFormatter()],
+            label: AppLocalizations.of(context)!.sendMoneyAmountLabel,
+            currency: resolveCurrencyDisplaySymbol(
+              _resolveSelectedSourceCurrency(),
+            ),
+            validator: (value) {
+              final parsed = AmountInputFormatter.tryParse(value ?? '');
+              if (parsed == null || parsed <= 0) {
+                return AppLocalizations.of(
+                  context,
+                )!.sendMoneyEnterValidAmountMessage;
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: _amountPresetRow(
+              controller: _internalAmountController,
+              currency: _resolveCurrency(),
+            ),
+          ),
+          const SizedBox(height: 12),
+          _budgetCategoryField(
+            value: _selectedInternalCategoryId,
+            onChanged: (next) {
+              setState(() => _selectedInternalCategoryId = next);
+            },
+          ),
+          const SizedBox(height: 10),
+          _budgetSummaryCard(_selectedInternalCategoryId),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _internalNoteController,
+            maxLines: 3,
+            decoration: _fieldDecoration(
+              label: AppLocalizations.of(
+                context,
+              )!.sendMoneyDescriptionOptionalLabel,
+              hint: AppLocalizations.of(context)!.sendMoneyDescriptionHint,
+              alignLabelWithHint: true,
+              prefixIcon: const Padding(
+                padding: EdgeInsets.only(bottom: 46),
+                child: Icon(Icons.notes_outlined),
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => setState(() => _internalStep = 1),
+                  icon: const Icon(Icons.arrow_back_rounded),
+                  label: Text(_isSw ? 'Rudi' : 'Back'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 2,
+                child: _internalStepFooter(
+                  onPressed: _isPreviewing ? null : _submitInternalTransfer,
+                  icon: Icons.arrow_forward_rounded,
+                  label: AppLocalizations.of(
+                    context,
+                  )!.sendMoneyContinueTransferLabel,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildInternalForm({Key? key}) {
+    final amount = AmountInputFormatter.tryParse(
+      _internalAmountController.text,
+    );
     return Form(
       key: _internalFormKey,
       child: _formSurface(
@@ -6769,171 +7163,347 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
           key: key,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _sectionCard(
-              title: AppLocalizations.of(
-                context,
-              )!.sendMoneySectionRecipientTitle,
-              icon: Icons.person_search_rounded,
-              subtitle: AppLocalizations.of(
-                context,
-              )!.sendMoneySectionRecipientSubtitle,
-              child: Column(
+            _internalStepProgress(),
+            const SizedBox(height: 12),
+            if (_internalStep > 0 && _recipientPreview != null) ...[
+              _internalStepSummary(
+                step: 1,
+                icon: Icons.person_rounded,
+                title: _isSw ? 'Mpokeaji' : 'Recipient',
+                value: _recipientPreview!.fullName,
+                onTap: () => setState(() => _internalStep = 0),
+              ),
+              const SizedBox(height: 10),
+            ],
+            if (_internalStep > 1) ...[
+              _internalStepSummary(
+                step: 2,
+                icon: Icons.account_balance_wallet_rounded,
+                title: _isSw ? 'Source wallet' : 'Source wallet',
+                value: _internalSourceSummaryLabel(),
+                onTap: () => setState(() => _internalStep = 1),
+              ),
+              const SizedBox(height: 10),
+            ],
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 240),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              child: switch (_internalStep) {
+                0 => _internalRecipientStep(),
+                1 => _internalSourceStep(),
+                _ => _internalAmountStep(),
+              },
+            ),
+            if (_internalStep == 2 && amount != null && amount > 0) ...[
+              const SizedBox(height: 10),
+              _internalStepSummary(
+                step: 3,
+                icon: Icons.payments_rounded,
+                title: _isSw ? 'Kiasi' : 'Amount',
+                value: formatAppBalanceAmount(
+                  amount,
+                  _resolveCurrency(),
+                  locale: _localeTag,
+                ),
+                onTap: () => setState(() => _internalStep = 2),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<String> get _externalStepLabels => [
+    widget.externalExperience == ExternalExperience.withdraw
+        ? (_isSw ? 'Njia' : 'Route')
+        : (_isSw ? 'Mpokeaji' : 'Destination'),
+    _isSw ? 'Source' : 'Source',
+    _isSw ? 'Kiasi' : 'Amount',
+  ];
+
+  String get _externalDestinationSummaryLabel {
+    final provider = _externalProviderController.text.trim();
+    final destination = _externalCardNoController.text.trim();
+    if (destination.isEmpty) {
+      return _isSw ? 'Chagua njia na weka taarifa' : 'Choose route and details';
+    }
+    if (provider.isEmpty) return destination;
+    return '$provider • $destination';
+  }
+
+  String get _externalFundingSummaryLabel {
+    if (_externalSourceWalletType == _ExternalSourceWalletType.internal) {
+      return _isSw ? 'ORBI wallet' : 'ORBI wallet';
+    }
+    final wallet = _effectiveExternalWallet();
+    if (wallet == null) {
+      return _externalSourceWalletLabel(_externalSourceWalletType);
+    }
+    final name = _walletName(wallet);
+    return name.isEmpty ? _walletId(wallet) : name;
+  }
+
+  bool get _externalRouteDestinationReady {
+    final destination = _externalCardNoController.text.trim();
+    if (destination.isEmpty) return false;
+    if (_externalProviderController.text.trim().isEmpty) return false;
+    if (widget.externalExperience == ExternalExperience.withdraw &&
+        _externalRail == _ExternalTransferRail.externalAgent) {
+      return !_agentLookupLoading &&
+          _agentLookupError == null &&
+          _orbiAgentPreview != null;
+    }
+    if (widget.externalExperience != ExternalExperience.withdraw &&
+        _externalRecipientController.text.trim().isEmpty) {
+      return false;
+    }
+    return true;
+  }
+
+  bool get _externalFundingReady {
+    if (_externalSourceWalletType == _ExternalSourceWalletType.internal) {
+      return true;
+    }
+    return (_selectedExternalSourceWalletId ?? '').trim().isNotEmpty;
+  }
+
+  void _showExternalStepMissingMessage(String message) {
+    _showSnack(message);
+    if (!mounted) return;
+    setState(() {
+      _statusMessage = message;
+      _statusTone = OrbiStatusTone.error;
+    });
+  }
+
+  bool _ensureExternalFlowReadyForSubmit() {
+    if (!_externalRouteDestinationReady) {
+      setState(() => _externalStep = 0);
+      _showExternalStepMissingMessage(
+        _isSw
+            ? 'Kamilisha taarifa za njia na mpokeaji kwanza.'
+            : 'Complete route and destination details first.',
+      );
+      return false;
+    }
+    if (!_externalFundingReady) {
+      setState(() => _externalStep = 1);
+      _showExternalStepMissingMessage(
+        _isSw
+            ? 'Chagua source wallet sahihi kabla ya kuendelea.'
+            : 'Choose the correct source wallet before continuing.',
+      );
+      return false;
+    }
+    return true;
+  }
+
+  Widget _externalStepProgress() {
+    final ui = OrbiTheme.uiOf(context);
+    final labels = _externalStepLabels;
+    return Row(
+      children: [
+        for (var i = 0; i < labels.length; i++) ...[
+          Expanded(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+              decoration: BoxDecoration(
+                color: i <= _externalStep
+                    ? _activeExternalProviderAccent.withValues(alpha: 0.12)
+                    : ui.cardMuted,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: i <= _externalStep
+                      ? _activeExternalProviderAccent.withValues(alpha: 0.32)
+                      : ui.border,
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  TextFormField(
-                    controller: _recipientIdController,
-                    onChanged: _onRecipientIdChanged,
-                    textCapitalization: TextCapitalization.characters,
-                    inputFormatters: [_RecipientSearchInputFormatter()],
-                    decoration: _fieldDecoration(
-                      label: AppLocalizations.of(
-                        context,
-                      )!.sendMoneyRecipientFieldLabel,
-                      hint: AppLocalizations.of(
-                        context,
-                      )!.sendMoneyRecipientFieldHint,
-                      icon: Icons.badge_outlined,
-                      helperText: AppLocalizations.of(
-                        context,
-                      )!.sendMoneySearchMinCharsMessage,
-                      suffixIcon: _lookupLoading
-                          ? const Padding(
-                              padding: EdgeInsets.all(12),
-                              child: SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              ),
-                            )
-                          : null,
-                    ),
-                    validator: (value) {
-                      final input = (value ?? '').trim();
-                      if (input.isEmpty) {
-                        return AppLocalizations.of(
-                          context,
-                        )!.sendMoneyRecipientRequiredMessage;
-                      }
-                      if (input.length < 5) {
-                        return AppLocalizations.of(
-                          context,
-                        )!.sendMoneySearchMinCharsLongMessage;
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 8),
-                  if (_lookupError != null)
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        _lookupError!,
-                        style: const TextStyle(
-                          color: Colors.redAccent,
-                          fontSize: 12,
-                        ),
+                  Container(
+                    width: 20,
+                    height: 20,
+                    decoration: BoxDecoration(
+                      color: i < _externalStep
+                          ? _activeExternalProviderAccent
+                          : Colors.transparent,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: i <= _externalStep
+                            ? _activeExternalProviderAccent
+                            : ui.border,
                       ),
                     ),
-                  if (_recipientPreview != null) ...[
-                    const SizedBox(height: 12),
-                    _RecipientPreviewCard(data: _recipientPreview!),
-                  ],
+                    alignment: Alignment.center,
+                    child: i < _externalStep
+                        ? const Icon(
+                            Icons.check_rounded,
+                            size: 13,
+                            color: Colors.white,
+                          )
+                        : Text(
+                            '${i + 1}',
+                            style: TextStyle(
+                              color: i <= _externalStep
+                                  ? _activeExternalProviderAccent
+                                  : ui.textMuted,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      labels[i],
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: i <= _externalStep
+                            ? ui.textPrimary
+                            : ui.textMuted,
+                        fontSize: 11.2,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
-            const SizedBox(height: 12),
-            _sectionCard(
-              title: AppLocalizations.of(
-                context,
-              )!.sendMoneySectionSourceWalletTitle,
-              icon: Icons.account_balance_wallet_rounded,
-              subtitle: AppLocalizations.of(
-                context,
-              )!.sendMoneySectionSourceWalletSubtitle,
-              child: _buildInternalSourceWalletList(),
-            ),
-            const SizedBox(height: 12),
-            _sectionCard(
-              title: AppLocalizations.of(
-                context,
-              )!.sendMoneySectionAmountNoteTitle,
-              icon: Icons.payments_rounded,
-              subtitle: AppLocalizations.of(
-                context,
-              )!.sendMoneySectionAmountNoteSubtitle,
-              child: Column(
-                children: [
-                  OrbiAmountField(
-                    controller: _internalAmountController,
-                    onChanged: (_) => setState(() {}),
-                    inputFormatters: [AmountInputFormatter()],
-                    label: AppLocalizations.of(context)!.sendMoneyAmountLabel,
-                    currency: resolveCurrencyDisplaySymbol(
-                      _resolveSelectedSourceCurrency(),
-                    ),
-                    validator: (value) {
-                      final parsed = AmountInputFormatter.tryParse(value ?? '');
-                      if (parsed == null || parsed <= 0) {
-                        return AppLocalizations.of(
-                          context,
-                        )!.sendMoneyEnterValidAmountMessage;
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: _amountPresetRow(
-                      controller: _internalAmountController,
-                      currency: _resolveCurrency(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  _budgetCategoryField(
-                    value: _selectedInternalCategoryId,
-                    onChanged: (next) {
-                      setState(() => _selectedInternalCategoryId = next);
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  _budgetSummaryCard(_selectedInternalCategoryId),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _internalNoteController,
-                    maxLines: 3,
-                    decoration: _fieldDecoration(
-                      label: AppLocalizations.of(
-                        context,
-                      )!.sendMoneyDescriptionOptionalLabel,
-                      hint: AppLocalizations.of(
-                        context,
-                      )!.sendMoneyDescriptionHint,
-                      alignLabelWithHint: true,
-                      prefixIcon: const Padding(
-                        padding: EdgeInsets.only(bottom: 46),
-                        child: Icon(Icons.notes_outlined),
-                      ),
-                    ),
-                  ),
-                ],
+          ),
+          if (i != labels.length - 1) const SizedBox(width: 8),
+        ],
+      ],
+    );
+  }
+
+  Widget _externalStepSummary({
+    required int step,
+    required IconData icon,
+    required String title,
+    required String value,
+    required VoidCallback onTap,
+  }) {
+    return _internalStepSummary(
+      step: step,
+      icon: icon,
+      title: title,
+      value: value,
+      onTap: onTap,
+    );
+  }
+
+  Widget _externalRouteDestinationStep() {
+    return Column(
+      key: const ValueKey('external-route-destination'),
+      children: [
+        _externalRailProviderSection(),
+        const SizedBox(height: 14),
+        _externalDestinationSection(),
+        const SizedBox(height: 14),
+        _primaryActionButton(
+          onPressed: !_externalRouteDestinationReady
+              ? null
+              : () {
+                  _markUserActivity();
+                  setState(() => _externalStep = 1);
+                },
+          icon: Icons.arrow_forward_rounded,
+          label: _isSw ? 'Endelea kwenye source' : 'Continue to source',
+          accentOverride: _activeExternalProviderAccent,
+        ),
+      ],
+    );
+  }
+
+  Widget _externalFundingStep() {
+    return Column(
+      key: const ValueKey('external-funding'),
+      children: [
+        _externalFundingSection(),
+        const SizedBox(height: 14),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () => setState(() => _externalStep = 0),
+                icon: const Icon(Icons.arrow_back_rounded),
+                label: Text(_isSw ? 'Rudi' : 'Back'),
               ),
             ),
-            const SizedBox(height: 18),
-            SizedBox(
-              width: double.infinity,
+            const SizedBox(width: 10),
+            Expanded(
+              flex: 2,
               child: _primaryActionButton(
-                onPressed: _isPreviewing ? null : _submitInternalTransfer,
+                onPressed: !_externalFundingReady
+                    ? null
+                    : () {
+                        _markUserActivity();
+                        setState(() => _externalStep = 2);
+                      },
                 icon: Icons.arrow_forward_rounded,
-                label: AppLocalizations.of(
-                  context,
-                )!.sendMoneyContinueTransferLabel,
+                label: _isSw ? 'Endelea kwenye kiasi' : 'Continue to amount',
+                accentOverride: _activeExternalProviderAccent,
               ),
             ),
           ],
         ),
-      ),
+      ],
+    );
+  }
+
+  Widget _externalAmountStep() {
+    final amount = AmountInputFormatter.tryParse(
+      _externalAmountController.text,
+    );
+    return Column(
+      key: const ValueKey('external-amount'),
+      children: [
+        _externalAmountNoteSection(),
+        if (amount != null && amount > 0) ...[
+          const SizedBox(height: 10),
+          _externalStepSummary(
+            step: 3,
+            icon: Icons.payments_rounded,
+            title: _isSw ? 'Kiasi' : 'Amount',
+            value: formatAppBalanceAmount(
+              amount,
+              _resolveCurrency(),
+              locale: _localeTag,
+            ),
+            onTap: () => setState(() => _externalStep = 2),
+          ),
+        ],
+        const SizedBox(height: 14),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () => setState(() => _externalStep = 1),
+                icon: const Icon(Icons.arrow_back_rounded),
+                label: Text(_isSw ? 'Rudi' : 'Back'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              flex: 2,
+              child: _primaryActionButton(
+                onPressed: (_isPreviewing || _isSubmittingExternal)
+                    ? null
+                    : _submitExternalTransfer,
+                icon: _externalContinueIcon,
+                label: _externalContinueLabel,
+                accentOverride: _activeExternalProviderAccent,
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 
@@ -6951,9 +7521,9 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
               : _walletName(operatingWallet));
     final operatingSubtitle = operatingWalletId.isEmpty
         ? AppLocalizations.of(context)!.sendMoneyOperatingWalletAutoSubtitle
-        : AppLocalizations.of(context)!.sendMoneyWalletIdLabel(
-            operatingWalletId,
-          );
+        : AppLocalizations.of(
+            context,
+          )!.sendMoneyWalletIdLabel(operatingWalletId);
     final operatingBalance = operatingWallet == null
         ? ''
         : _walletBalanceLabel(operatingWallet);
@@ -7284,41 +7854,6 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
   }
 
   Widget _buildExternalForm({Key? key}) {
-    final sectionGap = <Widget>[const SizedBox(height: 14)];
-    final transferSections = <Widget>[
-      _externalRailProviderSection(),
-      ...sectionGap,
-      _externalDestinationSection(),
-      ...sectionGap,
-      _externalAmountNoteSection(),
-      ...sectionGap,
-      _externalFundingSection(),
-    ];
-    final withdrawSections = <Widget>[
-      _externalRailProviderSection(),
-      ...sectionGap,
-      _externalDestinationSection(),
-      ...sectionGap,
-      _externalFundingSection(),
-      ...sectionGap,
-      _externalAmountNoteSection(),
-    ];
-    final defaultSections = <Widget>[
-      _externalRailProviderSection(),
-      ...sectionGap,
-      _externalDestinationSection(),
-      ...sectionGap,
-      _externalFundingSection(),
-      ...sectionGap,
-      _externalAmountNoteSection(),
-    ];
-
-    final sections = switch (widget.externalExperience) {
-      ExternalExperience.transfer => transferSections,
-      ExternalExperience.withdraw => withdrawSections,
-      ExternalExperience.send => defaultSections,
-    };
-
     return Form(
       key: _externalFormKey,
       child: Column(
@@ -7329,18 +7864,41 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                ...sections,
-                const SizedBox(height: 18),
-                SizedBox(
-                  width: double.infinity,
-                  child: _primaryActionButton(
-                    onPressed: (_isPreviewing || _isSubmittingExternal)
-                        ? null
-                        : _submitExternalTransfer,
-                    icon: _externalContinueIcon,
-                    label: _externalContinueLabel,
-                    accentOverride: _activeExternalProviderAccent,
+                _externalStepProgress(),
+                const SizedBox(height: 12),
+                if (_externalStep > 0) ...[
+                  _externalStepSummary(
+                    step: 1,
+                    icon: _externalRail == _ExternalTransferRail.bank
+                        ? Icons.account_balance_rounded
+                        : _externalRail == _ExternalTransferRail.externalAgent
+                        ? Icons.storefront_rounded
+                        : Icons.flag_rounded,
+                    title: _isSw ? 'Mahali pa kutuma' : 'Destination',
+                    value: _externalDestinationSummaryLabel,
+                    onTap: () => setState(() => _externalStep = 0),
                   ),
+                  const SizedBox(height: 10),
+                ],
+                if (_externalStep > 1) ...[
+                  _externalStepSummary(
+                    step: 2,
+                    icon: Icons.account_balance_wallet_rounded,
+                    title: _isSw ? 'Source wallet' : 'Source wallet',
+                    value: _externalFundingSummaryLabel,
+                    onTap: () => setState(() => _externalStep = 1),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 240),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  child: switch (_externalStep) {
+                    0 => _externalRouteDestinationStep(),
+                    1 => _externalFundingStep(),
+                    _ => _externalAmountStep(),
+                  },
                 ),
               ],
             ),
@@ -8097,12 +8655,22 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
           ],
           TextFormField(
             controller: _externalCardNoController,
-            keyboardType: TextInputType.number,
-            onChanged:
-                isWithdraw &&
-                    _externalRail == _ExternalTransferRail.externalAgent
-                ? _onExternalAgentIdChanged
-                : null,
+            keyboardType:
+                widget.externalExperience == ExternalExperience.transfer &&
+                    _externalRail == _ExternalTransferRail.paypal
+                ? TextInputType.emailAddress
+                : widget.externalExperience == ExternalExperience.transfer &&
+                      _externalRail == _ExternalTransferRail.crypto
+                ? TextInputType.text
+                : TextInputType.number,
+            onChanged: (value) {
+              _markUserActivity();
+              if (isWithdraw &&
+                  _externalRail == _ExternalTransferRail.externalAgent) {
+                _onExternalAgentIdChanged(value);
+              }
+              if (mounted) setState(() {});
+            },
             decoration: _fieldDecoration(
               label: widget.externalExperience == ExternalExperience.withdraw
                   ? (_externalRail == _ExternalTransferRail.externalAgent
@@ -8270,6 +8838,10 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
             const SizedBox(height: 12),
             TextFormField(
               controller: _externalRecipientController,
+              onChanged: (_) {
+                _markUserActivity();
+                if (mounted) setState(() {});
+              },
               decoration: _fieldDecoration(
                 label: _externalReferenceLabel,
                 hint: _externalReferenceHint,
@@ -8825,6 +9397,7 @@ class _SendMoneyScreenState extends State<SendMoneyScreen>
             ),
           OrbiAmountField(
             controller: _externalAmountController,
+            onChanged: (_) => setState(() {}),
             inputFormatters: [AmountInputFormatter()],
             label: AppLocalizations.of(context)!.sendMoneyAmountLabel,
             currency: resolveCurrencyDisplaySymbol(
@@ -9866,4 +10439,3 @@ class _RecipientSearchInputFormatter extends TextInputFormatter {
     );
   }
 }
-

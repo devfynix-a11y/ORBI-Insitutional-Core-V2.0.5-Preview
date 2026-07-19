@@ -11,6 +11,7 @@ class AppRuntimeCache {
   static List<Map<String, dynamic>>? _categories;
   static List<Map<String, dynamic>>? _tasks;
   static String _currency = '';
+  static String? _activeUserId;
   static DateTime? _dashboardCachedAt;
   static DateTime? _walletsCachedAt;
   static DateTime? _transactionsCachedAt;
@@ -64,20 +65,25 @@ class AppRuntimeCache {
   static String get currency => _currency;
 
   static void rememberProfile(Map<String, dynamic> profile) {
+    _bindUser(_resolveUserId(profile));
     _profile = Map<String, dynamic>.from(profile);
     _rememberCurrencyFrom(_profile!);
   }
 
   static void rememberDashboardPayload(Map<String, dynamic> payload) {
-    _dashboardPayload = Map<String, dynamic>.from(payload);
-    _dashboardCachedAt = DateTime.now();
-    _rememberCurrencyFrom(_dashboardPayload!);
-
     final profile = _firstMap([
       payload['profile'],
       payload['user'],
       payload['account'],
+      payload['userProfile'],
+      payload['user_profile'],
     ]);
+    _bindUser(_resolveUserId(profile ?? payload));
+
+    _dashboardPayload = Map<String, dynamic>.from(payload);
+    _dashboardCachedAt = DateTime.now();
+    _rememberCurrencyFrom(_dashboardPayload!);
+
     if (profile != null) rememberProfile(profile);
 
     final wallets = _firstListOfMaps([
@@ -125,7 +131,9 @@ class AppRuntimeCache {
     _rememberCurrency(_resolveCurrencyFrom(session));
     final user = session['user'];
     if (user is Map) {
-      rememberProfile(Map<String, dynamic>.from(user));
+      final profile = Map<String, dynamic>.from(user);
+      _bindUser(_resolveUserId(profile));
+      rememberProfile(profile);
     }
   }
 
@@ -168,9 +176,41 @@ class AppRuntimeCache {
     _categories = null;
     _tasks = null;
     _currency = '';
+    _activeUserId = null;
     _dashboardCachedAt = null;
     _walletsCachedAt = null;
     _transactionsCachedAt = null;
+  }
+
+  static void _bindUser(String userId) {
+    final normalized = userId.trim();
+    if (normalized.isEmpty) return;
+    if (_activeUserId == null || _activeUserId == normalized) {
+      _activeUserId = normalized;
+      return;
+    }
+
+    _profile = null;
+    _dashboardPayload = null;
+    _wallets = null;
+    _recentTransactions = null;
+    _goals = null;
+    _categories = null;
+    _tasks = null;
+    _currency = '';
+    _dashboardCachedAt = null;
+    _walletsCachedAt = null;
+    _transactionsCachedAt = null;
+    _activeUserId = normalized;
+  }
+
+  static String _resolveUserId(Map<dynamic, dynamic>? source) {
+    if (source == null) return '';
+    for (final key in const ['id', 'user_id', 'userId', 'uid']) {
+      final value = source[key]?.toString().trim();
+      if (value != null && value.isNotEmpty) return value;
+    }
+    return '';
   }
 
   static Map<String, dynamic>? _firstMap(List<dynamic> values) {

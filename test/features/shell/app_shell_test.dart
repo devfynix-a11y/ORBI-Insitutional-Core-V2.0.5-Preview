@@ -88,9 +88,7 @@ void main() {
           ),
         ],
         child: MaterialApp(
-          routes: {
-            '/login': (_) => const Scaffold(body: Text('Login Route')),
-          },
+          routes: {'/login': (_) => const Scaffold(body: Text('Login Route'))},
           localizationsDelegates: const [
             AppLocalizations.delegate,
             GlobalMaterialLocalizations.delegate,
@@ -134,7 +132,8 @@ void main() {
     return pane.isActive as bool;
   }
 
-  dynamic shellState(WidgetTester tester) => tester.state(find.byType(AppShell));
+  dynamic shellState(WidgetTester tester) =>
+      tester.state(find.byType(AppShell));
 
   testWidgets('selecting a tab activates its pane', (
     WidgetTester tester,
@@ -204,7 +203,9 @@ class _FakeAuthController extends AuthController {
   }
 
   @override
-  Future<String?> getValidAccessToken({bool expireSessionIfMissing = true}) async {
+  Future<String?> getValidAccessToken({
+    bool expireSessionIfMissing = true,
+  }) async {
     return 'test-token';
   }
 
@@ -255,6 +256,7 @@ class _FakeDashboardController extends DashboardController {
   @override
   Future<void> fetchDashboardData(
     String token, {
+    bool forceRefresh = false,
     Duration optionalTimeout = const Duration(seconds: 8),
     Duration requiredTimeout = const Duration(seconds: 12),
   }) async {}

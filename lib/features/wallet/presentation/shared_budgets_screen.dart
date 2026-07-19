@@ -114,8 +114,9 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
 
   Future<T?> _loadBusyData<T>(
     String message,
-    Future<T> Function() loader,
-  ) async {
+    Future<T> Function() loader, {
+    bool pendingOnNetworkIssue = false,
+  }) async {
     if (mounted) {
       setState(() {
         _busy = true;
@@ -126,7 +127,18 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
     try {
       return await loader();
     } catch (error) {
-      _showStatus(error.toString(), error: true);
+      if (pendingOnNetworkIssue && _service.isPendingCommitError(error)) {
+        _showStatus(
+          _text(
+            'Request was sent. We are confirming the final status.',
+            'Ombi limetumwa. Tunathibitisha hali ya mwisho.',
+          ),
+          error: false,
+        );
+        unawaited(_refresh());
+      } else {
+        _showStatus(error.toString(), error: true);
+      }
       return null;
     } finally {
       if (mounted) {
@@ -637,9 +649,17 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
     noteController.dispose();
 
     if (payload == null) return;
+    final idempotencyKey = _service.createIdempotencyKey(
+      'shared-budget-allocate',
+    );
     final result = await _loadBusyData<Map<String, dynamic>>(
       _text('Allocating funds...', 'Inaweka fedha Mezani...'),
-      () => _service.allocateSharedBudget(budget['id'].toString(), payload),
+      () => _service.allocateSharedBudget(
+        budget['id'].toString(),
+        payload,
+        idempotencyKey: idempotencyKey,
+      ),
+      pendingOnNetworkIssue: true,
     );
     if (!mounted || result == null) return;
     await _refresh();
@@ -794,7 +814,21 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
                 );
                 await _refresh();
               } catch (error) {
-                _showStatus(error.toString(), error: true);
+                if (_service.isPendingCommitError(error)) {
+                  if (sheetContext.mounted) {
+                    Navigator.of(sheetContext).pop();
+                  }
+                  _showStatus(
+                    _text(
+                      'Withdrawal was sent. We are confirming the final status.',
+                      'Ombi la kutoa fedha limetumwa. Tunathibitisha hali ya mwisho.',
+                    ),
+                    error: false,
+                  );
+                  unawaited(_refresh());
+                } else {
+                  _showStatus(error.toString(), error: true);
+                }
               } finally {
                 if (sheetContext.mounted) {
                   setSheetState(() => submitting = false);
@@ -937,6 +971,9 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
     final referenceController = TextEditingController();
     final descriptionController = TextEditingController();
     final agentController = TextEditingController();
+    final settleIdempotencyKey = _service.createIdempotencyKey(
+      'shared-budget-spend',
+    );
     var withdrawType = 'SHARED_BUDGET_WITHDRAWAL_TO_ACCOUNT';
     var busy = false;
     Map<String, dynamic>? preview;
@@ -997,6 +1034,7 @@ class _SharedBudgetsScreenState extends State<SharedBudgetsScreen> {
                 final result = await _service.settleSharedBudgetSpend(
                   budget['id'].toString(),
                   payload(),
+                  idempotencyKey: settleIdempotencyKey,
                 );
                 if (!sheetContext.mounted) return;
                 Navigator.of(sheetContext).pop();

@@ -41,6 +41,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
   String? _error;
   List<Map<String, dynamic>> _pots = const [];
   List<Map<String, dynamic>> _invitations = const [];
+  final Set<String> _locallyDeletedPotIds = <String>{};
 
   @override
   void initState() {
@@ -61,7 +62,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
       ]);
       if (!mounted) return;
       setState(() {
-        _pots = results[0];
+        _pots = _applyLocalDeletedPotMarks(results[0]);
         _invitations = results[1];
       });
     } catch (e) {
@@ -89,7 +90,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
       ]);
       if (!mounted) return;
       setState(() {
-        _pots = results[0];
+        _pots = _applyLocalDeletedPotMarks(results[0]);
         _invitations = results[1];
       });
     } catch (e) {
@@ -106,20 +107,37 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
     }
   }
 
+  List<Map<String, dynamic>> _applyLocalDeletedPotMarks(
+    List<Map<String, dynamic>> pots,
+  ) {
+    if (_locallyDeletedPotIds.isEmpty) return pots;
+    return pots
+        .map((pot) {
+          final potId = (pot['id'] ?? '').toString();
+          if (!_locallyDeletedPotIds.contains(potId)) return pot;
+          final next = Map<String, dynamic>.from(pot);
+          final metadata = next['metadata'] is Map
+              ? Map<String, dynamic>.from(next['metadata'] as Map)
+              : <String, dynamic>{};
+          metadata['pending_archive'] = true;
+          metadata['pending_delete'] = true;
+          metadata['local_pending_delete'] = true;
+          next['metadata'] = metadata;
+          next['pending_archive'] = true;
+          next['pending_delete'] = true;
+          return next;
+        })
+        .toList(growable: false);
+  }
+
   String _accessModelProductLabel(AppLocalizations l10n, String accessModel) {
     switch (accessModel.toUpperCase()) {
       case 'PRIVATE':
         return l10n.pick(en: 'Personal Fungu', swText: 'Fungu Binafsi');
       case 'ORG':
-        return l10n.pick(
-          en: 'Organization Fungu',
-          swText: 'Fungu la Taasisi',
-        );
+        return l10n.pick(en: 'Organization Fungu', swText: 'Fungu la Taasisi');
       default:
-        return l10n.pick(
-          en: 'Chama Fungu',
-          swText: 'Fungu la Chama',
-        );
+        return l10n.pick(en: 'Chama Fungu', swText: 'Fungu la Chama');
     }
   }
 
@@ -344,20 +362,29 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
     final payload = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
       builder: (sheetContext) {
         final ui = OrbiTheme.uiOf(sheetContext);
-        final bottomInset = MediaQuery.of(sheetContext).viewInsets.bottom;
+        final media = MediaQuery.of(sheetContext);
+        final bottomInset = media.viewInsets.bottom;
+        final maxHeight = media.size.height * 0.88;
         return StatefulBuilder(
-          builder: (context, setSheetState) => SafeArea(
-            top: false,
-            child: AnimatedPadding(
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOut,
-              padding: EdgeInsets.fromLTRB(16, 18, 16, bottomInset + 20),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          builder: (context, setSheetState) => AnimatedPadding(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOut,
+            padding: EdgeInsets.fromLTRB(12, 10, 12, bottomInset + 12),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: maxHeight),
+              child: Material(
+                color: Theme.of(sheetContext).cardColor,
+                borderRadius: BorderRadius.circular(28),
+                clipBehavior: Clip.antiAlias,
+                child: ListView(
+                  shrinkWrap: true,
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  padding: const EdgeInsets.fromLTRB(18, 16, 18, 20),
                   children: [
                     Center(
                       child: Container(
@@ -370,12 +397,24 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    Text(
-                      l10n.pick(en: 'Create Fungu', swText: 'Unda Fungu'),
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        color: ui.textPrimary,
-                        fontWeight: FontWeight.w800,
-                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            l10n.pick(en: 'Create Fungu', swText: 'Unda Fungu'),
+                            style: Theme.of(context).textTheme.titleLarge
+                                ?.copyWith(
+                                  color: ui.textPrimary,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: l10n.actionCancel,
+                          onPressed: () => Navigator.of(sheetContext).pop(),
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 6),
                     Text(
@@ -447,9 +486,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                         ),
                         DropdownMenuItem(
                           value: 'ORG',
-                          child: Text(
-                            _accessModelProductLabel(l10n, 'ORG'),
-                          ),
+                          child: Text(_accessModelProductLabel(l10n, 'ORG')),
                         ),
                       ],
                       onChanged: (value) => setSheetState(
@@ -504,6 +541,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
       },
     );
 
+    await Future<void>.delayed(const Duration(milliseconds: 240));
     nameController.dispose();
     purposeController.dispose();
     targetController.dispose();
@@ -626,16 +664,14 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                         ),
                         DropdownMenuItem(
                           value: 'ORG',
-                          child: Text(
-                            _accessModelProductLabel(l10n, 'ORG'),
-                          ),
+                          child: Text(_accessModelProductLabel(l10n, 'ORG')),
                         ),
                       ],
                       onChanged: submitting
                           ? null
                           : (value) => setSheetState(
                               () => accessModel = value ?? accessModel,
-                      ),
+                            ),
                       decoration: InputDecoration(
                         labelText: l10n.pick(
                           en: 'Fungu type',
@@ -746,9 +782,12 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
   Future<void> _showContributeSheet(Map<String, dynamic> pot) async {
     final l10n = AppLocalizations.of(context)!;
     final amountController = TextEditingController();
+    final idempotencyKey = _service.createIdempotencyKey(
+      'shared-pot-contribute',
+    );
     String? formError;
     bool submitting = false;
-    final contributed = await showModalBottomSheet<bool>(
+    final contributed = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       builder: (sheetContext) {
@@ -839,19 +878,26 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                                   await _service.contributeToSharedPot(
                                     (pot['id'] ?? '').toString(),
                                     {'amount': amount},
+                                    idempotencyKey: idempotencyKey,
                                   );
                                   if (!sheetContext.mounted) return;
-                                  Navigator.of(sheetContext).pop(true);
+                                  Navigator.of(sheetContext).pop('success');
                                 } catch (e) {
                                   if (!sheetContext.mounted) return;
-                                  setSheetState(() {
-                                    formError = mapBackendStatusMessage(
-                                      e.toString(),
-                                      sw: l10n.isSw,
-                                      fallback: l10n.wealthContributeError,
-                                    );
-                                    submitting = false;
-                                  });
+                                  if (_service.isPendingCommitError(e)) {
+                                    Navigator.of(
+                                      sheetContext,
+                                    ).pop('pending:contribute');
+                                    return;
+                                  }
+                                  final message = mapBackendStatusMessage(
+                                    e.toString(),
+                                    sw: l10n.isSw,
+                                    fallback: l10n.wealthContributeError,
+                                  );
+                                  Navigator.of(
+                                    sheetContext,
+                                  ).pop('error:$message');
                                 }
                               },
                         child: submitting
@@ -891,12 +937,28 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
 
     amountController.dispose();
 
-    if (contributed == true) {
+    if (contributed == 'success') {
       await _load();
       if (!mounted) return;
       setState(() {
         _statusMessage = l10n.wealthContributionAdded;
         _statusTone = OrbiStatusTone.success;
+      });
+    } else if (contributed == 'pending:contribute') {
+      unawaited(_refreshSilently());
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = l10n.pick(
+          en: 'Contribution was sent. We are confirming the final status.',
+          swText: 'Mchango umetumwa. Tunathibitisha hali ya mwisho ya muamala.',
+        );
+        _statusTone = OrbiStatusTone.info;
+      });
+    } else if (contributed?.startsWith('error:') == true) {
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = contributed!.substring('error:'.length);
+        _statusTone = OrbiStatusTone.error;
       });
     }
   }
@@ -905,6 +967,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
     final l10n = AppLocalizations.of(context)!;
     final amountController = TextEditingController();
     final reasonController = TextEditingController();
+    final idempotencyKey = _service.createIdempotencyKey('shared-pot-withdraw');
     String? formError;
     bool submitting = false;
     final result = await showModalBottomSheet<String>(
@@ -1020,6 +1083,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                                           'reason': reasonController.text
                                               .trim(),
                                         },
+                                        idempotencyKey: idempotencyKey,
                                       );
                                   if (!sheetContext.mounted) return;
                                   final requiresApproval =
@@ -1030,14 +1094,20 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                                   );
                                 } catch (e) {
                                   if (!sheetContext.mounted) return;
-                                  setSheetState(() {
-                                    formError = mapBackendStatusMessage(
-                                      e.toString(),
-                                      sw: l10n.isSw,
-                                      fallback: l10n.wealthWithdrawError,
-                                    );
-                                    submitting = false;
-                                  });
+                                  if (_service.isPendingCommitError(e)) {
+                                    Navigator.of(
+                                      sheetContext,
+                                    ).pop('pending:withdraw');
+                                    return;
+                                  }
+                                  final message = mapBackendStatusMessage(
+                                    e.toString(),
+                                    sw: l10n.isSw,
+                                    fallback: l10n.wealthWithdrawError,
+                                  );
+                                  Navigator.of(
+                                    sheetContext,
+                                  ).pop('error:$message');
                                 }
                               },
                         child: submitting
@@ -1078,7 +1148,24 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
     amountController.dispose();
     reasonController.dispose();
 
-    if (result != null) {
+    if (result == 'pending:withdraw') {
+      unawaited(_refreshSilently());
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = l10n.pick(
+          en: 'Withdrawal was sent. We are confirming the final status.',
+          swText:
+              'Ombi la kutoa fedha limetumwa. Tunathibitisha hali ya mwisho.',
+        );
+        _statusTone = OrbiStatusTone.info;
+      });
+    } else if (result?.startsWith('error:') == true) {
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = result!.substring('error:'.length);
+        _statusTone = OrbiStatusTone.error;
+      });
+    } else if (result != null) {
       await _load();
       if (!mounted) return;
       setState(() {
@@ -1105,7 +1192,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
     String? formError;
     bool submitting = false;
 
-    final added = await showModalBottomSheet<bool>(
+    final added = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       builder: (sheetContext) {
@@ -1353,17 +1440,23 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                                       payload,
                                     );
                                     if (!sheetContext.mounted) return;
-                                    Navigator.of(sheetContext).pop(true);
+                                    Navigator.of(sheetContext).pop('success');
                                   } catch (e) {
                                     if (!sheetContext.mounted) return;
-                                    setSheetState(() {
-                                      formError = mapBackendStatusMessage(
-                                        e.toString(),
-                                        sw: l10n.isSw,
-                                        fallback: l10n.wealthInviteError,
-                                      );
-                                      submitting = false;
-                                    });
+                                    if (_service.isPendingCommitError(e)) {
+                                      Navigator.of(
+                                        sheetContext,
+                                      ).pop('pending:invite');
+                                      return;
+                                    }
+                                    final message = mapBackendStatusMessage(
+                                      e.toString(),
+                                      sw: l10n.isSw,
+                                      fallback: l10n.wealthInviteError,
+                                    );
+                                    Navigator.of(
+                                      sheetContext,
+                                    ).pop('error:$message');
                                   }
                                 },
                           child: submitting
@@ -1403,12 +1496,29 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
     lookupDebounce?.cancel();
     identifierController.dispose();
 
-    if (added == true) {
+    if (added == 'success') {
       if (!mounted) return;
       final l10n = AppLocalizations.of(context)!;
       setState(() {
         _statusMessage = l10n.wealthInviteSent;
         _statusTone = OrbiStatusTone.success;
+      });
+    } else if (added == 'pending:invite') {
+      unawaited(_refreshSilently());
+      if (!mounted) return;
+      final l10n = AppLocalizations.of(context)!;
+      setState(() {
+        _statusMessage = l10n.pick(
+          en: 'Invitation was sent. We are confirming it now.',
+          swText: 'Mwaliko umetumwa. Tunathibitisha sasa.',
+        );
+        _statusTone = OrbiStatusTone.info;
+      });
+    } else if (added?.startsWith('error:') == true) {
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = added!.substring('error:'.length);
+        _statusTone = OrbiStatusTone.error;
       });
     }
   }
@@ -1538,19 +1648,16 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                                     ),
                                   ],
                                   const SizedBox(height: 6),
-                                  Text(
-                                    contributionTarget == null
-                                        ? l10n.wealthContributedLabel(
-                                            contributed,
-                                          )
-                                        : l10n.wealthContributedTargetLabel(
-                                            contributed,
-                                            contributionTarget,
-                                          ),
-                                    style: TextStyle(
-                                      color: ui.textMuted,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
+                                  _FunguMoneyInline(
+                                    label: l10n.pick(
+                                      en: 'Contributed',
+                                      swText: 'Amechangia',
+                                    ),
+                                    value: contributed,
+                                    target: contributionTarget,
+                                    ofLabel: l10n.pick(
+                                      en: 'of',
+                                      swText: 'kati ya',
                                     ),
                                   ),
                                 ],
@@ -1635,6 +1742,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
       },
     );
     if (!mounted || ok != true) return;
+    _locallyDeletedPotIds.add(potId);
     await _load();
     if (!mounted) return;
     setState(() {
@@ -1716,8 +1824,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
       setState(() {
         _statusMessage = l10n.pick(
           en: 'This Fungu must have a zero balance before it can be archived.',
-          swText:
-              'Fungu hili lazima liwe na salio sifuri kabla ya kuhifadhiwa.',
+          swText: 'Fungu hili lazima liwe na salio sifuri kabla ya kufutwa.',
         );
         _statusTone = OrbiStatusTone.error;
       });
@@ -1727,7 +1834,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text(l10n.pick(en: 'Archive Fungu?', swText: 'Hifadhi Fungu?')),
+        title: Text(l10n.pick(en: 'Archive Fungu?', swText: 'Futa Fungu?')),
         content: Text(
           l10n.pick(
             en: 'If this Fungu has no balance, it leaves the main list and stays cancellable for 24 hours. Organization Fungu may require leadership approvals.',
@@ -1762,7 +1869,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
     final first = await _loadBusyData<Map<String, dynamic>>(
       l10n.pick(
         en: 'Preparing archive request...',
-        swText: 'Tunaandaa ombi la kuhifadhi...',
+        swText: 'Tunaandaa ombi la kufuta...',
       ),
       submit,
     );
@@ -1804,11 +1911,11 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                 : l10n.pick(
                     en: 'Fungu archived from the main list. You can cancel within 24 hours.',
                     swText:
-                        'Fungu limetoka kwenye orodha kuu. Unaweza kughairi ndani ya saa 24.',
+                        'Fungu limefutwa kwenye orodha kuu. Unaweza kughairi ndani ya saa 24.',
                   ))
           : l10n.pick(
               en: 'Archive request sent. It now needs 3 approvals.',
-              swText: 'Ombi la kuhifadhi limetumwa. Sasa linahitaji idhini 3.',
+              swText: 'Ombi la kufuta limetumwa. Sasa linahitaji idhini 3.',
             );
       _statusTone = OrbiStatusTone.success;
     });
@@ -1880,12 +1987,84 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
     return '${safe.toStringAsFixed(1)}%';
   }
 
+  int? _asOptionalInt(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toInt();
+    return int.tryParse(value.toString().replaceAll(',', '').trim());
+  }
+
+  int? _memberCountForPot(Map<String, dynamic> pot) {
+    final metadata = pot['metadata'] is Map
+        ? Map<String, dynamic>.from(pot['metadata'] as Map)
+        : const <String, dynamic>{};
+    final candidates = [
+      pot['member_count'],
+      pot['members_count'],
+      pot['memberCount'],
+      pot['membersCount'],
+      pot['participant_count'],
+      pot['participants_count'],
+      pot['participantCount'],
+      pot['participantsCount'],
+      metadata['member_count'],
+      metadata['members_count'],
+      metadata['memberCount'],
+      metadata['membersCount'],
+      metadata['participant_count'],
+      metadata['participants_count'],
+      metadata['participantCount'],
+      metadata['participantsCount'],
+    ];
+    for (final candidate in candidates) {
+      final parsed = _asOptionalInt(candidate);
+      if (parsed != null) return parsed.clamp(0, 999999);
+    }
+
+    final members =
+        pot['members'] ?? pot['participants'] ?? metadata['members'];
+    if (members is List) return members.length;
+    return null;
+  }
+
+  String _totalKnownMemberCountLabel(List<Map<String, dynamic>> pots) {
+    var total = 0;
+    var hasKnownCount = false;
+    for (final pot in pots) {
+      final count = _memberCountForPot(pot);
+      if (count == null) continue;
+      hasKnownCount = true;
+      total += count;
+    }
+    return hasKnownCount ? '$total' : '-';
+  }
+
   bool _isArchivedOrPendingArchive(Map<String, dynamic> pot) {
     final status = (pot['status'] ?? 'ACTIVE').toString().toUpperCase();
     final metadata = pot['metadata'] is Map
         ? Map<String, dynamic>.from(pot['metadata'] as Map)
         : const <String, dynamic>{};
-    return status == 'ARCHIVED' || metadata['pending_archive'] == true;
+    final deleteRequest = pot['delete_request'] is Map
+        ? Map<String, dynamic>.from(pot['delete_request'] as Map)
+        : pot['deleteRequest'] is Map
+        ? Map<String, dynamic>.from(pot['deleteRequest'] as Map)
+        : const <String, dynamic>{};
+    final deleteStatus = (deleteRequest['status'] ?? '')
+        .toString()
+        .toUpperCase();
+    return status == 'ARCHIVED' ||
+        status == 'DELETED' ||
+        status == 'DELETE_PENDING' ||
+        status == 'PENDING_DELETE' ||
+        metadata['pending_archive'] == true ||
+        metadata['pending_delete'] == true ||
+        metadata['local_pending_delete'] == true ||
+        pot['pending_archive'] == true ||
+        pot['pending_delete'] == true ||
+        pot['scheduled_delete_at'] != null ||
+        pot['delete_scheduled_at'] != null ||
+        pot['archived_at'] != null ||
+        deleteRequest.isNotEmpty &&
+            !const {'CANCELLED', 'REJECTED', 'EXPIRED'}.contains(deleteStatus);
   }
 
   Future<void> _showArchivedPotsSheet(
@@ -1904,7 +2083,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
             _SheetTitle(
               title: l10n.pick(
                 en: 'Archived Fungu',
-                swText: 'Fungu zilizohifadhiwa',
+                swText: 'Fungu zilizofutwa',
               ),
             ),
             const SizedBox(height: 12),
@@ -1912,7 +2091,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
               _InlineEmpty(
                 message: l10n.pick(
                   en: 'No archived Fungu yet.',
-                  swText: 'Hakuna Fungu zilizohifadhiwa bado.',
+                  swText: 'Hakuna Fungu zilizofutwa bado.',
                 ),
               )
             else
@@ -1920,7 +2099,14 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                 final metadata = pot['metadata'] is Map
                     ? Map<String, dynamic>.from(pot['metadata'] as Map)
                     : const <String, dynamic>{};
-                final pending = metadata['pending_archive'] == true;
+                final pending =
+                    metadata['pending_archive'] == true ||
+                    metadata['pending_delete'] == true ||
+                    metadata['local_pending_delete'] == true ||
+                    pot['pending_archive'] == true ||
+                    pot['pending_delete'] == true ||
+                    pot['delete_request'] != null ||
+                    pot['deleteRequest'] != null;
                 return ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: Icon(
@@ -1933,12 +2119,12 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                         ? l10n.pick(
                             en: 'Archive pending. It can still be cancelled.',
                             swText:
-                                'Inasubiri kuhifadhiwa. Bado inaweza kughairiwa.',
+                                'Inasubiri kufutwa. Bado inaweza kughairiwa.',
                           )
                         : l10n.pick(
                             en: 'Archived and hidden from the main list.',
                             swText:
-                                'Imehifadhiwa na imefichwa kwenye orodha kuu.',
+                                'Imefutwa kwenye orodha kuu na imebaki kwa kumbukumbu.',
                           ),
                   ),
                 );
@@ -2027,8 +2213,8 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                       ),
                       OrbiHeroMetricChip(
                         icon: Icons.people_alt_outlined,
-                        label: l10n.pick(en: 'Members', swText: 'Members'),
-                        value: '${activePots.length}',
+                        label: l10n.pick(en: 'Members', swText: 'Wanachama'),
+                        value: _totalKnownMemberCountLabel(activePots),
                       ),
                       OrbiHeroMetricChip(
                         icon: Icons.mail_outline_rounded,
@@ -2040,7 +2226,7 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                         label: Text(
                           l10n.pick(
                             en: 'Archived ${archivedPots.length}',
-                            swText: 'Zilizohifadhiwa ${archivedPots.length}',
+                            swText: 'Zilizofutwa ${archivedPots.length}',
                           ),
                         ),
                         onPressed: () => _showArchivedPotsSheet(archivedPots),
@@ -2212,15 +2398,36 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                                       ),
                                       if (target != null) ...[
                                         const SizedBox(height: 2),
-                                        Text(
-                                          'of $target',
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            color: ui.textMuted,
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.w700,
-                                          ),
+                                        Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.end,
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Text(
+                                              l10n.pick(
+                                                en: 'of',
+                                                swText: 'kati ya',
+                                              ),
+                                              style: TextStyle(
+                                                color: ui.textMuted,
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 4),
+                                            Flexible(
+                                              child: MoneyText(
+                                                value: target,
+                                                textAlign: TextAlign.end,
+                                                mainFontSize: 11.5,
+                                                sideFontSize: 8.5,
+                                                fontWeight: FontWeight.w800,
+                                                mainColor: ui.textMuted,
+                                                sideColor: ui.textMuted,
+                                                animateValue: false,
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ],
                                     ],
@@ -2304,7 +2511,12 @@ class _SharedPotsScreenState extends State<SharedPotsScreen> {
                                       if (canManage)
                                         PopupMenuItem(
                                           value: 'archive',
-                                          child: Text(l10n.commonArchive),
+                                          child: Text(
+                                            l10n.pick(
+                                              en: 'Archive Fungu',
+                                              swText: 'Futa Fungu',
+                                            ),
+                                          ),
                                         ),
                                       if (canLeave)
                                         PopupMenuItem(
@@ -2484,6 +2696,74 @@ class _SheetFrame extends StatelessWidget {
         border: Border(top: BorderSide(color: ui.border)),
       ),
       child: SafeArea(top: false, child: child),
+    );
+  }
+}
+
+class _FunguMoneyInline extends StatelessWidget {
+  const _FunguMoneyInline({
+    required this.label,
+    required this.value,
+    required this.ofLabel,
+    this.target,
+  });
+
+  final String label;
+  final String value;
+  final String ofLabel;
+  final String? target;
+
+  @override
+  Widget build(BuildContext context) {
+    final ui = OrbiTheme.uiOf(context);
+    return Wrap(
+      spacing: 4,
+      runSpacing: 3,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text(
+          '$label:',
+          style: TextStyle(
+            color: ui.textMuted,
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 130),
+          child: MoneyText(
+            value: value,
+            mainFontSize: 12,
+            sideFontSize: 8.5,
+            fontWeight: FontWeight.w900,
+            mainColor: ui.textPrimary,
+            sideColor: ui.textMuted,
+            animateValue: false,
+          ),
+        ),
+        if (target != null) ...[
+          Text(
+            ofLabel,
+            style: TextStyle(
+              color: ui.textMuted,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 130),
+            child: MoneyText(
+              value: target!,
+              mainFontSize: 12,
+              sideFontSize: 8.5,
+              fontWeight: FontWeight.w900,
+              mainColor: ui.textPrimary,
+              sideColor: ui.textMuted,
+              animateValue: false,
+            ),
+          ),
+        ],
+      ],
     );
   }
 }

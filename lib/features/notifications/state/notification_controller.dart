@@ -689,7 +689,10 @@ class NotificationController extends ChangeNotifier {
     _upsertRealtimeNotification(item, push: candidate.shouldPush);
   }
 
-  void _upsertRealtimeNotification(NotificationItem item, {required bool push}) {
+  void _upsertRealtimeNotification(
+    NotificationItem item, {
+    required bool push,
+  }) {
     _upsert(item);
     if (!push) return;
     unawaited(
@@ -721,6 +724,24 @@ class NotificationController extends ChangeNotifier {
     final category = _toLower(payload['category'] ?? payload['kind']);
     final title = _toLower(payload['title'] ?? payload['subject']);
     final message = _toLower(payload['message'] ?? payload['body']);
+    final paySafeSignal =
+        eventType.contains('paysafe') ||
+        eventType.contains('pay_safe') ||
+        eventType.contains('escrow') ||
+        category.contains('paysafe') ||
+        category.contains('pay_safe') ||
+        category.contains('escrow') ||
+        title.contains('paysafe') ||
+        title.contains('pay safe') ||
+        title.contains('escrow') ||
+        message.contains('paysafe') ||
+        message.contains('pay safe') ||
+        message.contains('escrow');
+
+    // PaySafe can move through terminal states such as refunded/cancelled.
+    // Those are still UI-refresh events because active cards must leave the
+    // queue and history/status must update immediately.
+    if (paySafeSignal) return true;
 
     final hasFailureSignal =
         status.contains('fail') ||

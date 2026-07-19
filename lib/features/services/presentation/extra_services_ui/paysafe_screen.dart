@@ -4,8 +4,11 @@ import 'dart:math' as math;
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../../core/theme/orbi_theme.dart';
+import '../../../../core/state/app_runtime_cache.dart';
 import '../../../../core/utils/amount_input_formatter.dart';
 import '../../../../core/utils/backend_status_message.dart';
 import '../../../../core/utils/money_format.dart';
@@ -13,6 +16,7 @@ import '../../../../core/widgets/orbi_amount_field.dart';
 import '../../../../core/widgets/orbi_async_feedback.dart';
 import '../../../payment/data/escrow_service.dart';
 import '../../../profile/data/profile_service.dart';
+import '../../../notifications/state/notification_controller.dart';
 
 class PaySafeScreen extends StatefulWidget {
   const PaySafeScreen({super.key});
@@ -30,6 +34,10 @@ class _PaySafeScreenState extends State<PaySafeScreen>
   bool _busy = false;
   String? _error;
   List<Map<String, dynamic>> _escrows = const [];
+  Set<String> _trashedHistoryRefs = const {};
+  Set<String> _currentIdentityTokens = const {};
+  StreamSubscription<Map<String, dynamic>>? _paySafeRealtimeSubscription;
+  Timer? _paySafeRealtimeDebounce;
 
   @override
   void initState() {
@@ -38,11 +46,26 @@ class _PaySafeScreenState extends State<PaySafeScreen>
       vsync: this,
       duration: const Duration(milliseconds: 1800),
     )..repeat();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadPaySafe());
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _loadTrashedHistoryRefs();
+      if (!mounted) return;
+      await _loadPaySafe();
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _paySafeRealtimeSubscription ??= context
+        .read<NotificationController>()
+        .balanceUpdates
+        .listen(_handlePaySafeRealtimeEvent);
   }
 
   @override
   void dispose() {
+    _paySafeRealtimeDebounce?.cancel();
+    _paySafeRealtimeSubscription?.cancel();
     _orbitController.dispose();
     super.dispose();
   }
@@ -54,6 +77,282 @@ class _PaySafeScreenState extends State<PaySafeScreen>
 
   String _t(String en, String sw) => _isSw ? sw : en;
 
+  static const String _trashedHistoryPrefsKey = 'paysafe_trashed_history_refs';
+
+  Future<void> _loadTrashedHistoryRefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final refs =
+        prefs
+            .getStringList(_trashedHistoryPrefsKey)
+            ?.map((value) => value.trim())
+            .where((value) => value.isNotEmpty)
+            .toSet() ??
+        const <String>{};
+    if (!mounted) return;
+    setState(() => _trashedHistoryRefs = refs);
+  }
+
+  Future<void> _rememberTrashedHistoryRefs(Set<String> refs) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_trashedHistoryPrefsKey, refs.toList()..sort());
+  }
+
+  Future<void> _trashHistoryItem(Map<String, dynamic> escrow) async {
+    final reference = _referenceId(escrow);
+    if (reference.isEmpty) return;
+    final next = {..._trashedHistoryRefs, reference};
+    await _rememberTrashedHistoryRefs(next);
+    if (!mounted) return;
+    setState(() => _trashedHistoryRefs = next);
+    _showSnack(
+      _t('PaySafe moved to trash.', 'PaySafe imepelekwa kwenye trash.'),
+    );
+  }
+
+  Future<void> _clearVisibleHistory(List<Map<String, dynamic>> escrows) async {
+    final references = escrows
+        .map(_referenceId)
+        .where((reference) => reference.isNotEmpty)
+        .toSet();
+    if (references.isEmpty) return;
+    final confirmed = await _confirmAction(
+      title: _t('Trash history?', 'Tupa historia?'),
+      message: _t(
+        'This only hides completed PaySafe items from this device. Audit records remain available.',
+        'Hii inaficha PaySafe zilizokamilika kwenye kifaa hiki tu. Rekodi za audit zinabaki salama.',
+      ),
+      confirmLabel: _t('Trash', 'Tupa'),
+    );
+    if (!confirmed) return;
+    final next = {..._trashedHistoryRefs, ...references};
+    await _rememberTrashedHistoryRefs(next);
+    if (!mounted) return;
+    setState(() => _trashedHistoryRefs = next);
+    _showSnack(_t('PaySafe history hidden.', 'Historia ya PaySafe imefichwa.'));
+  }
+
+  Future<void> _restoreTrashedHistory() async {
+    if (_trashedHistoryRefs.isEmpty) return;
+    final confirmed = await _confirmAction(
+      title: _t('Restore history?', 'Rudisha historia?'),
+      message: _t(
+        'Completed PaySafe references hidden on this device will appear in History again.',
+        'PaySafe references zilizofichwa kwenye kifaa hiki zitaonekana tena kwenye Historia.',
+      ),
+      confirmLabel: _t('Restore', 'Rudisha'),
+    );
+    if (!confirmed) return;
+    await _rememberTrashedHistoryRefs(const <String>{});
+    if (!mounted) return;
+    setState(() => _trashedHistoryRefs = const <String>{});
+    _showSnack(
+      _t('PaySafe history restored.', 'Historia ya PaySafe imerudishwa.'),
+    );
+  }
+
+  Future<void> _copyReference(String reference) async {
+    if (reference.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: reference));
+    if (!mounted) return;
+    _showSnack(_t('PaySafe ID copied.', 'ID ya PaySafe imenakiliwa.'));
+  }
+
+  List<Map<String, dynamic>> _historyEscrows() {
+    return _escrows
+        .where((escrow) {
+          if (_isActiveEscrow(escrow)) return false;
+          final reference = _referenceId(escrow);
+          return reference.isEmpty || !_trashedHistoryRefs.contains(reference);
+        })
+        .toList(growable: false);
+  }
+
+  Future<void> _openPaySafeMenu() async {
+    final colors = OrbiTheme.uiOf(context);
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final history = _historyEscrows();
+            return DraggableScrollableSheet(
+              initialChildSize: 0.72,
+              minChildSize: 0.38,
+              maxChildSize: 0.92,
+              builder: (context, scrollController) {
+                return Container(
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).cardColor,
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(28),
+                    ),
+                    border: Border.all(
+                      color: colors.border.withValues(alpha: 0.45),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.20),
+                        blurRadius: 30,
+                        offset: const Offset(0, -10),
+                      ),
+                    ],
+                  ),
+                  child: ListView(
+                    controller: scrollController,
+                    padding: const EdgeInsets.fromLTRB(20, 14, 20, 28),
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 44,
+                          height: 5,
+                          decoration: BoxDecoration(
+                            color: colors.border,
+                            borderRadius: BorderRadius.circular(99),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _t('PaySafe menu', 'Menu ya PaySafe'),
+                              style: Theme.of(context).textTheme.titleLarge
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.w900,
+                                    color: colors.textPrimary,
+                                  ),
+                            ),
+                          ),
+                          IconButton.filledTonal(
+                            tooltip: _t('Refresh', 'Sasisha'),
+                            onPressed: _busy
+                                ? null
+                                : () {
+                                    Navigator.of(context).pop();
+                                    _loadPaySafe();
+                                  },
+                            icon: const Icon(Icons.sync_rounded),
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton(
+                            tooltip: _t('Close', 'Funga'),
+                            onPressed: () => Navigator.of(context).pop(),
+                            icon: const Icon(Icons.close_rounded),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _t(
+                          'Completed PaySafe references are kept here so your active queue stays clean.',
+                          'PaySafe zilizokamilika zinabaki hapa ili orodha ya zinazoendelea ibaki safi.',
+                        ),
+                        style: TextStyle(color: colors.textMuted, height: 1.35),
+                      ),
+                      const SizedBox(height: 18),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _PaySafeMenuAction(
+                              icon: Icons.add_rounded,
+                              label: _t('New PaySafe', 'PaySafe mpya'),
+                              onTap: _busy
+                                  ? null
+                                  : () {
+                                      Navigator.of(context).pop();
+                                      _createPaySafe();
+                                    },
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: _PaySafeMenuAction(
+                              icon: Icons.delete_sweep_rounded,
+                              label: _t('Trash all', 'Tupa zote'),
+                              onTap: history.isEmpty
+                                  ? null
+                                  : () {
+                                      Navigator.of(context).pop();
+                                      _clearVisibleHistory(history);
+                                    },
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (_trashedHistoryRefs.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        _PaySafeMenuAction(
+                          icon: Icons.restore_rounded,
+                          label: _t(
+                            'Restore trashed history',
+                            'Rudisha historia iliyotupwa',
+                          ),
+                          onTap: () {
+                            Navigator.of(context).pop();
+                            _restoreTrashedHistory();
+                          },
+                        ),
+                      ],
+                      const SizedBox(height: 22),
+                      Text(
+                        _t('History', 'Historia'),
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
+                              fontWeight: FontWeight.w900,
+                              color: colors.textPrimary,
+                            ),
+                      ),
+                      const SizedBox(height: 10),
+                      if (history.isEmpty)
+                        _PaySafeEmptyState(
+                          icon: Icons.history_rounded,
+                          title: _t(
+                            'No completed PaySafe',
+                            'Hakuna PaySafe iliyokamilika',
+                          ),
+                          message: _t(
+                            'Released, refunded, and closed PaySafe references will appear here.',
+                            'PaySafe zilizoachiwa, kurejeshwa, au kufungwa zitaonekana hapa.',
+                          ),
+                          actionLabel: _t('Refresh', 'Sasisha'),
+                          onAction: _busy
+                              ? null
+                              : () {
+                                  Navigator.of(context).pop();
+                                  _loadPaySafe();
+                                },
+                        )
+                      else
+                        for (final escrow in history) ...[
+                          _PaySafeHistoryTile(
+                            title: _title(escrow),
+                            reference: _referenceId(escrow),
+                            status: _status(escrow),
+                            amount: _amount(escrow),
+                            summary: _holdSummary(escrow),
+                            isSw: _isSw,
+                            onCopy: () => _copyReference(_referenceId(escrow)),
+                            onTrash: () async {
+                              await _trashHistoryItem(escrow);
+                              setSheetState(() {});
+                            },
+                          ),
+                          const SizedBox(height: 10),
+                        ],
+                    ],
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
   Future<void> _loadPaySafe({bool quiet = false}) async {
     if (!mounted) return;
     setState(() {
@@ -61,9 +360,18 @@ class _PaySafeScreenState extends State<PaySafeScreen>
       _error = null;
     });
     try {
+      _primeCurrentIdentityFromCache();
       final escrows = await _escrowService.listEscrows().timeout(
         const Duration(seconds: 10),
       );
+      if (_currentIdentityTokens.isEmpty) {
+        await _refreshCurrentIdentity().timeout(
+          const Duration(seconds: 4),
+          onTimeout: () => const <String>{},
+        );
+      } else {
+        unawaited(_refreshCurrentIdentity());
+      }
       if (!mounted) return;
       setState(() {
         _escrows = escrows;
@@ -79,6 +387,23 @@ class _PaySafeScreenState extends State<PaySafeScreen>
     }
   }
 
+  void _handlePaySafeRealtimeEvent(Map<String, dynamic> event) {
+    final text = event.toString().toLowerCase();
+    final isPaySafeEvent =
+        text.contains('paysafe') ||
+        text.contains('pay_safe') ||
+        text.contains('escrow') ||
+        text.contains('release') ||
+        text.contains('refund') ||
+        text.contains('return_pending');
+    if (!isPaySafeEvent) return;
+    _paySafeRealtimeDebounce?.cancel();
+    _paySafeRealtimeDebounce = Timer(const Duration(milliseconds: 350), () {
+      if (!mounted || _loading) return;
+      unawaited(_loadPaySafe(quiet: true));
+    });
+  }
+
   Future<void> _createPaySafe() async {
     final result = await showModalBottomSheet<_PaySafeDraft>(
       context: context,
@@ -89,6 +414,9 @@ class _PaySafeScreenState extends State<PaySafeScreen>
     if (result == null) return;
     final confirmed = await _confirmPaySafeCreation(result);
     if (!confirmed) return;
+    final idempotencyKey = _escrowService.createIdempotencyKey(
+      'paysafe-create',
+    );
 
     await _runAction(
       success: _t('PaySafe created.', 'PaySafe imeundwa.'),
@@ -107,7 +435,7 @@ class _PaySafeScreenState extends State<PaySafeScreen>
           'holdWindowHours': result.holdWindowHours,
           'releaseRequiresReceiverAcceptance': true,
         },
-      }),
+      }, idempotencyKey: idempotencyKey),
       referenceId: null,
       actionType: 'create',
     );
@@ -267,7 +595,10 @@ class _PaySafeScreenState extends State<PaySafeScreen>
         'Release requested. Waiting for receiver final acceptance.',
         'Release imeombwa. Inasubiri idhini ya mwisho ya mpokeaji.',
       ),
-      action: () => _escrowService.releaseEscrow(referenceId),
+      action: () => _escrowService.releaseEscrow(
+        referenceId,
+        idempotencyKey: _escrowService.createIdempotencyKey('paysafe-release'),
+      ),
       referenceId: referenceId,
       actionType: 'release',
     );
@@ -325,7 +656,10 @@ class _PaySafeScreenState extends State<PaySafeScreen>
               'PaySafe confirmed. Waiting for sender release.',
               'PaySafe imethibitishwa. Inasubiri mtumaji a-release.',
             ),
-      action: () => _escrowService.acceptEscrow(referenceId),
+      action: () => _escrowService.acceptEscrow(
+        referenceId,
+        idempotencyKey: _escrowService.createIdempotencyKey('paysafe-accept'),
+      ),
       referenceId: referenceId,
       actionType: 'accept',
     );
@@ -365,13 +699,16 @@ class _PaySafeScreenState extends State<PaySafeScreen>
       success: _receiverAccepted(escrow)
           ? _t(
               'Return requested. Receiver has 24 hours to accept or dispute.',
-              'Return imeombwa. Mpokeaji ana saa 24 kukubali au kufungua dispute.',
+              'Ombi la kurudisha limetumwa. Mpokeaji ana saa 24 kukubali au kufungua pingamizi.',
             )
           : _t(
               'PaySafe cancelled. Funds are returning instantly.',
               'PaySafe imeghairiwa. Fedha zinarudi papo hapo.',
             ),
-      action: () => _escrowService.refundEscrow(referenceId),
+      action: () => _escrowService.refundEscrow(
+        referenceId,
+        idempotencyKey: _escrowService.createIdempotencyKey('paysafe-refund'),
+      ),
       referenceId: referenceId,
       actionType: 'refund',
     );
@@ -392,18 +729,21 @@ class _PaySafeScreenState extends State<PaySafeScreen>
     final reason = await _askDisputeReason();
     if (reason == null || reason.trim().isEmpty) return;
     final confirmed = await _confirmAction(
-      title: _t('Open dispute?', 'Fungua dispute?'),
+      title: _t('Open dispute?', 'Fungua pingamizi?'),
       message: _t(
         'Funds will stay locked while customer care reviews this PaySafe.',
         'Fedha zitaendelea kushikiliwa wakati huduma kwa wateja wakikagua PaySafe hii.',
       ),
-      confirmLabel: _t('Open dispute', 'Fungua dispute'),
+      confirmLabel: _t('Open dispute', 'Fungua pingamizi'),
     );
     if (!confirmed) return;
     await _runAction(
-      success: _t('Dispute submitted.', 'Malalamiko yametumwa.'),
-      action: () =>
-          _escrowService.disputeEscrow(referenceId, reason: reason.trim()),
+      success: _t('Dispute submitted.', 'Pingamizi limetumwa.'),
+      action: () => _escrowService.disputeEscrow(
+        referenceId,
+        reason: reason.trim(),
+        idempotencyKey: _escrowService.createIdempotencyKey('paysafe-dispute'),
+      ),
       referenceId: referenceId,
       actionType: 'dispute',
     );
@@ -415,7 +755,7 @@ class _PaySafeScreenState extends State<PaySafeScreen>
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: Text(_t('Dispute PaySafe', 'Pinga PaySafe')),
+          title: Text(_t('Dispute PaySafe', 'Fungua pingamizi la PaySafe')),
           content: TextField(
             controller: controller,
             maxLines: 4,
@@ -423,7 +763,7 @@ class _PaySafeScreenState extends State<PaySafeScreen>
             decoration: InputDecoration(
               hintText: _t(
                 'Tell us what needs review',
-                'Eleza kinachohitaji ukaguzi',
+                'Eleza tatizo au sababu ya ukaguzi',
               ),
             ),
           ),
@@ -481,7 +821,7 @@ class _PaySafeScreenState extends State<PaySafeScreen>
     if (!mounted) return;
     setState(() => _busy = true);
     try {
-      final rawResult = await action().timeout(const Duration(seconds: 28));
+      final rawResult = await action().timeout(const Duration(seconds: 16));
       final result = rawResult is Map
           ? Map<String, dynamic>.from(rawResult)
           : const <String, dynamic>{};
@@ -503,13 +843,27 @@ class _PaySafeScreenState extends State<PaySafeScreen>
       if (!mounted) return;
       if (_isActionPendingError(error)) {
         setState(() => _busy = false);
+        if (referenceId != null && referenceId.isNotEmpty) {
+          _mergeEscrowMutation(referenceId, (current) {
+            return _resolveActionUpdate(
+              current: current,
+              response: const {'client_pending_confirmation': true},
+              action: actionType,
+            );
+          });
+        }
         _showSnack(
           _t(
-            'PaySafe request is still processing. We are refreshing your list.',
-            'Ombi la PaySafe bado linachakatwa. Tunahuisha orodha yako.',
+            'PaySafe action was sent. We are confirming the final status.',
+            'Hatua ya PaySafe imetumwa. Tunathibitisha status ya mwisho.',
           ),
         );
-        await _refreshAfterPendingAction();
+        unawaited(
+          _refreshAfterPendingAction(
+            referenceId: referenceId,
+            actionType: actionType,
+          ),
+        );
         return;
       }
       _showSnack(_friendlyError(error), isError: true);
@@ -528,11 +882,42 @@ class _PaySafeScreenState extends State<PaySafeScreen>
     return false;
   }
 
-  Future<void> _refreshAfterPendingAction() async {
-    await _loadPaySafe(quiet: true);
-    await Future<void>.delayed(const Duration(seconds: 2));
-    if (!mounted) return;
-    await _loadPaySafe(quiet: true);
+  Future<void> _refreshAfterPendingAction({
+    required String? referenceId,
+    required String actionType,
+  }) async {
+    final delays = <Duration>[
+      const Duration(milliseconds: 800),
+      const Duration(seconds: 2),
+      const Duration(seconds: 4),
+      const Duration(seconds: 7),
+    ];
+
+    for (final delay in delays) {
+      await Future<void>.delayed(delay);
+      if (!mounted) return;
+      try {
+        if (referenceId != null && referenceId.isNotEmpty) {
+          final latest = await _escrowService
+              .getEscrow(referenceId)
+              .timeout(const Duration(seconds: 6));
+          if (!mounted) return;
+          if (latest.isNotEmpty) {
+            _mergeEscrowMutation(referenceId, (current) {
+              return _resolveActionUpdate(
+                current: current,
+                response: latest,
+                action: actionType,
+              );
+            });
+          }
+        }
+        await _loadPaySafe(quiet: true);
+      } catch (_) {
+        if (!mounted) return;
+        await _loadPaySafe(quiet: true);
+      }
+    }
   }
 
   void _showSnack(String message, {bool isError = false}) {
@@ -611,6 +996,86 @@ class _PaySafeScreenState extends State<PaySafeScreen>
     return false;
   }
 
+  void _primeCurrentIdentityFromCache() {
+    final tokens = _identityTokensFrom(AppRuntimeCache.profile);
+    if (tokens.isNotEmpty) {
+      _currentIdentityTokens = tokens;
+    }
+  }
+
+  Future<Set<String>> _refreshCurrentIdentity() async {
+    try {
+      final profile = await ProfileService().fetchProfile();
+      final tokens = _identityTokensFrom(profile);
+      if (tokens.isNotEmpty) {
+        AppRuntimeCache.rememberProfile(profile);
+        if (mounted) {
+          setState(() => _currentIdentityTokens = tokens);
+        } else {
+          _currentIdentityTokens = tokens;
+        }
+      }
+      return tokens;
+    } catch (_) {
+      return _currentIdentityTokens;
+    }
+  }
+
+  Set<String> _identityTokensFrom(Map<String, dynamic>? source) {
+    if (source == null) return const {};
+    final tokens = <String>{};
+
+    void add(dynamic value) {
+      final normalized = _identityToken(value);
+      if (normalized.isNotEmpty) tokens.add(normalized);
+    }
+
+    void addFromMap(Map<dynamic, dynamic> map) {
+      for (final key in const [
+        'id',
+        'uid',
+        'user_id',
+        'userId',
+        'customer_id',
+        'customerId',
+        'orbi_id',
+        'orbiId',
+        'account_id',
+        'accountId',
+        'phone',
+        'mobile',
+        'mobile_number',
+        'mobileNumber',
+        'email',
+      ]) {
+        add(map[key]);
+      }
+      for (final key in const ['user', 'profile', 'account', 'metadata']) {
+        final nested = map[key];
+        if (nested is Map) addFromMap(nested);
+      }
+    }
+
+    addFromMap(source);
+    return tokens;
+  }
+
+  String _identityToken(dynamic value) {
+    final raw = value?.toString().trim().toLowerCase() ?? '';
+    if (raw.isEmpty || raw == 'null') return '';
+    return raw.replaceAll(RegExp(r'[\s\-\(\)]'), '');
+  }
+
+  bool _matchesCurrentIdentity(Iterable<dynamic> values) {
+    final tokens = _currentIdentityTokens;
+    if (tokens.isEmpty) return false;
+    for (final value in values) {
+      final token = _identityToken(value);
+      if (token.isNotEmpty && tokens.contains(token)) return true;
+    }
+    return false;
+  }
+
   DateTime? _pickDate(Iterable<dynamic> values) {
     for (final value in values) {
       final raw = value?.toString().trim() ?? '';
@@ -630,17 +1095,130 @@ class _PaySafeScreenState extends State<PaySafeScreen>
   }
 
   String _actorRole(Map<String, dynamic> escrow) {
-    return _pickString([
+    final raw = _pickString([
       escrow['actorRole'],
       escrow['actor_role'],
+      escrow['viewerRole'],
+      escrow['viewer_role'],
+      escrow['currentUserRole'],
+      escrow['current_user_role'],
+      escrow['relationship'],
+      escrow['side'],
+      escrow['direction'],
     ]).toLowerCase();
+    final normalized = raw.replaceAll('-', '_').replaceAll(' ', '_');
+    if ([
+      'sender',
+      'initiator',
+      'payer',
+      'source',
+      'creator',
+      'created_by_you',
+    ].contains(normalized)) {
+      return 'sender';
+    }
+    if ([
+      'receiver',
+      'recipient',
+      'beneficiary',
+      'payee',
+      'seller',
+      'acceptor',
+      'destination',
+    ].contains(normalized)) {
+      return 'receiver';
+    }
+    if (normalized == 'incoming' || normalized == 'inbound') {
+      return 'receiver';
+    }
+    if (normalized == 'outgoing' || normalized == 'outbound') {
+      return 'sender';
+    }
+    if (_pickBool([
+      escrow['isSender'],
+      escrow['is_sender'],
+      escrow['actorIsSender'],
+      escrow['actor_is_sender'],
+    ])) {
+      return 'sender';
+    }
+    if (_pickBool([
+      escrow['isReceiver'],
+      escrow['is_receiver'],
+      escrow['isRecipient'],
+      escrow['is_recipient'],
+      escrow['actorIsReceiver'],
+      escrow['actor_is_receiver'],
+    ])) {
+      return 'receiver';
+    }
+    final metadata = escrow['metadata'] is Map
+        ? Map<dynamic, dynamic>.from(escrow['metadata'] as Map)
+        : const <dynamic, dynamic>{};
+    final transaction = escrow['transaction'] is Map
+        ? Map<dynamic, dynamic>.from(escrow['transaction'] as Map)
+        : const <dynamic, dynamic>{};
+    if (_matchesCurrentIdentity([
+      escrow['sender_id'],
+      escrow['senderId'],
+      escrow['sender_user_id'],
+      escrow['senderUserId'],
+      escrow['payer_id'],
+      escrow['payerId'],
+      escrow['initiator_id'],
+      escrow['initiatorId'],
+      escrow['created_by'],
+      escrow['createdBy'],
+      metadata['sender_id'],
+      metadata['senderId'],
+      metadata['payer_id'],
+      metadata['payerId'],
+      transaction['user_id'],
+      transaction['userId'],
+    ])) {
+      return 'sender';
+    }
+    if (_matchesCurrentIdentity([
+      escrow['receiver_id'],
+      escrow['receiverId'],
+      escrow['receiver_user_id'],
+      escrow['receiverUserId'],
+      escrow['recipient_id'],
+      escrow['recipientId'],
+      escrow['recipient_user_id'],
+      escrow['recipientUserId'],
+      escrow['recipient_customer_id'],
+      escrow['recipientCustomerId'],
+      escrow['beneficiary_id'],
+      escrow['beneficiaryId'],
+      escrow['payee_id'],
+      escrow['payeeId'],
+      metadata['receiver_id'],
+      metadata['receiverId'],
+      metadata['recipient_id'],
+      metadata['recipientId'],
+      metadata['recipient_customer_id'],
+      metadata['recipientCustomerId'],
+    ])) {
+      return 'receiver';
+    }
+    return normalized;
   }
 
   bool _availableActionFlag(Map<String, dynamic> escrow, String action) {
-    final actions = escrow['availableActions'];
+    final actions = escrow['availableActions'] ?? escrow['available_actions'];
     if (actions is Map) {
       final normalized = Map<String, dynamic>.from(actions);
-      return _pickBool([normalized[action]]);
+      return _pickBool([
+        normalized[action],
+        normalized[action.toLowerCase()],
+        normalized[action.toUpperCase()],
+      ]);
+    }
+    if (actions is Iterable) {
+      return actions
+          .map((value) => value.toString().trim().toLowerCase())
+          .contains(action.toLowerCase());
     }
     return false;
   }
@@ -695,6 +1273,7 @@ class _PaySafeScreenState extends State<PaySafeScreen>
     final status = _normalizedStatus(escrow);
     return status.contains('RELEASE_PENDING') ||
         status.contains('RELEASE_REQUESTED') ||
+        status.contains('PENDING_RELEASE') ||
         status.contains('AWAITING_RECEIVER_ACCEPTANCE');
   }
 
@@ -704,6 +1283,12 @@ class _PaySafeScreenState extends State<PaySafeScreen>
     final status = _normalizedStatus(escrow);
     if (status == 'HELD') return true;
     return status.contains('AWAIT') ||
+        status.contains('PENDING_ACCEPT') ||
+        status.contains('PENDING_RECEIVER') ||
+        status.contains('RECEIVER_CONFIRM') ||
+        status.contains('RECIPIENT_CONFIRM') ||
+        status.contains('CREATED') ||
+        status.contains('FUNDED') ||
         status.contains('RELEASE_PENDING') ||
         status.contains('RELEASE_REQUESTED') ||
         status.contains('HOLD_ACCEPTANCE') ||
@@ -715,41 +1300,142 @@ class _PaySafeScreenState extends State<PaySafeScreen>
     return !_isTerminalStatus(status) && !status.contains('ARCHIVE');
   }
 
+  _PaySafeSide _actorSide(Map<String, dynamic> escrow) {
+    final role = _actorRole(escrow);
+    if (role == 'sender') return _PaySafeSide.sender;
+    if (role == 'receiver') return _PaySafeSide.receiver;
+    return _PaySafeSide.unknown;
+  }
+
+  _PaySafeStage _stageOf(Map<String, dynamic> escrow) {
+    final status = _normalizedStatus(escrow);
+    if (_isTerminalStatus(status)) return _PaySafeStage.closed;
+    if (_isBlockedStatus(status)) return _PaySafeStage.review;
+    if (_isReturnPending(escrow)) return _PaySafeStage.returnPending;
+    if (_isReleasePending(escrow)) return _PaySafeStage.releasePending;
+    if (_receiverAccepted(escrow)) return _PaySafeStage.held;
+    if (_isAwaitingReceiverAcceptance(escrow)) {
+      return _PaySafeStage.awaitingReceiver;
+    }
+    return _PaySafeStage.awaitingReceiver;
+  }
+
+  String _sideLabel(Map<String, dynamic> escrow) {
+    switch (_actorSide(escrow)) {
+      case _PaySafeSide.sender:
+        return _t('Sender side', 'Upande wa mtumaji');
+      case _PaySafeSide.receiver:
+        return _t('Receiver side', 'Upande wa mpokeaji');
+      case _PaySafeSide.unknown:
+        return _t('Role pending', 'Nafasi inasubiri');
+    }
+  }
+
+  bool _isHoldWindowOpen(Map<String, dynamic> escrow) {
+    final flaggedExpired = _pickBool([
+      escrow['holdWindowExpired'],
+      escrow['hold_window_expired'],
+    ]);
+    if (flaggedExpired) return false;
+    final expiry = _holdExpiry(escrow);
+    if (expiry == null) return true;
+    return expiry.isAfter(DateTime.now());
+  }
+
+  bool _isHoldWindowExpired(Map<String, dynamic> escrow) {
+    return !_isHoldWindowOpen(escrow);
+  }
+
   bool _canRelease(Map<String, dynamic> escrow) {
     if (_availableActionFlag(escrow, 'release')) return true;
-    final status = _normalizedStatus(escrow);
-    if (_actorRole(escrow) != 'sender') return false;
-    return !_isTerminalStatus(status) &&
-        !_isBlockedStatus(status) &&
-        !_isReturnPending(escrow) &&
-        _receiverAccepted(escrow);
+    return _actorSide(escrow) == _PaySafeSide.sender &&
+        _stageOf(escrow) == _PaySafeStage.held;
   }
 
   bool _canAccept(Map<String, dynamic> escrow) {
     if (_availableActionFlag(escrow, 'accept')) return true;
-    return _actorRole(escrow) == 'receiver' &&
-        (_isAwaitingReceiverAcceptance(escrow) ||
-            _isReleasePending(escrow) ||
-            _isReturnPending(escrow)) &&
-        !_pickBool([
-          escrow['holdWindowExpired'],
-          escrow['hold_window_expired'],
-        ]);
+    if (_actorSide(escrow) != _PaySafeSide.receiver) return false;
+    if (!_isHoldWindowOpen(escrow)) return false;
+    return switch (_stageOf(escrow)) {
+      _PaySafeStage.awaitingReceiver ||
+      _PaySafeStage.releasePending ||
+      _PaySafeStage.returnPending => true,
+      _ => false,
+    };
   }
 
   bool _canRefund(Map<String, dynamic> escrow) {
     if (_availableActionFlag(escrow, 'refund')) return true;
-    final status = _normalizedStatus(escrow);
-    if (_actorRole(escrow) != 'sender') return false;
-    return !_isTerminalStatus(status) &&
-        !_isReturnPending(escrow) &&
-        !status.contains('REFUND_PENDING');
+    if (_actorSide(escrow) != _PaySafeSide.sender) return false;
+    return switch (_stageOf(escrow)) {
+      _PaySafeStage.awaitingReceiver || _PaySafeStage.held => true,
+      _ => false,
+    };
   }
 
   bool _canDispute(Map<String, dynamic> escrow) {
     if (_availableActionFlag(escrow, 'dispute')) return true;
-    final status = _normalizedStatus(escrow);
-    return !_isTerminalStatus(status) && !_isBlockedStatus(status);
+    if (_actorSide(escrow) == _PaySafeSide.unknown) return false;
+    return switch (_stageOf(escrow)) {
+      _PaySafeStage.awaitingReceiver ||
+      _PaySafeStage.held ||
+      _PaySafeStage.releasePending ||
+      _PaySafeStage.returnPending => true,
+      _ => false,
+    };
+  }
+
+  List<_PaySafeTileAction> _actionPlan(Map<String, dynamic> escrow) {
+    final actions = <_PaySafeTileAction>[];
+    if (_canAccept(escrow)) {
+      actions.add(
+        _PaySafeTileAction(
+          label: _acceptActionLabel(escrow),
+          onPressed: _busy ? null : () => _acceptPaySafe(escrow),
+          style: _PaySafeActionStyle.primary,
+        ),
+      );
+    } else if (_actorSide(escrow) == _PaySafeSide.receiver &&
+        switch (_stageOf(escrow)) {
+          _PaySafeStage.awaitingReceiver ||
+          _PaySafeStage.releasePending ||
+          _PaySafeStage.returnPending => true,
+          _ => false,
+        }) {
+      actions.add(
+        _PaySafeTileAction(
+          label: _acceptActionLabel(escrow),
+          onPressed: null,
+          style: _PaySafeActionStyle.primary,
+        ),
+      );
+    }
+    if (_canRelease(escrow)) {
+      actions.add(
+        _PaySafeTileAction(
+          label: _t('Release', 'Achia'),
+          onPressed: _busy ? null : () => _releasePaySafe(escrow),
+          style: _PaySafeActionStyle.tonal,
+        ),
+      );
+    }
+    if (_canRefund(escrow)) {
+      actions.add(
+        _PaySafeTileAction(
+          label: _refundActionLabel(escrow),
+          onPressed: _busy ? null : () => _refundPaySafe(escrow),
+        ),
+      );
+    }
+    if (_canDispute(escrow)) {
+      actions.add(
+        _PaySafeTileAction(
+          label: _t('Dispute', 'Pingamizi'),
+          onPressed: _busy ? null : () => _disputePaySafe(escrow),
+        ),
+      );
+    }
+    return actions;
   }
 
   void _mergeEscrowMutation(
@@ -774,12 +1460,22 @@ class _PaySafeScreenState extends State<PaySafeScreen>
     required Map<String, dynamic> response,
     required String action,
   }) {
-    final merged = Map<String, dynamic>.from(current)..addAll(response);
-    if (_pickString([
-      merged['status'],
-      merged['state'],
-      merged['escrow_status'],
-    ]).isNotEmpty) {
+    final nested =
+        response['data'] ?? response['escrow'] ?? response['agreement'];
+    final explicitStatus = _pickString([
+      response['status'],
+      response['state'],
+      response['escrow_status'],
+      if (nested is Map) nested['status'],
+      if (nested is Map) nested['state'],
+      if (nested is Map) nested['escrow_status'],
+    ]);
+    final merged = Map<String, dynamic>.from(current);
+    if (nested is Map) {
+      merged.addAll(Map<String, dynamic>.from(nested));
+    }
+    merged.addAll(response);
+    if (explicitStatus.isNotEmpty) {
       return merged;
     }
 
@@ -787,8 +1483,8 @@ class _PaySafeScreenState extends State<PaySafeScreen>
       case 'release':
         return {
           ...merged,
-          'status': 'RELEASED',
-          'released_at': DateTime.now().toUtc().toIso8601String(),
+          'status': 'RELEASE_PENDING',
+          'release_requested_at': DateTime.now().toUtc().toIso8601String(),
         };
       case 'refund':
         return {
@@ -901,26 +1597,34 @@ class _PaySafeScreenState extends State<PaySafeScreen>
     final awaitingAcceptance = _isAwaitingReceiverAcceptance(escrow);
     final receiverAccepted = _receiverAccepted(escrow);
     final actorRole = _actorRole(escrow);
-    final expired = _pickBool([
-      escrow['holdWindowExpired'],
-      escrow['hold_window_expired'],
-    ]);
+    final expired = _isHoldWindowExpired(escrow);
+    if (expired && (_isReleasePending(escrow) || _isReturnPending(escrow))) {
+      return actorRole == 'receiver'
+          ? _t(
+              'The response window has ended. Accept is locked; open a dispute if this PaySafe needs review.',
+              'Dirisha la kujibu limeisha. Kubali imefungwa; fungua pingamizi kama PaySafe hii inahitaji ukaguzi.',
+            )
+          : _t(
+              'The receiver response window has ended. This PaySafe needs review or automated resolution.',
+              'Dirisha la majibu ya mpokeaji limeisha. PaySafe hii inahitaji ukaguzi au maamuzi ya mfumo.',
+            );
+    }
     if (_isReturnPending(escrow)) {
       return actorRole == 'receiver'
           ? _t(
               'Sender requested a return. Accept it or open a dispute within 24 hours.',
-              'Mtumaji ameomba return. Ikubali au fungua dispute ndani ya saa 24.',
+              'Mtumaji ameomba kurudisha. Kubali au fungua pingamizi ndani ya saa 24.',
             )
           : _t(
               'Return request is waiting for receiver response. It auto-returns after 24 hours if there is no dispute.',
-              'Ombi la return linasubiri jibu la mpokeaji. Litarudi kiotomatiki baada ya saa 24 kama hakuna dispute.',
+              'Ombi la kurudisha linasubiri jibu la mpokeaji. Fedha zitarudi kiotomatiki baada ya saa 24 kama hakuna pingamizi.',
             );
     }
     if (_isReleasePending(escrow)) {
       return actorRole == 'receiver'
           ? _t(
               'Sender requested release. Accept to receive funds, or open a dispute if something is wrong.',
-              'Mtumaji ameomba release. Kubali upokee fedha, au fungua dispute kama kuna tatizo.',
+              'Mtumaji ameomba kuachia fedha. Kubali upokee fedha, au fungua pingamizi kama kuna tatizo.',
             )
           : _t(
               'Release is waiting for receiver final acceptance.',
@@ -970,16 +1674,14 @@ class _PaySafeScreenState extends State<PaySafeScreen>
   }
 
   String _acceptActionLabel(Map<String, dynamic> escrow) {
-    if (_isReturnPending(escrow)) return _t('Accept Return', 'Kubali Return');
-    if (_isReleasePending(escrow)) {
-      return _t('Accept Release', 'Kubali Release');
-    }
-    return _t('Confirm PaySafe', 'Thibitisha PaySafe');
+    if (_isReturnPending(escrow)) return _t('Accept', 'Kubali');
+    if (_isReleasePending(escrow)) return _t('Accept', 'Kubali');
+    return _t('Confirm', 'Thibitisha');
   }
 
   String _refundActionLabel(Map<String, dynamic> escrow) {
     return _receiverAccepted(escrow)
-        ? _t('Request Return', 'Omba Return')
+        ? _t('Return', 'Rudisha')
         : _t('Cancel', 'Ghairi');
   }
 
@@ -998,9 +1700,6 @@ class _PaySafeScreenState extends State<PaySafeScreen>
     final activeEscrows = _escrows
         .where(_isActiveEscrow)
         .toList(growable: false);
-    final archivedEscrows = _escrows
-        .where((escrow) => !_isActiveEscrow(escrow))
-        .toList(growable: false);
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
@@ -1008,9 +1707,9 @@ class _PaySafeScreenState extends State<PaySafeScreen>
         title: const Text('ORBI PaySafe'),
         actions: [
           IconButton(
-            tooltip: _t('Refresh', 'Sasisha'),
-            onPressed: _busy ? null : () => _loadPaySafe(),
-            icon: const Icon(Icons.refresh_rounded),
+            tooltip: _t('PaySafe menu', 'Menu ya PaySafe'),
+            onPressed: _busy ? null : _openPaySafeMenu,
+            icon: const Icon(Icons.more_vert_rounded),
           ),
         ],
       ),
@@ -1108,53 +1807,13 @@ class _PaySafeScreenState extends State<PaySafeScreen>
                         title: _title(escrow),
                         reference: _referenceId(escrow),
                         status: _status(escrow),
+                        sideLabel: _sideLabel(escrow),
                         summary: _holdSummary(escrow),
                         amount: _amount(escrow),
-                        acceptLabel: _acceptActionLabel(escrow),
-                        refundLabel: _refundActionLabel(escrow),
-                        onAccept: _busy || !_canAccept(escrow)
-                            ? null
-                            : () => _acceptPaySafe(escrow),
-                        onRelease: _busy || !_canRelease(escrow)
-                            ? null
-                            : () => _releasePaySafe(escrow),
-                        onDispute: _busy || !_canDispute(escrow)
-                            ? null
-                            : () => _disputePaySafe(escrow),
-                        onRefund: _busy || !_canRefund(escrow)
-                            ? null
-                            : () => _refundPaySafe(escrow),
+                        actions: _actionPlan(escrow),
                         isSw: _isSw,
                       ),
                       const SizedBox(height: 12),
-                    ],
-                    if (archivedEscrows.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        _t('Resolved history', 'Historia iliyokamilika'),
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w800,
-                          color: colors.textPrimary,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      for (final escrow in archivedEscrows.take(4)) ...[
-                        _PaySafeTile(
-                          title: _title(escrow),
-                          reference: _referenceId(escrow),
-                          status: _status(escrow),
-                          summary: _holdSummary(escrow),
-                          amount: _amount(escrow),
-                          acceptLabel: _acceptActionLabel(escrow),
-                          refundLabel: _refundActionLabel(escrow),
-                          onAccept: null,
-                          onRelease: null,
-                          onDispute: null,
-                          onRefund: null,
-                          isSw: _isSw,
-                        ),
-                        const SizedBox(height: 12),
-                      ],
                     ],
                   ],
                 ],
@@ -1162,6 +1821,189 @@ class _PaySafeScreenState extends State<PaySafeScreen>
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _PaySafeMenuAction extends StatelessWidget {
+  const _PaySafeMenuAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = OrbiTheme.uiOf(context);
+    final enabled = onTap != null;
+    return Material(
+      color: enabled
+          ? colors.accentSoft.withValues(alpha: 0.70)
+          : colors.cardMuted.withValues(alpha: 0.62),
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 20,
+                color: enabled ? colors.accent : colors.textMuted,
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: enabled ? colors.textPrimary : colors.textMuted,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PaySafeHistoryTile extends StatelessWidget {
+  const _PaySafeHistoryTile({
+    required this.title,
+    required this.reference,
+    required this.status,
+    required this.amount,
+    required this.summary,
+    required this.isSw,
+    required this.onCopy,
+    required this.onTrash,
+  });
+
+  final String title;
+  final String reference;
+  final String status;
+  final String amount;
+  final String summary;
+  final bool isSw;
+  final VoidCallback onCopy;
+  final VoidCallback onTrash;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = OrbiTheme.uiOf(context);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: colors.cardMuted.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: colors.border.withValues(alpha: 0.50)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: colors.accentSoft.withValues(alpha: 0.75),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Icon(Icons.shield_rounded, color: colors.accent),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: colors.textPrimary,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 15.5,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      status,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: colors.textMuted,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                amount,
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                  color: colors.textPrimary,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+          if (reference.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    reference,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: colors.textMuted,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.2,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: isSw ? 'Nakili ID' : 'Copy ID',
+                  onPressed: onCopy,
+                  icon: const Icon(Icons.copy_rounded, size: 18),
+                ),
+                IconButton(
+                  tooltip: isSw ? 'Tupa' : 'Trash',
+                  onPressed: onTrash,
+                  icon: const Icon(Icons.delete_outline_rounded, size: 20),
+                ),
+              ],
+            ),
+          ],
+          if (summary.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              summary,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: colors.textMuted, height: 1.35),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -1880,33 +2722,50 @@ class _PaySafeHero extends StatelessWidget {
   }
 }
 
+enum _PaySafeSide { sender, receiver, unknown }
+
+enum _PaySafeStage {
+  awaitingReceiver,
+  held,
+  releasePending,
+  returnPending,
+  review,
+  closed,
+}
+
+enum _PaySafeActionStyle { outline, primary, tonal }
+
+class _PaySafeTileAction {
+  const _PaySafeTileAction({
+    required this.label,
+    required this.onPressed,
+    this.style = _PaySafeActionStyle.outline,
+  });
+
+  final String label;
+  final VoidCallback? onPressed;
+  final _PaySafeActionStyle style;
+}
+
 class _PaySafeTile extends StatelessWidget {
   const _PaySafeTile({
     required this.title,
     required this.reference,
     required this.status,
+    required this.sideLabel,
     required this.summary,
     required this.amount,
-    required this.acceptLabel,
-    required this.refundLabel,
-    required this.onAccept,
-    required this.onRelease,
-    required this.onDispute,
-    required this.onRefund,
+    required this.actions,
     required this.isSw,
   });
 
   final String title;
   final String reference;
   final String status;
+  final String sideLabel;
   final String summary;
   final String amount;
-  final String acceptLabel;
-  final String refundLabel;
-  final VoidCallback? onAccept;
-  final VoidCallback? onRelease;
-  final VoidCallback? onDispute;
-  final VoidCallback? onRefund;
+  final List<_PaySafeTileAction> actions;
   final bool isSw;
 
   String _t(String en, String sw) => isSw ? sw : en;
@@ -1917,46 +2776,11 @@ class _PaySafeTile extends StatelessWidget {
     final accent = _statusAccent(context);
     return LayoutBuilder(
       builder: (context, constraints) {
-        final actionCount = [
-          onAccept,
-          onRelease,
-          onDispute,
-          onRefund,
-        ].whereType<VoidCallback>().length;
-        final actionButtons = <Widget>[
-          if (onAccept != null)
-            _PaySafeActionButton(
-              width: double.infinity,
-              label: acceptLabel,
-              onPressed: onAccept,
-              filled: true,
-            ),
-          if (onRelease != null)
-            _PaySafeActionButton(
-              width: double.infinity,
-              label: _t('Release', 'Achia'),
-              onPressed: onRelease,
-              tonal: true,
-            ),
-          if (onDispute != null)
-            _PaySafeActionButton(
-              width: double.infinity,
-              label: _t('Dispute', 'Pinga'),
-              onPressed: onDispute,
-            ),
-          if (onRefund != null)
-            _PaySafeActionButton(
-              width: double.infinity,
-              label: refundLabel,
-              onPressed: onRefund,
-            ),
-        ];
-        final actionGap = actionButtons.length >= 3 ? 6.0 : 8.0;
         return Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
             color: colors.card,
-            borderRadius: BorderRadius.circular(24),
+            borderRadius: BorderRadius.circular(26),
             border: Border.all(color: colors.border),
             boxShadow: [
               BoxShadow(
@@ -1973,11 +2797,19 @@ class _PaySafeTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Container(
-                    width: 46,
-                    height: 46,
+                    width: 50,
+                    height: 50,
                     decoration: BoxDecoration(
-                      color: accent.withValues(alpha: 0.14),
-                      borderRadius: BorderRadius.circular(16),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          accent.withValues(alpha: 0.20),
+                          colors.accent.withValues(alpha: 0.10),
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: accent.withValues(alpha: 0.24)),
                     ),
                     child: Icon(Icons.shield_outlined, color: accent),
                   ),
@@ -1988,29 +2820,38 @@ class _PaySafeTile extends StatelessWidget {
                       children: [
                         Text(
                           title,
-                          maxLines: 3,
+                          maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: colors.textPrimary,
                             fontWeight: FontWeight.w800,
-                            fontSize: 16,
-                            height: 1.15,
+                            fontSize: 17,
+                            height: 1.18,
                           ),
                         ),
-                        const SizedBox(height: 8),
-                        Align(
-                          alignment: AlignmentDirectional.centerStart,
-                          child: _PaySafeStatusChip(
-                            label: status,
-                            color: accent,
+                        const SizedBox(height: 6),
+                        Text(
+                          sideLabel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: colors.textMuted,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w700,
                           ),
+                        ),
+                        const SizedBox(height: 10),
+                        _PaySafeStatusChip(
+                          label: status,
+                          color: accent,
+                          expanded: true,
                         ),
                       ],
                     ),
                   ),
                   const SizedBox(width: 10),
                   ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 132),
+                    constraints: const BoxConstraints(maxWidth: 136),
                     child: FittedBox(
                       fit: BoxFit.scaleDown,
                       alignment: AlignmentDirectional.centerEnd,
@@ -2019,7 +2860,7 @@ class _PaySafeTile extends StatelessWidget {
                         style: TextStyle(
                           color: colors.textPrimary,
                           fontWeight: FontWeight.w900,
-                          fontSize: 16,
+                          fontSize: 17,
                         ),
                       ),
                     ),
@@ -2030,40 +2871,93 @@ class _PaySafeTile extends StatelessWidget {
                 const SizedBox(height: 12),
                 _PaySafeReferenceRow(
                   reference: reference,
-                  copiedLabel: _t('Escrow ID copied', 'ID ya Escrow imenakiliwa'),
+                  copiedLabel: _t(
+                    'Escrow ID copied',
+                    'ID ya Escrow imenakiliwa',
+                  ),
                 ),
               ],
               const SizedBox(height: 12),
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
                   color: colors.cardMuted.withValues(alpha: 0.72),
-                  borderRadius: BorderRadius.circular(18),
+                  borderRadius: BorderRadius.circular(20),
                   border: Border.all(color: colors.border),
                 ),
-                child: Text(
-                  summary,
-                  maxLines: 5,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: colors.textMuted,
-                    height: 1.35,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.info_outline_rounded, size: 18, color: accent),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        summary,
+                        maxLines: 4,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: colors.textMuted,
+                          height: 1.38,
+                          fontSize: 13.2,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              if (actionCount > 0) ...[
+              if (actions.isNotEmpty) ...[
                 const SizedBox(height: 14),
-                Row(
-                  children: [
-                    for (var i = 0; i < actionButtons.length; i++) ...[
-                      Expanded(child: actionButtons[i]),
-                      if (i != actionButtons.length - 1)
-                        SizedBox(width: actionGap),
-                    ],
-                  ],
+                LayoutBuilder(
+                  builder: (context, actionConstraints) {
+                    final twoColumn = actionConstraints.maxWidth >= 300;
+                    final itemWidth = twoColumn
+                        ? (actionConstraints.maxWidth - 8) / 2
+                        : actionConstraints.maxWidth;
+                    return Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final action in actions)
+                          _PaySafeActionButton(
+                            width: itemWidth,
+                            label: action.label,
+                            onPressed: action.onPressed,
+                            filled: action.style == _PaySafeActionStyle.primary,
+                            tonal: action.style == _PaySafeActionStyle.tonal,
+                          ),
+                      ],
+                    );
+                  },
+                ),
+              ] else ...[
+                const SizedBox(height: 14),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: colors.cardMuted.withValues(alpha: 0.45),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: colors.border.withValues(alpha: 0.72),
+                    ),
+                  ),
+                  child: Text(
+                    _t(
+                      'No action is required from you right now.',
+                      'Hakuna hatua inayohitajika kutoka kwako kwa sasa.',
+                    ),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: colors.textMuted,
+                      fontSize: 12.8,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ),
               ],
             ],
@@ -2140,11 +3034,7 @@ class _PaySafeReferenceRow extends StatelessWidget {
                   ),
                 );
             },
-            icon: Icon(
-              Icons.copy_rounded,
-              size: 18,
-              color: colors.accent,
-            ),
+            icon: Icon(Icons.copy_rounded, size: 18, color: colors.accent),
           ),
         ],
       ),
@@ -2153,15 +3043,20 @@ class _PaySafeReferenceRow extends StatelessWidget {
 }
 
 class _PaySafeStatusChip extends StatelessWidget {
-  const _PaySafeStatusChip({required this.label, required this.color});
+  const _PaySafeStatusChip({
+    required this.label,
+    required this.color,
+    this.expanded = false,
+  });
 
   final String label;
   final Color color;
+  final bool expanded;
 
   @override
   Widget build(BuildContext context) {
     final colors = OrbiTheme.uiOf(context);
-    return Container(
+    final chip = Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.12),
@@ -2179,6 +3074,7 @@ class _PaySafeStatusChip extends StatelessWidget {
         ),
       ),
     );
+    return expanded ? SizedBox(width: double.infinity, child: chip) : chip;
   }
 }
 
@@ -2220,11 +3116,7 @@ class _PaySafeActionButton extends StatelessWidget {
       return SizedBox(
         width: width,
         height: 44,
-        child: FilledButton(
-          onPressed: onPressed,
-          style: style,
-          child: child,
-        ),
+        child: FilledButton(onPressed: onPressed, style: style, child: child),
       );
     }
     if (tonal) {
@@ -2241,11 +3133,7 @@ class _PaySafeActionButton extends StatelessWidget {
     return SizedBox(
       width: width,
       height: 44,
-      child: OutlinedButton(
-        onPressed: onPressed,
-        style: style,
-        child: child,
-      ),
+      child: OutlinedButton(onPressed: onPressed, style: style, child: child),
     );
   }
 }

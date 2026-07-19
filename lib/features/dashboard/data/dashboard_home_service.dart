@@ -16,7 +16,7 @@ class DashboardHomeService {
   Future<List<Map<String, dynamic>>> fetchSharedPots(String token) {
     return _fetchCollection(
       token,
-      endpoints: const ['/api/v1/wealth/shared-pots', '/v1/wealth/shared-pots'],
+      endpoints: const ['/v1/wealth/shared-pots', '/api/v1/wealth/shared-pots'],
       keys: const ['pots', 'items', 'results'],
     );
   }
@@ -25,8 +25,8 @@ class DashboardHomeService {
     return _fetchCollection(
       token,
       endpoints: const [
-        '/api/v1/wealth/shared-budgets',
         '/v1/wealth/shared-budgets',
+        '/api/v1/wealth/shared-budgets',
       ],
       keys: const ['budgets', 'items', 'results'],
     );
@@ -36,8 +36,8 @@ class DashboardHomeService {
     return _fetchCollection(
       token,
       endpoints: const [
-        '/api/v1/wealth/bill-reserves',
         '/v1/wealth/bill-reserves',
+        '/api/v1/wealth/bill-reserves',
       ],
       keys: const ['reserves', 'items', 'results'],
     );
@@ -50,8 +50,8 @@ class DashboardHomeService {
     return _fetchCollection(
       token,
       endpoints: <String>[
-        '/api/v1/transactions?limit=$limit',
         '/v1/transactions?limit=$limit',
+        '/api/v1/transactions?limit=$limit',
       ],
       keys: const ['transactions', 'items', 'results', 'rows', 'history'],
     );
@@ -61,8 +61,8 @@ class DashboardHomeService {
     return _fetchCollection(
       token,
       endpoints: const [
-        '/api/v1/wealth/upcoming-commitments',
         '/v1/wealth/upcoming-commitments',
+        '/api/v1/wealth/upcoming-commitments',
       ],
       keys: const ['commitments', 'items', 'results'],
     );
@@ -74,8 +74,8 @@ class DashboardHomeService {
     return _fetchCollection(
       token,
       endpoints: const [
-        '/api/v1/insights/merchant-recommendations',
         '/v1/insights/merchant-recommendations',
+        '/api/v1/insights/merchant-recommendations',
       ],
       keys: const ['recommendations', 'items', 'results'],
     );
@@ -84,7 +84,7 @@ class DashboardHomeService {
   Future<Map<String, dynamic>> fetchNetWorthSummary(String token) async {
     return _fetchMap(
       token,
-      endpoints: const ['/api/v1/wealth/net-worth', '/v1/wealth/net-worth'],
+      endpoints: const ['/v1/wealth/net-worth', '/api/v1/wealth/net-worth'],
     );
   }
 
@@ -95,13 +95,15 @@ class DashboardHomeService {
   }) async {
     for (final endpoint in endpoints) {
       try {
-        final response = await http.get(
-          Uri.parse('$_baseUrl$endpoint'),
-          headers: OrbiRequestHeaders.build(
-            token: token,
-            fingerprint: _fingerprint,
-          ),
-        ).timeout(const Duration(seconds: 6));
+        final response = await http
+            .get(
+              Uri.parse('$_baseUrl$endpoint'),
+              headers: OrbiRequestHeaders.build(
+                token: token,
+                fingerprint: _fingerprint,
+              ),
+            )
+            .timeout(const Duration(seconds: 6));
         if (response.statusCode < 200 || response.statusCode >= 300) continue;
         final body = jsonDecode(response.body);
         final list = _extractList(body, keys);
@@ -119,13 +121,15 @@ class DashboardHomeService {
   }) async {
     for (final endpoint in endpoints) {
       try {
-        final response = await http.get(
-          Uri.parse('$_baseUrl$endpoint'),
-          headers: OrbiRequestHeaders.build(
-            token: token,
-            fingerprint: _fingerprint,
-          ),
-        ).timeout(const Duration(seconds: 6));
+        final response = await http
+            .get(
+              Uri.parse('$_baseUrl$endpoint'),
+              headers: OrbiRequestHeaders.build(
+                token: token,
+                fingerprint: _fingerprint,
+              ),
+            )
+            .timeout(const Duration(seconds: 6));
         if (response.statusCode < 200 || response.statusCode >= 300) continue;
         final body = jsonDecode(response.body);
         dynamic data = body;

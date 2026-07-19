@@ -9,6 +9,27 @@ class WealthService {
   final Dio _dio;
   static const Uuid _uuid = Uuid();
 
+  String createIdempotencyKey([String prefix = 'wealth']) {
+    final safePrefix = prefix.trim().isEmpty ? 'wealth' : prefix.trim();
+    return '$safePrefix-${_uuid.v4()}';
+  }
+
+  bool isPendingCommitError(Object error) {
+    if (error is DioException) {
+      return error.type == DioExceptionType.connectionTimeout ||
+          error.type == DioExceptionType.sendTimeout ||
+          error.type == DioExceptionType.receiveTimeout ||
+          error.type == DioExceptionType.connectionError;
+    }
+    final text = error.toString().toLowerCase();
+    return text.contains('timeout') ||
+        text.contains('timed out') ||
+        text.contains('connection closed') ||
+        text.contains('connection reset') ||
+        text.contains('socket') ||
+        text.contains('network');
+  }
+
   Future<Map<String, dynamic>> getSummary() async {
     final response = await _get('/wealth/summary');
     return _extractItem(response.data);
@@ -184,22 +205,26 @@ class WealthService {
 
   Future<Map<String, dynamic>> contributeToSharedPot(
     String potId,
-    Map<String, dynamic> payload,
-  ) async {
+    Map<String, dynamic> payload, {
+    String? idempotencyKey,
+  }) async {
     final response = await _postWithIdempotency(
       '/wealth/shared-pots/$potId/contribute',
       payload,
+      idempotencyKey: idempotencyKey,
     );
     return _extractItem(response.data);
   }
 
   Future<Map<String, dynamic>> withdrawFromSharedPot(
     String potId,
-    Map<String, dynamic> payload,
-  ) async {
+    Map<String, dynamic> payload, {
+    String? idempotencyKey,
+  }) async {
     final response = await _postWithIdempotency(
       '/wealth/shared-pots/$potId/withdraw',
       payload,
+      idempotencyKey: idempotencyKey,
     );
     return _extractItem(response.data);
   }
@@ -342,11 +367,13 @@ class WealthService {
 
   Future<Map<String, dynamic>> allocateSharedBudget(
     String budgetId,
-    Map<String, dynamic> payload,
-  ) async {
+    Map<String, dynamic> payload, {
+    String? idempotencyKey,
+  }) async {
     final response = await _postWithIdempotency(
       '/wealth/shared-budgets/$budgetId/allocate',
       payload,
+      idempotencyKey: idempotencyKey,
     );
     return _extractItem(response.data);
   }
@@ -472,11 +499,13 @@ class WealthService {
 
   Future<Map<String, dynamic>> settleSharedBudgetSpend(
     String budgetId,
-    Map<String, dynamic> payload,
-  ) async {
+    Map<String, dynamic> payload, {
+    String? idempotencyKey,
+  }) async {
     final response = await _postWithIdempotency(
       '/wealth/shared-budgets/$budgetId/spend/settle',
       payload,
+      idempotencyKey: idempotencyKey,
     );
     return _extractItem(response.data);
   }
@@ -525,21 +554,24 @@ class WealthService {
 
   Future<Response<dynamic>> _postWithIdempotency(
     String path,
-    Map<String, dynamic> payload,
-  ) async {
-    final idempotencyKey = _uuid.v4();
+    Map<String, dynamic> payload, {
+    String? idempotencyKey,
+  }) async {
+    final resolvedIdempotencyKey = (idempotencyKey?.trim().isNotEmpty ?? false)
+        ? idempotencyKey!.trim()
+        : createIdempotencyKey();
     try {
       return await _dio.post(
         path,
         data: {
           ...payload,
-          'idempotencyKey': idempotencyKey,
-          'idempotency_key': idempotencyKey,
+          'idempotencyKey': resolvedIdempotencyKey,
+          'idempotency_key': resolvedIdempotencyKey,
         },
         options: Options(
           headers: {
-            'Idempotency-Key': idempotencyKey,
-            'x-idempotency-key': idempotencyKey,
+            'Idempotency-Key': resolvedIdempotencyKey,
+            'x-idempotency-key': resolvedIdempotencyKey,
           },
         ),
       );

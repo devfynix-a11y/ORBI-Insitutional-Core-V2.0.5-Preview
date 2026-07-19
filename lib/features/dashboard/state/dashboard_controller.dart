@@ -106,6 +106,7 @@ class DashboardController extends ChangeNotifier {
     String token, {
     Duration optionalTimeout = const Duration(seconds: 8),
     Duration requiredTimeout = const Duration(seconds: 12),
+    bool forceRefresh = false,
   }) async {
     _isLoading = true;
     _error = null;
@@ -115,6 +116,7 @@ class DashboardController extends ChangeNotifier {
       final data = await _fetchDashboardPayload(
         token,
         requestTimeout: requiredTimeout,
+        forceRefresh: forceRefresh,
       );
       final rawTransactions = _extractListFromPayload(
         data['transactions'],
@@ -125,7 +127,11 @@ class DashboardController extends ChangeNotifier {
         'items',
         'results',
       ]);
-      final wallets = await _fetchWallets(token, dashboardWallets);
+      final wallets = await _fetchWallets(
+        token,
+        dashboardWallets,
+        requestTimeout: requiredTimeout,
+      );
 
       _applyWallets(wallets);
 
@@ -139,6 +145,63 @@ class DashboardController extends ChangeNotifier {
       );
 
       _allocateGoalAndBudgetBalances();
+
+      _transactions =
+          rawTransactions
+              .map((item) => TransactionActivity.fromJson(item))
+              .toList()
+            ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      _insights = const FinancialInsights.empty();
+      _changePercent = _resolveMonthlyPerformancePercent(data, rawTransactions);
+      _messages = _extractMessages(data);
+      _currencyCode = _resolveCurrencyCode(data, wallets);
+      _liabilitiesBackedByApi = false;
+      _liabilities =
+          _firstNonNullDouble([
+            data['liabilities'],
+            data['total_liabilities'],
+            data['totalLiabilities'],
+            data['debt'],
+            data['total_debt'],
+            (data['summary'] is Map ? data['summary']['liabilities'] : null),
+            (data['summary'] is Map
+                ? data['summary']['total_liabilities']
+                : null),
+            (data['balances'] is Map ? data['balances']['liabilities'] : null),
+          ]) ??
+          0.0;
+      _assets =
+          _firstNonNullDouble([
+            data['assets'],
+            data['total_assets'],
+            data['totalAssets'],
+            (data['summary'] is Map ? data['summary']['assets'] : null),
+            (data['summary'] is Map ? data['summary']['total_assets'] : null),
+          ]) ??
+          wallets.fold<double>(0, (sum, wallet) {
+            final balance = _toDouble(
+              wallet['balance'] ??
+                  wallet['available_balance'] ??
+                  wallet['wallet_balance'] ??
+                  wallet['current_balance'],
+            );
+            return sum + math.max(0, balance);
+          });
+      _netWorth =
+          _firstNonNullDouble([
+            data['net_worth'],
+            data['netWorth'],
+            (data['summary'] is Map ? data['summary']['net_worth'] : null),
+            (data['summary'] is Map ? data['summary']['netWorth'] : null),
+          ]) ??
+          (_assets - _liabilities);
+      _lastUpdatedAt = DateTime.now();
+      _homeSnapshot = _buildHomeSnapshot(
+        data: data,
+        merchantRecommendations: const <Map<String, dynamic>>[],
+      );
+      _isLoading = false;
+      notifyListeners();
 
       final supplementResults = await Future.wait<dynamic>([
         _guardedDashboardFetch<List<Map<String, dynamic>>>(
@@ -287,14 +350,17 @@ class DashboardController extends ChangeNotifier {
   Future<Map<String, dynamic>> _fetchDashboardPayload(
     String token, {
     required Duration requestTimeout,
+    required bool forceRefresh,
   }) async {
-    final cached = AppRuntimeCache.freshDashboardPayload;
-    if (cached != null && cached.isNotEmpty) return cached;
+    if (!forceRefresh) {
+      final cached = AppRuntimeCache.freshDashboardPayload;
+      if (cached != null && cached.isNotEmpty) return cached;
+    }
 
     final endpoints = [
+      Uri.parse('$baseUrl/v1/dashboard'),
       Uri.parse('$baseUrl/api/v1/dashboard'),
       Uri.parse('$baseUrl/api/v1/user/dashboard'),
-      Uri.parse('$baseUrl/v1/dashboard'),
     ];
     final failures = <String>[];
     for (final endpoint in endpoints) {
@@ -1030,15 +1096,19 @@ class DashboardController extends ChangeNotifier {
 
   Future<List<Map<String, dynamic>>> _fetchWallets(
     String token,
-    List<Map<String, dynamic>> fallback,
-  ) async {
+    List<Map<String, dynamic>> fallback, {
+    required Duration requestTimeout,
+  }) async {
+    if (fallback.isNotEmpty) return fallback;
     final endpoints = [
-      Uri.parse('$baseUrl/api/v1/wallets'),
       Uri.parse('$baseUrl/v1/wallets'),
+      Uri.parse('$baseUrl/api/v1/wallets'),
     ];
     for (final endpoint in endpoints) {
       try {
-        final response = await http.get(endpoint, headers: _headers(token));
+        final response = await http
+            .get(endpoint, headers: _headers(token))
+            .timeout(requestTimeout);
         if (response.statusCode < 200 || response.statusCode >= 300) continue;
         final body = jsonDecode(response.body);
         final wallets = _extractListFromPayload(body, const [

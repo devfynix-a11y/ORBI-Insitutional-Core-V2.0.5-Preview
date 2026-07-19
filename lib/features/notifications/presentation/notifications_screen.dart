@@ -10,6 +10,7 @@ import '../../../core/widgets/orbi_background.dart';
 import '../../../core/widgets/orbi_responsive.dart';
 import '../../../core/widgets/orbi_shimmer.dart';
 import '../../../core/widgets/orbi_state_card.dart';
+import '../../payment/data/service_payment_challenge_service.dart';
 import '../state/notification_controller.dart';
 
 String toCustomerFriendlyText(String raw) {
@@ -183,13 +184,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       itemBuilder: (context, index) {
                         if (index == 0) {
                           return Padding(
-                            padding: const EdgeInsets.only(bottom: 12),
-                            child: _notificationsHero(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: _notificationListHeader(
                               ui,
                               l10n,
-                              showCenteredAction:
-                                  !_isSelecting && _unreadCount > 0,
-                              compactAction: compact,
+                              compact: compact,
                             ),
                           );
                         }
@@ -219,23 +218,20 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                             },
                             child: AnimatedContainer(
                               duration: const Duration(milliseconds: 220),
-                              padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
+                              padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
                               decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                  colors: isSelected
-                                      ? [
-                                          ui.iconMuted.withValues(alpha: 0.18),
-                                          ui.cardStrong,
-                                        ]
-                                      : [ui.card, ui.cardMuted],
-                                ),
-                                borderRadius: BorderRadius.circular(16),
+                                color: isSelected
+                                    ? ui.cardStrong
+                                    : notification.isRead
+                                    ? ui.card
+                                    : ui.cardMuted,
+                                borderRadius: BorderRadius.circular(15),
                                 border: Border.all(
                                   color: isSelected
                                       ? ui.iconMuted.withValues(alpha: 0.28)
-                                      : ui.border,
+                                      : notification.isRead
+                                      ? ui.border
+                                      : ui.borderStrong.withValues(alpha: 0.72),
                                   width: isSelected ? 1.3 : 1,
                                 ),
                               ),
@@ -350,24 +346,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                           : FontWeight.w700,
                     ),
                   ),
-                  const SizedBox(height: 3),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 2,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      Text(
-                        timestamp,
-                        style: TextStyle(fontSize: 11, color: ui.textSoft),
-                      ),
-                      if (!notification.isRead)
-                        Icon(Icons.brightness_1, size: 8, color: ui.iconMuted),
-                    ],
-                  ),
-                  const SizedBox(height: 3),
+                  const SizedBox(height: 2),
                   Text(
                     message,
-                    maxLines: 2,
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: ui.textMuted,
@@ -380,13 +362,27 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             ),
             if (!_isSelecting) ...[
               const SizedBox(width: 8),
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Icon(
-                  Icons.chevron_right_rounded,
-                  size: 18,
-                  color: ui.iconMuted.withValues(alpha: 0.9),
-                ),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    timestamp,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: ui.textSoft,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    size: 18,
+                    color: ui.iconMuted.withValues(alpha: 0.76),
+                  ),
+                ],
               ),
             ],
           ],
@@ -395,195 +391,66 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
-  Widget _notificationsHero(
+  Widget _notificationListHeader(
     OrbiUiTokens ui,
     AppLocalizations l10n, {
-    bool showCenteredAction = false,
-    bool compactAction = false,
+    required bool compact,
   }) {
     final sw =
         Localizations.localeOf(context).languageCode.toLowerCase() == 'sw';
 
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            Color.lerp(ui.iconMuted, ui.card, 0.92) ?? ui.card,
-            ui.cardStrong,
-            ui.card,
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: ui.borderStrong),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            sw ? 'Muhtasari wa arifa' : 'Notification summary',
-            style: TextStyle(
-              color: ui.textMuted,
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.3,
-            ),
-          ),
-          const SizedBox(height: 6),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final compactHero = constraints.maxWidth < 360;
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    l10n.notificationsTitle,
-                    style: TextStyle(
-                      color: ui.textPrimary,
-                      fontSize: compactHero ? 22 : 26,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    sw
-                        ? 'Fuatilia tahadhari ambazo hazijasomwa, maombi ya hatua, na matukio ya akaunti katika orodha moja.'
-                        : 'Track unread alerts, action requests, and account events in one prioritized list.',
-                    maxLines: compactHero ? 3 : 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: ui.textMuted, height: 1.4),
-                  ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: [
-                      _heroMetric(
-                        ui,
-                        Icons.mark_email_unread_outlined,
-                        sw ? 'Hazijasomwa' : 'Unread',
-                        '$_unreadCount',
-                      ),
-                      _heroMetric(
-                        ui,
-                        Icons.mail_outline_rounded,
-                        sw ? 'Jumla' : 'Total',
-                        '${_notifications.length}',
-                      ),
-                      _heroMetric(
-                        ui,
-                        Icons.done_all_rounded,
-                        sw ? 'Zimesomwa' : 'Read',
-                        '${_notifications.length - _unreadCount}',
-                      ),
-                    ],
-                  ),
-                  if (showCenteredAction) ...[
-                    const SizedBox(height: 12),
-                    Center(
-                      child: compactAction
-                          ? FilledButton.tonalIcon(
-                              onPressed: _markAllAsRead,
-                              icon: const Icon(
-                                Icons.done_all_rounded,
-                                size: 18,
-                              ),
-                              label: Text(l10n.notificationsMarkAllRead),
-                            )
-                          : Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: ui.card.withValues(alpha: 0.78),
-                                borderRadius: BorderRadius.circular(999),
-                                border: Border.all(color: ui.border),
-                              ),
-                              child: TextButton.icon(
-                                onPressed: _markAllAsRead,
-                                style: TextButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 6,
-                                  ),
-                                  minimumSize: Size.zero,
-                                  tapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
-                                ),
-                                icon: Icon(
-                                  Icons.done_all_rounded,
-                                  color: ui.iconMuted,
-                                  size: 18,
-                                ),
-                                label: Text(
-                                  l10n.notificationsMarkAllRead,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: ui.iconMuted,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ),
-                            ),
-                    ),
-                  ],
-                ],
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _heroMetric(
-    OrbiUiTokens ui,
-    IconData icon,
-    String label,
-    String value,
-  ) {
-    return Container(
-      constraints: const BoxConstraints(minWidth: 96, maxWidth: 200),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-      decoration: BoxDecoration(
-        color: ui.card.withValues(alpha: 0.9),
+        color: ui.card.withValues(alpha: 0.82),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: ui.border),
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 18, color: ui.iconMuted),
-          const SizedBox(width: 10),
-          Flexible(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  label,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: ui.textMuted, fontSize: 10.5),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: ui.textPrimary,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 12.5,
-                  ),
-                ),
-              ],
+          Icon(
+            Icons.notifications_none_rounded,
+            size: 18,
+            color: ui.iconMuted,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              sw
+                  ? '${_notifications.length} arifa'
+                  : '${_notifications.length} notifications',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: ui.textMuted,
+                fontWeight: FontWeight.w700,
+                fontSize: compact ? 12 : 13,
+              ),
             ),
           ),
+          if (!_isSelecting && _unreadCount > 0)
+            TextButton.icon(
+              onPressed: _markAllAsRead,
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 4,
+                ),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              icon: Icon(Icons.done_all_rounded, color: ui.iconMuted, size: 17),
+              label: Text(
+                l10n.notificationsMarkAllRead,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: ui.iconMuted,
+                  fontSize: compact ? 11.5 : 12.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -702,6 +569,10 @@ class NotificationDetailPage extends StatefulWidget {
 
 class _NotificationDetailPageState extends State<NotificationDetailPage> {
   final List<TapGestureRecognizer> _recognizers = <TapGestureRecognizer>[];
+  final ServicePaymentChallengeService _challengeService =
+      ServicePaymentChallengeService();
+  final Map<String, String> _challengeIdempotencyKeys = <String, String>{};
+  String? _respondingDecision;
 
   @override
   void dispose() {
@@ -819,6 +690,200 @@ class _NotificationDetailPageState extends State<NotificationDetailPage> {
     return spans;
   }
 
+  Map<String, dynamic>? _servicePaymentChallenge() {
+    final metadata = widget.notification.metadata;
+    final direct = metadata['servicePaymentChallenge'];
+    if (direct is Map) return Map<String, dynamic>.from(direct);
+    final snake = metadata['service_payment_challenge'];
+    if (snake is Map) return Map<String, dynamic>.from(snake);
+    final challenge = metadata['challenge'];
+    if (challenge is Map && challenge['challengeId'] != null) {
+      return Map<String, dynamic>.from(challenge);
+    }
+    return null;
+  }
+
+  Future<void> _respondToServiceChallenge(
+    Map<String, dynamic> challenge,
+    String decision,
+  ) async {
+    final challengeId = (challenge['challengeId'] ?? challenge['challenge_id'])
+        .toString()
+        .trim();
+    if (challengeId.isEmpty || _respondingDecision != null) return;
+
+    setState(() => _respondingDecision = decision);
+    try {
+      final idempotencyKey = _challengeIdempotencyKeys.putIfAbsent(
+        '$challengeId:$decision',
+        () => _challengeService.createIdempotencyKey(
+          'service-challenge-$decision',
+        ),
+      );
+      final result = await _challengeService.respond(
+        challengeId: challengeId,
+        decision: decision,
+        idempotencyKey: idempotencyKey,
+      );
+      if (!mounted) return;
+      final approved = decision == 'approve';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            approved
+                ? 'Ombi limethibitishwa. ORBI inaendelea kushughulikia malipo.'
+                : 'Ombi limekataliwa.',
+          ),
+        ),
+      );
+      context.read<NotificationController>().markAsRead(widget.notification.id);
+      setState(() {
+        _respondingDecision = null;
+      });
+      if ((result['status'] ?? '').toString().toLowerCase() !=
+          'requires_action') {
+        Navigator.of(context).maybePop();
+      }
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _respondingDecision = null);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(toCustomerFriendlyText(error.toString()))),
+      );
+    }
+  }
+
+  Widget _buildServicePaymentChallengeCard(Map<String, dynamic> challenge) {
+    final ui = OrbiTheme.uiOf(context);
+    final amount = (challenge['amount'] ?? '').toString().trim();
+    final currency = (challenge['currency'] ?? '').toString().trim();
+    final reference = (challenge['reference'] ?? '').toString().trim();
+    final serviceName = (challenge['merchantName'] ??
+            challenge['serviceName'] ??
+            challenge['serviceCode'] ??
+            'ORBI service')
+        .toString()
+        .trim();
+    final expiresAt = (challenge['expiresAt'] ?? '').toString().trim();
+    final amountLabel = amount.isEmpty
+        ? ''
+        : '${currency.isEmpty ? 'TZS' : currency.toUpperCase()} $amount';
+    final approving = _respondingDecision == 'approve';
+    final rejecting = _respondingDecision == 'reject';
+    final busy = _respondingDecision != null;
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 22),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: ui.accent.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: ui.accent.withValues(alpha: 0.26)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: ui.accent.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(15),
+                ),
+                child: Icon(Icons.verified_user_outlined, color: ui.accent),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Ombi la malipo',
+                      style: TextStyle(
+                        color: ui.textPrimary,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    if (amountLabel.isNotEmpty)
+                      Text(
+                        amountLabel,
+                        style: TextStyle(
+                          color: ui.textMuted,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            'Thibitisha kama unaruhusu $serviceName kuendelea na ombi hili.',
+            style: TextStyle(color: ui.textMuted, height: 1.35),
+          ),
+          if (reference.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              'Ref: $reference',
+              style: TextStyle(
+                color: ui.textSoft,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+          if (expiresAt.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Muda wa ombi unaisha: $expiresAt',
+              style: TextStyle(color: ui.textSoft, fontSize: 12),
+            ),
+          ],
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: busy
+                      ? null
+                      : () => _respondToServiceChallenge(challenge, 'approve'),
+                  icon: approving
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.check_circle_outline),
+                  label: const Text('Thibitisha'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: busy
+                      ? null
+                      : () => _respondToServiceChallenge(challenge, 'reject'),
+                  icon: rejecting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.close),
+                  label: const Text('Kataa'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -830,6 +895,7 @@ class _NotificationDetailPageState extends State<NotificationDetailPage> {
       toCustomerFriendlyText(widget.notification.message),
       TextStyle(color: ui.textMuted, fontSize: 16, height: 1.5),
     );
+    final servicePaymentChallenge = _servicePaymentChallenge();
 
     return Scaffold(
       backgroundColor: ui.sheet,
@@ -872,6 +938,10 @@ class _NotificationDetailPageState extends State<NotificationDetailPage> {
                     ),
                     Divider(height: 32, color: ui.border),
                     RichText(text: TextSpan(children: spans)),
+                    if (servicePaymentChallenge != null)
+                      _buildServicePaymentChallengeCard(
+                        servicePaymentChallenge,
+                      ),
                   ],
                 ),
               ),

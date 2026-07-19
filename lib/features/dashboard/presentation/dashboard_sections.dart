@@ -830,24 +830,24 @@ class _SmartCarouselLayerState extends State<_SmartCarouselLayer> {
             final cardHeight =
                 184.0 + ((textScale - 1.0) * 44.0).clamp(0.0, 34.0);
             return Listener(
-          onPointerDown: (_) => setState(() => _pauseAutoSlide = true),
-          onPointerUp: (_) => setState(() => _pauseAutoSlide = false),
-          onPointerCancel: (_) => setState(() => _pauseAutoSlide = false),
-          child: SizedBox(
-            height: cardHeight,
-            child: PageView.builder(
-              controller: _controller,
-              itemCount: cards.length,
-              onPageChanged: (index) => setState(() => _page = index),
-              itemBuilder: (context, index) => Padding(
-                padding: EdgeInsets.only(
-                  right: index == cards.length - 1 ? 0 : 10,
+              onPointerDown: (_) => setState(() => _pauseAutoSlide = true),
+              onPointerUp: (_) => setState(() => _pauseAutoSlide = false),
+              onPointerCancel: (_) => setState(() => _pauseAutoSlide = false),
+              child: SizedBox(
+                height: cardHeight,
+                child: PageView.builder(
+                  controller: _controller,
+                  itemCount: cards.length,
+                  onPageChanged: (index) => setState(() => _page = index),
+                  itemBuilder: (context, index) => Padding(
+                    padding: EdgeInsets.only(
+                      right: index == cards.length - 1 ? 0 : 10,
+                    ),
+                    child: _SmartCard(card: cards[index], sw: sw),
+                  ),
                 ),
-                child: _SmartCard(card: cards[index], sw: sw),
               ),
-            ),
-          ),
-        );
+            );
           },
         ),
         const SizedBox(height: 10),
@@ -1308,19 +1308,24 @@ class _SmartCard extends StatelessWidget {
                       ],
                     ),
                   ),
-                  _Tag(text: display.status),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 104),
+                    child: _Tag(text: display.status),
+                  ),
                 ],
               ),
               const SizedBox(height: 10),
-              Text(
-                display.supporting,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: ui.textPrimary,
-                  fontSize: 14.4,
-                  fontWeight: FontWeight.w800,
-                  height: 1.14,
+              Flexible(
+                child: Text(
+                  display.supporting,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: ui.textPrimary,
+                    fontSize: 14.4,
+                    fontWeight: FontWeight.w800,
+                    height: 1.14,
+                  ),
                 ),
               ),
               if (display.amount.isNotEmpty) ...[
@@ -3297,7 +3302,8 @@ String _incomeTrendFilterLabel(_IncomeTrendFilter filter, bool sw) {
 }
 
 bool _isCountedIncome(TransactionActivity transaction) {
-  if (!transaction.isCredit || !_isIncomeSpendingMovement(transaction.movementFamily)) {
+  if (!transaction.isCredit ||
+      !_isIncomeSpendingMovement(transaction.movementFamily)) {
     return false;
   }
   final status = transaction.status.trim().toLowerCase();
@@ -4212,6 +4218,8 @@ class _Tag extends StatelessWidget {
       ),
       child: Text(
         text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: TextStyle(
           color: ui.accent,
           fontSize: 11,

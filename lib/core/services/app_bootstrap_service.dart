@@ -9,7 +9,8 @@ import '../security/device_fingerprint.dart';
 import '../state/app_runtime_cache.dart';
 
 class AppBootstrapService {
-  AppBootstrapService({http.Client? client}) : _client = client ?? http.Client();
+  AppBootstrapService({http.Client? client})
+    : _client = client ?? http.Client();
 
   final http.Client _client;
   final String _fingerprint = DeviceFingerprint.generate();
@@ -20,8 +21,9 @@ class AppBootstrapService {
     Duration timeout = const Duration(seconds: 10),
   }) async {
     final endpoints = [
-      Uri.parse('${AppConfig.apiUrl}/dashboard'),
+      Uri.parse('${AppConfig.baseUrl}/v1/dashboard'),
       Uri.parse('${AppConfig.baseUrl}/api/v1/dashboard'),
+      Uri.parse('${AppConfig.baseUrl}/api/v1/user/dashboard'),
     ];
 
     http.Response? response;
@@ -42,7 +44,8 @@ class AppBootstrapService {
           response = candidate;
           break;
         }
-        lastError = 'APP_BOOTSTRAP_FAILED:${candidate.statusCode}:'
+        lastError =
+            'APP_BOOTSTRAP_FAILED:${candidate.statusCode}:'
             '${candidate.body}';
       } catch (error) {
         lastError = error;

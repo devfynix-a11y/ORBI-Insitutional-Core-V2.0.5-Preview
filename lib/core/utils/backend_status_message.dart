@@ -353,35 +353,35 @@ String mapBackendStatusMessage(
   }
   if (upper.contains('SHARED_POT_DELETE_BALANCE_NOT_EMPTY')) {
     return pick(
-      'This Fungu must have a zero balance before it can be archived.',
-      'Fungu hili lazima liwe na salio sifuri kabla ya kuhifadhiwa.',
+      'This Fungu must have a zero balance before it can be deleted from the main list.',
+      'Fungu hili lazima liwe na salio sifuri kabla ya kufutwa kwenye orodha kuu.',
     );
   }
   if (upper.contains('SHARED_POT_DELETE_DENIED') ||
       upper.contains('SHARED_POT_DELETE_APPROVAL_DENIED') ||
       upper.contains('SHARED_POT_DELETE_CANCEL_DENIED')) {
     return pick(
-      'Only an authorised owner or manager can manage this archive request.',
-      'Ni mmiliki au meneja mwenye ruhusa pekee anayeweza kusimamia ombi hili la kuhifadhi.',
+      'Only an authorised owner or manager can manage this delete request.',
+      'Ni mmiliki au meneja mwenye ruhusa pekee anayeweza kusimamia ombi hili la kufuta.',
     );
   }
   if (upper.contains('SHARED_POT_DELETE_ALREADY_REVIEWED')) {
     return pick(
-      'You have already responded to this archive request.',
-      'Tayari umejibu ombi hili la kuhifadhi.',
+      'You have already responded to this delete request.',
+      'Tayari umejibu ombi hili la kufuta.',
     );
   }
   if (upper.contains('SHARED_POT_DELETE_CANCEL_CLOSED') ||
       upper.contains('SHARED_POT_DELETE_REQUEST_NOT_PENDING')) {
     return pick(
-      'This archive request can no longer be changed.',
-      'Ombi hili la kuhifadhi haliwezi kubadilishwa tena.',
+      'This delete request can no longer be changed.',
+      'Ombi hili la kufuta haliwezi kubadilishwa tena.',
     );
   }
   if (upper.contains('SHARED_POT_DELETE_REQUEST_EXISTS')) {
     return pick(
-      'There is already an active archive request for this Fungu.',
-      'Tayari kuna ombi la kuhifadhi linaloendelea kwa Fungu hili.',
+      'There is already an active delete request for this Fungu.',
+      'Tayari kuna ombi la kufuta linaloendelea kwa Fungu hili.',
     );
   }
   if (upper.contains('INSUFFICIENT_POT_FUNDS')) {
