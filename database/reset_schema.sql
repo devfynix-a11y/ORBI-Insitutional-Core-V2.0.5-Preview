@@ -5448,7 +5448,6 @@ CREATE POLICY "API gateway quarantine system write" ON public.api_gateway_quaran
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Users create transactions" ON public.transactions;
-CREATE POLICY "Users create transactions" ON public.transactions FOR INSERT WITH CHECK (auth.uid() = user_id);
 
 DROP POLICY IF EXISTS "Users view own transactions" ON public.transactions;
 CREATE POLICY "Users view own transactions" ON public.transactions FOR SELECT USING (auth.uid() = user_id);
@@ -5587,10 +5586,12 @@ DROP POLICY IF EXISTS "Staff visible to themselves" ON public.staff;
 CREATE POLICY "Staff visible to themselves" ON public.staff FOR SELECT USING (auth.uid() = id);
 
 DROP POLICY IF EXISTS "Users manage own wallets" ON public.wallets;
-CREATE POLICY "Users manage own wallets" ON public.wallets FOR ALL USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users view own wallets" ON public.wallets;
+CREATE POLICY "Users view own wallets" ON public.wallets FOR SELECT USING (auth.uid() = user_id);
 
 DROP POLICY IF EXISTS "Users manage own vaults" ON public.platform_vaults;
-CREATE POLICY "Users manage own vaults" ON public.platform_vaults FOR ALL USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users view own vaults" ON public.platform_vaults;
+CREATE POLICY "Users view own vaults" ON public.platform_vaults FOR SELECT USING (auth.uid() = user_id);
 
 DROP POLICY IF EXISTS "Service role vault bypass" ON public.platform_vaults;
 CREATE POLICY "Service role vault bypass" ON public.platform_vaults FOR ALL TO service_role USING (true) WITH CHECK (true);
