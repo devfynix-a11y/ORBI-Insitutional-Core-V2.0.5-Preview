@@ -176,6 +176,17 @@ export class GatewayPaymentIntentService {
   }
 
   async getPendingChallengeForGateway(challengeId: string) {
+    const result = await this.getChallengeForGateway(challengeId);
+    if (String(result.challenge.status) !== 'PENDING') {
+      throw new Error(`GATEWAY_CHALLENGE_${String(result.challenge.status).toUpperCase()}`);
+    }
+    if (new Date(String(result.challenge.expires_at)).getTime() <= Date.now()) {
+      throw new Error('GATEWAY_CHALLENGE_EXPIRED');
+    }
+    return result;
+  }
+
+  async getChallengeForGateway(challengeId: string) {
     const sb = getAdminSupabase();
     if (!sb) throw new Error('SERVICE_ROLE_REQUIRED');
 
@@ -186,12 +197,6 @@ export class GatewayPaymentIntentService {
       .maybeSingle();
     if (error) throw new Error(error.message || 'GATEWAY_CHALLENGE_LOOKUP_FAILED');
     if (!challenge) throw new Error('GATEWAY_CHALLENGE_NOT_FOUND');
-    if (String(challenge.status) !== 'PENDING') {
-      throw new Error(`GATEWAY_CHALLENGE_${String(challenge.status).toUpperCase()}`);
-    }
-    if (new Date(String(challenge.expires_at)).getTime() <= Date.now()) {
-      throw new Error('GATEWAY_CHALLENGE_EXPIRED');
-    }
 
     const { data: intent, error: intentError } = await sb
       .from('gateway_payment_intents')

@@ -1289,11 +1289,13 @@ export const registerInternalRoutes = (internal: Router) => {
         return res.status(400).json({ success: false, error: 'IDEMPOTENCY_KEY_REQUIRED' });
       }
 
-      const pending = await gatewayPaymentIntentService.getPendingChallengeForGateway(challengeId);
-      const userId = String(pending.challenge.customer_user_id || '').trim();
+      const challengeRecord = await gatewayPaymentIntentService.getChallengeForGateway(challengeId);
+      const userId = String(challengeRecord.challenge.customer_user_id || '').trim();
       if (!userId) throw new Error('GATEWAY_CHALLENGE_CUSTOMER_REQUIRED');
-      const challengeMetadata = pending.challenge?.metadata || {};
-      if (decision === 'approve' && challengeMetadata.otcRequired === true) {
+      const challengeMetadata = challengeRecord.challenge?.metadata || {};
+      const challengeStatus = String(challengeRecord.challenge.status || '').toUpperCase();
+      const isTerminalReplay = ['VERIFIED', 'REJECTED', 'EXPIRED', 'CANCELLED'].includes(challengeStatus);
+      if (decision === 'approve' && !isTerminalReplay && challengeMetadata.otcRequired === true) {
         const otcRequestId = String(
           req.body?.otc_request_id ||
             req.body?.otp_request_id ||
@@ -1341,7 +1343,22 @@ export const registerInternalRoutes = (internal: Router) => {
 
       let event = response.event;
       if (decision === 'approve') {
+        const alreadyHeld = response.replayed === true && (
+          String(event.status || '').toLowerCase() === 'completed' ||
+          String(event.transactionId || '').trim().length > 0 ||
+          String((event.raw || {}).status || '').toLowerCase() === 'payment_held'
+        );
         try {
+          if (alreadyHeld) {
+            await Audit.log('FINANCIAL', userId, 'SERVICE_PAYMENT_HOSTED_CHALLENGE_HOLD_REPLAYED', {
+              challengeId,
+              decision,
+              intentId: event.intentId,
+              serviceCode: event.serviceCode,
+              workerId,
+              ...getInternalAuditMetadata(req),
+            }).catch(() => undefined);
+          } else {
           const hold = await completeApprovedServiceChallengeWithPaySafeHold(
             userId,
             response,
@@ -1363,6 +1380,7 @@ export const registerInternalRoutes = (internal: Router) => {
             },
           };
           await gatewayPaymentIntentService.updateIntentEvent(event.intentId, event, 'COMPLETED');
+          }
         } catch (holdError: any) {
           event = {
             ...event,
