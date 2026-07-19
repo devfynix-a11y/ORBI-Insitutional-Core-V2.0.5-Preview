@@ -75,10 +75,22 @@ export class EscrowService {
             if (existing?.reference_id) return String(existing.reference_id);
         }
 
+        const merchantId = typeof conditions.merchantId === 'string'
+            ? conditions.merchantId.trim()
+            : typeof conditions.merchant_id === 'string'
+                ? conditions.merchant_id.trim()
+                : '';
+        const serviceCode = typeof conditions.serviceCode === 'string'
+            ? conditions.serviceCode.trim()
+            : typeof conditions.service_code === 'string'
+                ? conditions.service_code.trim()
+                : '';
+
         const [
             { data: accountRecords, error: accountError },
             { data: senderVaults, error: senderVaultError },
             { data: recipientVaults, error: recipientVaultError },
+            { data: merchant, error: merchantError },
         ] = await Promise.all([
             sb
                 .from('users')
@@ -94,6 +106,13 @@ export class EscrowService {
                 .select('id,user_id,vault_role,currency,status,is_locked,balance')
                 .eq('user_id', recipient.userId)
                 .eq('vault_role', 'OPERATING'),
+            merchantId
+                ? sb
+                    .from('merchants')
+                    .select('id,owner_user_id,status')
+                    .eq('id', merchantId)
+                    .maybeSingle()
+                : Promise.resolve({ data: null, error: null } as any),
         ]);
         if (accountError) throw new Error('PAYSAFE_ACCOUNT_LOOKUP_FAILED');
         const accountById = new Map((accountRecords || []).map((record: any) => [String(record.id), record]));
@@ -105,10 +124,25 @@ export class EscrowService {
         if (!recipientAccount || String(recipientAccount.account_status || '').toLowerCase() !== 'active') {
             throw new Error('PAYSAFE_RECIPIENT_ACCOUNT_NOT_ACTIVE');
         }
-        if (String(senderAccount.registry_type || '').toUpperCase() !== 'CONSUMER') {
+        const senderRegistryType = String(senderAccount.registry_type || '').toUpperCase();
+        const recipientRegistryType = String(recipientAccount.registry_type || '').toUpperCase();
+        if (merchantError) throw new Error('PAYSAFE_MERCHANT_LOOKUP_FAILED');
+        const isMerchantEscrow = Boolean(merchantId);
+        if (senderRegistryType !== 'CONSUMER') {
             throw new Error('PAYSAFE_SENDER_REGISTRY_INVALID');
         }
-        if (String(recipientAccount.registry_type || '').toUpperCase() !== 'CONSUMER') {
+        if (isMerchantEscrow) {
+            if (!merchant) throw new Error('PAYSAFE_MERCHANT_NOT_FOUND');
+            if (String(merchant.status || '').toLowerCase() !== 'active') {
+                throw new Error('PAYSAFE_MERCHANT_NOT_ACTIVE');
+            }
+            if (String(merchant.owner_user_id || '') !== recipient.userId) {
+                throw new Error('PAYSAFE_MERCHANT_RECIPIENT_MISMATCH');
+            }
+            if (recipientRegistryType !== 'MERCHANT') {
+                throw new Error('PAYSAFE_RECIPIENT_REGISTRY_INVALID');
+            }
+        } else if (recipientRegistryType !== 'CONSUMER') {
             throw new Error('PAYSAFE_RECIPIENT_REGISTRY_INVALID');
         }
         if (senderVaultError || recipientVaultError) throw new Error('PAYSAFE_VAULT_LOOKUP_FAILED');
@@ -150,32 +184,8 @@ export class EscrowService {
         }
 
         const referenceId = `ESC-${UUID.generateShortCode(16)}`;
-        const merchantId = typeof conditions.merchantId === 'string'
-            ? conditions.merchantId.trim()
-            : typeof conditions.merchant_id === 'string'
-                ? conditions.merchant_id.trim()
-                : '';
-        const serviceCode = typeof conditions.serviceCode === 'string'
-            ? conditions.serviceCode.trim()
-            : typeof conditions.service_code === 'string'
-                ? conditions.service_code.trim()
-                : '';
         let merchantFeeSnapshot: Record<string, unknown> | null = null;
         if (merchantId) {
-            const { data: merchant, error: merchantError } = await sb
-                .from('merchants')
-                .select('id,owner_user_id,status')
-                .eq('id', merchantId)
-                .maybeSingle();
-            if (merchantError) throw new Error('PAYSAFE_MERCHANT_LOOKUP_FAILED');
-            if (!merchant) throw new Error('PAYSAFE_MERCHANT_NOT_FOUND');
-            if (String(merchant.status || '').toLowerCase() !== 'active') {
-                throw new Error('PAYSAFE_MERCHANT_NOT_ACTIVE');
-            }
-            if (String(merchant.owner_user_id || '') !== recipient.userId) {
-                throw new Error('PAYSAFE_MERCHANT_RECIPIENT_MISMATCH');
-            }
-
             const fee = await platformFeeService.resolveFee({
                 flowCode: 'MERCHANT_PAYMENT',
                 amount,
