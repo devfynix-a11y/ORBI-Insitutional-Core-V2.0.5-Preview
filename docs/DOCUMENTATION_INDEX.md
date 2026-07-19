@@ -9,6 +9,7 @@ This index defines the canonical ORBI Institutional Core documentation set. Olde
 
 | Area | Canonical Document | Purpose |
 | :--- | :--- | :--- |
+| Engineering architecture | [ORBI Core Engineering Architecture](./ORBI_CORE_ENGINEERING_ARCHITECTURE.md) | Highest-level engineering contract for Core, ledger, registry, PaySafe, gateway, shared finance, realtime, idempotency, RLS, reporting, and safe-change rules. |
 | Business and operating model | [ORBI Business Operational Playbook](./ORBI_BUSINESS_OPERATIONAL_PLAYBOOK.md) | Business model, B2C/B2B/B2B2C operations, merchant/agent/customer flows, operational controls, revenue model, and control-room playbook. |
 | Production deployment | [Production Deployment](./PRODUCTION_DEPLOYMENT.md) | Active production deployment requirements, environment variables, TLS, migrations, background workers, rollback, and release automation. |
 | System separation | [ORBI System Separation](./ORBI_SYSTEM_SEPARATION.md) | Boundary between ORBI Core, ORBI Pay Gateway, and ORBI Talk Gateway. |
