@@ -1008,6 +1008,12 @@ class _AdvancedServicesScreenState extends State<AdvancedServicesScreen> {
   }
 
   Future<void> _createMerchantAccount() async {
+    final auth = context.read<AuthController>();
+    if (!auth.isMerchant) {
+      await _submitServiceAccessRequest('MERCHANT');
+      return;
+    }
+
     final nameController = TextEditingController();
     final displayController = TextEditingController();
     String category = _merchantCategories.isNotEmpty
@@ -1962,6 +1968,7 @@ class _AdvancedServicesScreenState extends State<AdvancedServicesScreen> {
   }
 
   Widget _merchantSection(OrbiUiTokens ui, Map<String, dynamic> profile) {
+    final auth = context.watch<AuthController>();
     final eligible = _merchantAccounts.isNotEmpty || profile.isNotEmpty;
     return OrbiSectionCard(
       child: Column(
@@ -1978,8 +1985,16 @@ class _AdvancedServicesScreenState extends State<AdvancedServicesScreen> {
               ),
               FilledButton.icon(
                 onPressed: _createMerchantAccount,
-                icon: const Icon(Icons.add_business_outlined),
-                label: Text(_t('Create', 'Unda')),
+                icon: Icon(
+                  auth.isMerchant
+                      ? Icons.add_business_outlined
+                      : Icons.verified_user_outlined,
+                ),
+                label: Text(
+                  auth.isMerchant
+                      ? _t('Create', 'Unda')
+                      : _t('Request', 'Omba'),
+                ),
               ),
             ],
           ),

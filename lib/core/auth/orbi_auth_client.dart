@@ -478,6 +478,8 @@ class OrbiAuthClient {
       ...?(dialCode == null ? null : {'dial_code': dialCode}),
       ...?(languageCode == null ? null : {'language': languageCode}),
       ...?(fcmToken == null ? null : {'fcm_token': fcmToken}),
+      'app_origin': AppConfig.appOrigin,
+      'registry_type': 'CONSUMER',
       'metadata': {
         ...registrationTimeMetadata,
         'app_origin': AppConfig.appOrigin,

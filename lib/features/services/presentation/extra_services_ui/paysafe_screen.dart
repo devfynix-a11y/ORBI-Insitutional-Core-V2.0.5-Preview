@@ -986,6 +986,22 @@ class _PaySafeScreenState extends State<PaySafeScreen>
     escrow['id'],
   ]);
 
+  Map<dynamic, dynamic> _metadataOf(Map<String, dynamic> escrow) {
+    final raw = escrow['metadata'];
+    return raw is Map ? Map<dynamic, dynamic>.from(raw) : const {};
+  }
+
+  Map<dynamic, dynamic> _nestedMap(
+    Map<String, dynamic> escrow,
+    Iterable<String> keys,
+  ) {
+    for (final key in keys) {
+      final raw = escrow[key];
+      if (raw is Map) return Map<dynamic, dynamic>.from(raw);
+    }
+    return const {};
+  }
+
   bool _pickBool(Iterable<dynamic> values) {
     for (final value in values) {
       if (value is bool) return value;
@@ -1556,21 +1572,149 @@ class _PaySafeScreenState extends State<PaySafeScreen>
     return formatFinancialMoney(amount, _currency(escrow), locale: _localeTag);
   }
 
-  String _title(Map<String, dynamic> escrow) {
-    final description = _pickString([
-      escrow['description'],
+  String _purpose(Map<String, dynamic> escrow) {
+    final metadata = _metadataOf(escrow);
+    return _pickString([
       escrow['purpose'],
+      escrow['description'],
       escrow['title'],
+      escrow['note'],
+      escrow['notes'],
+      metadata['purpose'],
+      metadata['description'],
+      metadata['title'],
+      metadata['note'],
+      metadata['notes'],
+      metadata['order_reference'],
+      metadata['orderReference'],
     ]);
-    if (description.isNotEmpty) return description;
-    final recipient = _pickString([
-      escrow['recipientCustomerId'],
-      escrow['recipient_customer_id'],
-      escrow['recipient'],
+  }
+
+  String _counterpartyName(Map<String, dynamic> escrow) {
+    final metadata = _metadataOf(escrow);
+    final receiver = _nestedMap(escrow, const [
+      'receiver',
+      'recipient',
+      'beneficiary',
+      'payee',
     ]);
-    return recipient.isEmpty
-        ? _t('Protected payment', 'Malipo yaliyolindwa')
-        : recipient;
+    final sender = _nestedMap(escrow, const ['sender', 'payer', 'initiator']);
+    final merchant = _nestedMap(escrow, const ['merchant', 'merchantAccount']);
+    final isSender = _actorSide(escrow) == _PaySafeSide.sender;
+    final primary = isSender ? receiver : sender;
+    final secondary = isSender ? sender : receiver;
+    return _pickString([
+      if (_isThirdPartyEscrow(escrow)) ...[
+        escrow['merchant_name'],
+        escrow['merchantName'],
+        escrow['service_name'],
+        escrow['serviceName'],
+        merchant['merchant_name'],
+        merchant['merchantName'],
+        merchant['name'],
+        merchant['display_name'],
+        metadata['merchant_name'],
+        metadata['merchantName'],
+        metadata['service_name'],
+        metadata['serviceName'],
+        metadata['checkout_merchant_name'],
+        metadata['checkoutMerchantName'],
+      ],
+      primary['full_name'],
+      primary['display_name'],
+      primary['displayName'],
+      primary['name'],
+      primary['customer_name'],
+      primary['customerName'],
+      isSender ? escrow['receiver_name'] : escrow['sender_name'],
+      isSender ? escrow['receiverName'] : escrow['senderName'],
+      isSender ? escrow['recipient_name'] : escrow['payer_name'],
+      isSender ? escrow['recipientName'] : escrow['payerName'],
+      isSender ? metadata['receiver_name'] : metadata['sender_name'],
+      isSender ? metadata['receiverName'] : metadata['senderName'],
+      isSender ? metadata['recipient_name'] : metadata['payer_name'],
+      isSender ? metadata['recipientName'] : metadata['payerName'],
+      primary['customer_id'],
+      primary['customerId'],
+      primary['orbi_id'],
+      primary['orbiId'],
+      isSender ? escrow['recipient_customer_id'] : escrow['sender_customer_id'],
+      isSender ? escrow['recipientCustomerId'] : escrow['senderCustomerId'],
+      isSender
+          ? metadata['recipient_customer_id']
+          : metadata['sender_customer_id'],
+      isSender ? metadata['recipientCustomerId'] : metadata['senderCustomerId'],
+      secondary['full_name'],
+      secondary['display_name'],
+      secondary['name'],
+    ]);
+  }
+
+  String _counterpartyLabel(Map<String, dynamic> escrow) {
+    final name = _counterpartyName(escrow);
+    if (name.isEmpty) return '';
+    final role = _actorSide(escrow);
+    if (_isThirdPartyEscrow(escrow)) {
+      return _t('Merchant: $name', 'Mfanyabiashara: $name');
+    }
+    if (role == _PaySafeSide.sender) {
+      return _t('To: $name', 'Kwa: $name');
+    }
+    if (role == _PaySafeSide.receiver) {
+      return _t('From: $name', 'Kutoka: $name');
+    }
+    return name;
+  }
+
+  String _serviceLabel(Map<String, dynamic> escrow) {
+    final metadata = _metadataOf(escrow);
+    return _pickString([
+      escrow['service_code'],
+      escrow['serviceCode'],
+      escrow['provider'],
+      metadata['service_code'],
+      metadata['serviceCode'],
+      metadata['provider'],
+      metadata['source'],
+    ]);
+  }
+
+  String _expiryLabel(Map<String, dynamic> escrow) {
+    final expiry = _holdExpiry(escrow);
+    if (expiry == null) return '';
+    return 'Exp: ${_formatDateTime(expiry)}';
+  }
+
+  bool _isThirdPartyEscrow(Map<String, dynamic> escrow) {
+    final metadata = _metadataOf(escrow);
+    final service = _serviceLabel(escrow).toLowerCase();
+    return _pickString([
+          escrow['merchant_id'],
+          escrow['merchantId'],
+          escrow['merchant_name'],
+          escrow['merchantName'],
+          metadata['merchant_id'],
+          metadata['merchantId'],
+          metadata['merchant_name'],
+          metadata['merchantName'],
+          metadata['checkout_id'],
+          metadata['checkoutId'],
+          metadata['payment_intent_id'],
+          metadata['paymentIntentId'],
+          metadata['order_reference'],
+          metadata['orderReference'],
+        ]).isNotEmpty ||
+        service.contains('shop') ||
+        service.contains('gateway') ||
+        service.contains('merchant') ||
+        service.contains('third');
+  }
+
+  String _title(Map<String, dynamic> escrow) {
+    if (_isThirdPartyEscrow(escrow)) {
+      return _t('Merchant PaySafe', 'PaySafe ya mfanyabiashara');
+    }
+    return _t('Protected payment', 'Malipo yaliyolindwa');
   }
 
   String _holdSummary(Map<String, dynamic> escrow) {
@@ -1808,8 +1952,13 @@ class _PaySafeScreenState extends State<PaySafeScreen>
                         reference: _referenceId(escrow),
                         status: _status(escrow),
                         sideLabel: _sideLabel(escrow),
+                        counterpartyLabel: _counterpartyLabel(escrow),
+                        purpose: _purpose(escrow),
+                        expiryLabel: _expiryLabel(escrow),
+                        serviceLabel: _serviceLabel(escrow),
                         summary: _holdSummary(escrow),
                         amount: _amount(escrow),
+                        isThirdParty: _isThirdPartyEscrow(escrow),
                         actions: _actionPlan(escrow),
                         isSw: _isSw,
                       ),
@@ -2753,8 +2902,13 @@ class _PaySafeTile extends StatelessWidget {
     required this.reference,
     required this.status,
     required this.sideLabel,
+    required this.counterpartyLabel,
+    required this.purpose,
+    required this.expiryLabel,
+    required this.serviceLabel,
     required this.summary,
     required this.amount,
+    required this.isThirdParty,
     required this.actions,
     required this.isSw,
   });
@@ -2763,8 +2917,13 @@ class _PaySafeTile extends StatelessWidget {
   final String reference;
   final String status;
   final String sideLabel;
+  final String counterpartyLabel;
+  final String purpose;
+  final String expiryLabel;
+  final String serviceLabel;
   final String summary;
   final String amount;
+  final bool isThirdParty;
   final List<_PaySafeTileAction> actions;
   final bool isSw;
 
@@ -2774,14 +2933,26 @@ class _PaySafeTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = OrbiTheme.uiOf(context);
     final accent = _statusAccent(context);
+    final serviceTone = isThirdParty ? const Color(0xFF0EA5E9) : accent;
     return LayoutBuilder(
       builder: (context, constraints) {
         return Container(
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
-            color: colors.card,
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                colors.card,
+                serviceTone.withValues(alpha: isThirdParty ? 0.10 : 0.03),
+              ],
+            ),
             borderRadius: BorderRadius.circular(26),
-            border: Border.all(color: colors.border),
+            border: Border.all(
+              color: isThirdParty
+                  ? serviceTone.withValues(alpha: 0.30)
+                  : colors.border,
+            ),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withValues(alpha: 0.08),
@@ -2830,15 +3001,22 @@ class _PaySafeTile extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 6),
-                        Text(
-                          sideLabel,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: colors.textMuted,
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w700,
-                          ),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [
+                            _PaySafeMiniPill(
+                              label: sideLabel,
+                              color: colors.textMuted,
+                            ),
+                            if (isThirdParty)
+                              _PaySafeMiniPill(
+                                label: serviceLabel.isEmpty
+                                    ? _t('Third-party', 'Huduma ya nje')
+                                    : serviceLabel,
+                                color: serviceTone,
+                              ),
+                          ],
                         ),
                         const SizedBox(height: 10),
                         _PaySafeStatusChip(
@@ -2867,6 +3045,49 @@ class _PaySafeTile extends StatelessWidget {
                   ),
                 ],
               ),
+              if (counterpartyLabel.isNotEmpty ||
+                  purpose.isNotEmpty ||
+                  expiryLabel.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(13),
+                  decoration: BoxDecoration(
+                    color: colors.cardMuted.withValues(alpha: 0.48),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: serviceTone.withValues(alpha: 0.18),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (counterpartyLabel.isNotEmpty)
+                        _PaySafeInfoLine(
+                          icon: isThirdParty
+                              ? Icons.storefront_rounded
+                              : Icons.person_outline_rounded,
+                          value: counterpartyLabel,
+                        ),
+                      if (counterpartyLabel.isNotEmpty &&
+                          (purpose.isNotEmpty || expiryLabel.isNotEmpty))
+                        const SizedBox(height: 8),
+                      if (purpose.isNotEmpty)
+                        _PaySafeInfoLine(
+                          icon: Icons.notes_rounded,
+                          value: '${_t('Purpose', 'Lengo')}: $purpose',
+                        ),
+                      if (purpose.isNotEmpty && expiryLabel.isNotEmpty)
+                        const SizedBox(height: 8),
+                      if (expiryLabel.isNotEmpty)
+                        _PaySafeInfoLine(
+                          icon: Icons.schedule_rounded,
+                          value: expiryLabel,
+                        ),
+                    ],
+                  ),
+                ),
+              ],
               if (reference.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 _PaySafeReferenceRow(
@@ -2968,6 +3189,19 @@ class _PaySafeTile extends StatelessWidget {
   }
 
   Color _statusAccent(BuildContext context) {
+    if (isThirdParty) {
+      final lower = status.toLowerCase();
+      if (lower.contains('refund') || lower.contains('return')) {
+        return const Color(0xFFF59E0B);
+      }
+      if (lower.contains('review') || lower.contains('dispute')) {
+        return const Color(0xFFEF4444);
+      }
+      if (lower.contains('released') || lower.contains('completed')) {
+        return const Color(0xFF10B981);
+      }
+      return const Color(0xFF0EA5E9);
+    }
     final lower = status.toLowerCase();
     if (lower.contains('refund') || lower.contains('return')) {
       return const Color(0xFFF59E0B);
@@ -2982,6 +3216,69 @@ class _PaySafeTile extends StatelessWidget {
       return const Color(0xFF10B981);
     }
     return OrbiTheme.uiOf(context).accent;
+  }
+}
+
+class _PaySafeMiniPill extends StatelessWidget {
+  const _PaySafeMiniPill({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = OrbiTheme.uiOf(context);
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 170),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.11),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.20)),
+      ),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: colors.textMuted,
+          fontSize: 11.5,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+}
+
+class _PaySafeInfoLine extends StatelessWidget {
+  const _PaySafeInfoLine({required this.icon, required this.value});
+
+  final IconData icon;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = OrbiTheme.uiOf(context);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 17, color: colors.accent),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Text(
+            value,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: colors.textPrimary,
+              fontSize: 13.2,
+              height: 1.25,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
 
