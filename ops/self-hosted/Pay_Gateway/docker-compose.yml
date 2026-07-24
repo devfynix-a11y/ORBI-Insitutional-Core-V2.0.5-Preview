@@ -13,6 +13,8 @@ services:
       PAYMENT_GATEWAY_PROVIDER_MODE: ${PAYMENT_GATEWAY_PROVIDER_MODE:-live}
       PAYMENT_GATEWAY_CREDENTIAL_MODE: ${PAYMENT_GATEWAY_CREDENTIAL_MODE:-tokenized}
       PAYMENT_GATEWAY_REQUIRE_STRONG_CUSTOMER_AUTH: ${PAYMENT_GATEWAY_REQUIRE_STRONG_CUSTOMER_AUTH:-true}
+      DATABASE_URL: ${DATABASE_URL}
+      ORBI_SECRET_ENCRYPTION_KEY: ${ORBI_SECRET_ENCRYPTION_KEY}
       PAYMENT_GATEWAY_PROVIDER_MANIFEST_PATH: /app/config/providers.json
       PAYMENT_GATEWAY_SERVICE_REGISTRY_PATH: /app/config/services.json
       PAYMENT_GATEWAY_OPERATOR_DISCOVERY_API_KEY: ${PAYMENT_GATEWAY_OPERATOR_DISCOVERY_API_KEY}
@@ -23,11 +25,12 @@ services:
       ORBI_CORE_TRUSTED_SERVICE_PAYMENT_REQUEST_PATH: ${ORBI_CORE_TRUSTED_SERVICE_PAYMENT_REQUEST_PATH:-/api/internal/pay-gateway/service-payment-requests}
       ORBI_CORE_TRUSTED_SERVICE_PAYMENT_CHALLENGE_RESPOND_PATH: ${ORBI_CORE_TRUSTED_SERVICE_PAYMENT_CHALLENGE_RESPOND_PATH:-/api/internal/pay-gateway/service-payment-challenges}
       ORBI_CORE_TRUSTED_PAYSAFE_BALANCE_PATH: ${ORBI_CORE_TRUSTED_PAYSAFE_BALANCE_PATH:-/api/internal/pay-gateway/paysafe-balances}
+      ORBI_CORE_TRUSTED_BUSINESS_REGISTRATION_PATH: ${ORBI_CORE_TRUSTED_BUSINESS_REGISTRATION_PATH:-/api/internal/pay-gateway/business/registrations}
       ORBI_CORE_TRUSTED_MERCHANT_ORDER_PAYMENT_STATUS_PATH: ${ORBI_CORE_TRUSTED_MERCHANT_ORDER_PAYMENT_STATUS_PATH:-/api/internal/pay-gateway/merchant-order-payment-status}
       ORBI_CORE_TRUSTED_MERCHANT_SETTLEMENTS_PATH: ${ORBI_CORE_TRUSTED_MERCHANT_SETTLEMENTS_PATH:-/api/internal/pay-gateway/merchant-settlements}
       ORBI_CORE_CALLBACK_TIMEOUT_MS: ${ORBI_CORE_CALLBACK_TIMEOUT_MS:-60000}
       PAYMENT_GATEWAY_WORKER_ID: ${PAYMENT_GATEWAY_WORKER_ID:-orbi-payment-gateway}
-      PAYMENT_GATEWAY_WORKER_SCOPES: ${PAYMENT_GATEWAY_WORKER_SCOPES:-gateway:events:write,gateway:service-payments:write,gateway:service-payments:result,gateway:identity:read,gateway:paysafe-balances:read,gateway:merchant-payments:read,gateway:merchant-settlements:read}
+      PAYMENT_GATEWAY_WORKER_SCOPES: ${PAYMENT_GATEWAY_WORKER_SCOPES:-gateway:events:write,gateway:service-payments:write,gateway:service-payments:result,gateway:identity:read,gateway:paysafe-balances:read,gateway:business-registration:write,gateway:merchant-payments:read,gateway:merchant-settlements:read}
       WORKER_SIGNING_SECRET: ${WORKER_SIGNING_SECRET}
       WORKER_KEY_ID: ${WORKER_KEY_ID:-payment-gateway-v1}
       PAYMENT_GATEWAY_INTERNAL_MTLS_ENABLED: ${PAYMENT_GATEWAY_INTERNAL_MTLS_ENABLED:-false}

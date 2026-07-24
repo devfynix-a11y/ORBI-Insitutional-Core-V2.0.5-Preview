@@ -10,7 +10,17 @@ This index defines the canonical ORBI Institutional Core documentation set. Olde
 | Area | Canonical Document | Purpose |
 | :--- | :--- | :--- |
 | Engineering architecture | [ORBI Core Engineering Architecture](./ORBI_CORE_ENGINEERING_ARCHITECTURE.md) | Highest-level engineering contract for Core, ledger, registry, PaySafe, gateway, shared finance, realtime, idempotency, RLS, reporting, and safe-change rules. |
+| Open Banking and BaaS roadmap | [ORBI Open Digital Banking And BaaS Roadmap](./ORBI_OPEN_BANKING_BAAS_ROADMAP.md) | Phased TODO checklist for turning ORBI into a mature Open Digital Banking, BaaS, developer, merchant, sandbox, webhook, compliance, and control-room platform. |
+| Infrastructure platform blueprint | [ORBI Infrastructure Platform Blueprint](./ORBI_INFRASTRUCTURE_PLATFORM_BLUEPRINT.md) | ORBI as financial infrastructure for merchants and third parties: hosted secure UI, payment profiles, consent scopes, PaySafe lifecycle, webhooks, and authority boundaries. |
 | Business and operating model | [ORBI Business Operational Playbook](./ORBI_BUSINESS_OPERATIONAL_PLAYBOOK.md) | Business model, B2C/B2B/B2B2C operations, merchant/agent/customer flows, operational controls, revenue model, and control-room playbook. |
+| Business identity federation | [ORBI Business Identity Federation](./ORBI_BUSINESS_IDENTITY_FEDERATION.md) | Canonical contract for sharing Core/Auth business identity with ORBI Shop, Pay Gateway, and future business surfaces without duplicating passwords or financial authority. |
+| Registration identity contract | [ORBI Registration Identity Contract](./ORBI_REGISTRATION_IDENTITY_CONTRACT.md) | Required signup payload, `public.users` financial identity fields, registry families, access levels, and transaction-readiness rules. |
+| Registration blueprints | [ORBI Global Registration Protocol](./registration/ORBI_GLOBAL_REGISTRATION_PROTOCOL.md) | Global registration families, source channels, external registration protocol, business upgrade rules, and audit requirements. |
+| Registration families | [ORBI Registration Families](./registration/ORBI_REGISTRATION_FAMILIES.md) | Identity family rules for consumer, merchant, agent, staff, and organization membership boundaries. |
+| External registration gateway | [ORBI External Registration Gateway Contract](./registration/ORBI_EXTERNAL_REGISTRATION_GATEWAY_CONTRACT.md) | Trusted external registration contract through Pay Gateway with worker scopes, idempotency, and prohibited authority fields. |
+| Business access approval | [ORBI Business Access Approval Flow](./registration/ORBI_BUSINESS_ACCESS_APPROVAL_FLOW.md) | Merchant and agent upgrade lifecycle from request to approval, provisioning, rejection, and deactivation. |
+| Service actor registration | [ORBI Service Actor Registration Rules](./registration/ORBI_SERVICE_ACTOR_REGISTRATION_RULES.md) | Assisted registration rules for agents, merchants, consent, actor/customer relationships, and notifications. |
+| API request contracts | [ORBI API Request Contracts](./registration/ORBI_API_REQUEST_CONTRACTS.md) | Canonical headers, payload examples, method rules, idempotency keys, and error shape for registration and gateway identity requests. |
 | Production deployment | [Production Deployment](./PRODUCTION_DEPLOYMENT.md) | Active production deployment requirements, environment variables, TLS, migrations, background workers, rollback, and release automation. |
 | System separation | [ORBI System Separation](./ORBI_SYSTEM_SEPARATION.md) | Boundary between ORBI Core, ORBI Pay Gateway, and ORBI Talk Gateway. |
 | Environment variables | [Environment Variables Reference](./ENVIRONMENT_VARIABLES_REFERENCE.md) | Complete variable catalog for production and staging environments. |
@@ -25,6 +35,7 @@ This index defines the canonical ORBI Institutional Core documentation set. Olde
 | Transaction movement classification | [Transaction Movement Classification](./TRANSACTION_MOVEMENT_CLASSIFICATION.md) | Canonical movement families/codes for history, reports, receipts, and audit read models without mutating ledger truth. |
 | Reconciliation | [Reconciliation Engine](./RECONCILIATION_ENGINE.md) | Financial integrity, reports, admin controls, and reconciliation layers. |
 | Disaster recovery | [Disaster Recovery Runbook](./DISASTER_RECOVERY_RUNBOOK.md) | Incident response, severe failure scenarios, recovery objectives, and evidence. |
+| Identity and secret backup | [ORBI Identity And Secret Storage Backup](./IDENTITY_AND_SECRET_STORAGE_BACKUP.md) | Official storage and encrypted backup rules for auth password hashes, developer key fingerprints, webhook secret fingerprints, and restore evidence. |
 | Backup restore drill | [Backup Restore Drill Procedure](./BACKUP_RESTORE_DRILL_PROCEDURE.md) | Executable backup restore drill procedure and evidence capture. |
 | Release checklist | [Release Checklist](./RELEASE_CHECKLIST.md) | Pre-deploy, smoke, post-deploy, rollback triggers, and evidence. |
 | Security simulation | [Security Attack Simulation Plan](./SECURITY_ATTACK_SIMULATION_PLAN.md) | Defensive security validation plan and manual checks. |

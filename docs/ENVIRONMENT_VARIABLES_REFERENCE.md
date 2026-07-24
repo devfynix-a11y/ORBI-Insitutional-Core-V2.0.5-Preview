@@ -110,6 +110,7 @@ The gateway service source lives outside this Core repository in `D:\FYNIX\ORBI\
 | `ORBI_CORE_TRUSTED_GATEWAY_EVENT_PATH` | Runtime | Non-secret | No | Payment gateway only | Core internal route for normalized trusted provider events. |
 | `PAYMENT_GATEWAY_WORKER_ID` | Runtime | Non-secret | No | Payment gateway only | Internal worker identity sent to Core by the payment gateway. |
 | `PAYMENT_GATEWAY_WORKER_SCOPES` | Runtime | Non-secret | No | Payment gateway only | Comma-separated worker scopes. Must include `gateway:events:write`. |
+| `ORBI_CORE_TRUSTED_BUSINESS_REGISTRATION_PATH` | Runtime | Non-secret | No | Payment gateway only | Core internal route used by Pay Gateway for trusted business registration requests. |
 | `WORKER_KEY_ID` | Runtime | Non-secret | No | Payment gateway only | Optional key id label for signed internal worker callbacks. |
 | `PAYMENT_GATEWAY_INTERNAL_MTLS_ENABLED` | Runtime | Non-secret | No | Payment gateway only | Enables direct client-certificate mTLS for gateway-to-Core HTTPS callbacks. |
 | `PAYMENT_GATEWAY_INTERNAL_MTLS_CERT_PATH` | Runtime | Non-secret | No | Payment gateway only | Payment gateway client certificate path for direct mTLS. |
@@ -255,6 +256,19 @@ The gateway service source lives outside this Core repository in `D:\FYNIX\ORBI\
 | `ORBI_BASE_URL` | Script | Non-secret | Base URL for smoke testing deployed environments. | Usually points to the same host as `BACKEND_URL`. |
 | `ORBI_MONITOR_API_KEY` | Runtime, Script | Secret | Dedicated internal monitor token for protected monitor endpoints. | Used by runtime auth middleware and by smoke or load scripts. |
 | `ORBI_EXPECT_BROKER_HEALTH` | Script | Non-secret | Forces broker-health validation during smoke tests. | Optional boolean flag. |
+
+### Backup And Recovery Runtime
+
+| Variable | Type | Secret | Purpose | Notes |
+| --- | --- | --- | --- | --- |
+| `ORBI_BACKUP_DATABASES` | Runtime | Non-secret | Comma-separated PostgreSQL databases included in encrypted backups. | Production should include `orbi,keycloak` so Core data and auth/password hashes restore together. |
+| `ORBI_BACKUP_ENCRYPTION_KEY` | Runtime | Secret | Symmetric key used by the backup worker to encrypt database dump artifacts before replication. | Store outside Git and rotate through controlled recovery procedure. Losing this key makes encrypted backups unrecoverable. |
+| `ORBI_SECRET_ENCRYPTION_KEY` | Runtime | Secret | Symmetric key used by ORBI services to encrypt recoverable secret-vault material such as webhook signing secrets. | Store outside Git with the same custody discipline as database backup keys. Losing this key prevents decrypting restored webhook signing secrets. |
+| `ORBI_BACKUP_INTERVAL_SECONDS` | Runtime | Non-secret | Backup worker interval. | Default `86400`. |
+| `ORBI_BACKUP_RETENTION_DAYS` | Runtime | Non-secret | Local encrypted artifact retention window. | Default `14`; remote retention is controlled by bucket lifecycle policy. |
+| `ORBI_BACKUP_R2_BUCKET` | Runtime | Non-secret | Cloudflare R2 bucket for encrypted backup mirroring. | Raw dumps must never be mirrored. |
+| `ORBI_BACKUP_R2_PREFIX` | Runtime | Non-secret | R2 prefix for encrypted backup artifacts. | Default `database-backups`. |
+| `ORBI_BACKUP_R2_SYNC_INTERVAL_SECONDS` | Runtime | Non-secret | Backup mirror interval. | Default `300`. |
 
 ### Load Test Script
 

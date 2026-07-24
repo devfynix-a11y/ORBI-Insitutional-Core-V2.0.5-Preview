@@ -1053,7 +1053,11 @@ export const registerAdminOpsRoutes = (v1: Router, deps: Deps) => {
             service_access_approved_role: existing.requested_role,
           },
         });
-        provisioning = await ServiceActorOps.provisionApprovedActorAccess(existing.user_id, existing.requested_role);
+        provisioning = await ServiceActorOps.provisionApprovedActorAccess(existing.user_id, existing.requested_role, {
+          business_name: existing.business_name,
+          phone: existing.phone,
+          metadata: existing.metadata || {},
+        });
 
         await Messaging.dispatchServiceActivity(existing.user_id, 'SERVICE_ACCESS_APPROVED', {
           actorLabel: existing.requested_role === 'AGENT' ? 'Agent desk' : 'Merchant desk',

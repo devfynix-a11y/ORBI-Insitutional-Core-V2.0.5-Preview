@@ -121,6 +121,55 @@ Production uses:
 https://auth.orbifinancial.com/realms/orbi
 ```
 
+The human-facing root is intentionally branded:
+
+```text
+https://auth.orbifinancial.com/
+```
+
+It serves a small ORBI Auth landing page from the edge gateway. Do not use the
+root URL as the OIDC issuer. Apps and services must continue using
+`https://auth.orbifinancial.com/realms/orbi` for discovery, token validation,
+and PKCE/OIDC flows.
+
+Developer/OIDC discovery endpoint:
+
+```text
+https://auth.orbifinancial.com/realms/orbi/.well-known/openid-configuration
+```
+
+This endpoint is for apps, backend services, and the future developer portal.
+It should not be presented as a normal customer action on the public Auth
+landing page.
+
+## ORBI Business hosted account-link client
+
+External merchant portals must use ORBI-hosted login/signup for ORBI Pay
+payment profile linking. The reference ORBI Shop client is:
+
+```text
+Realm: orbi
+Client ID: orbi-shop-business
+Client type: confidential
+Issuer: https://auth.orbifinancial.com/realms/orbi
+Discovery: https://auth.orbifinancial.com/realms/orbi/.well-known/openid-configuration
+Redirect URI: https://shop.orbifinancial.com/api/auth/orbi-business/link/callback
+Web origin: https://shop.orbifinancial.com
+```
+
+The client secret must live only in the merchant application's server-side
+secret store, for example:
+
+```env
+ORBI_BUSINESS_AUTH_CLIENT_SECRET=<secret-from-keycloak>
+```
+
+Do not expose this secret through Vite, browser JavaScript, mobile apps,
+checkout pages, logs, or Git. The hosted account-link flow exchanges the OIDC
+code server-to-server, creates or links a Pay Gateway payment profile, then
+returns only sanitized references such as `paymentProfileId` and masked ORBI
+customer hints to the merchant UI.
+
 DNS for `auth.orbifinancial.com` must point to the ORBI edge. The TLS
 certificate mounted into Nginx must cover both:
 

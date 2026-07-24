@@ -202,7 +202,7 @@ export const registerCommerceRoutes = (v1: Router, deps: Deps) => {
 
   v1.post('/merchants/accounts', authenticate, async (req, res) => {
     const session = (req as any).session;
-    if (!requireRole(session, ['MERCHANT', 'CONSUMER', 'USER', 'ADMIN', 'SUPER_ADMIN'])) {
+    if (!requireRole(session, ['MERCHANT', 'ADMIN', 'SUPER_ADMIN'])) {
       return res.status(403).json({ success: false, error: 'ACCESS_DENIED' });
     }
     try {

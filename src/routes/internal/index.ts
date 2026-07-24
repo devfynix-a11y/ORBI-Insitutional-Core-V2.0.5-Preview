@@ -9,9 +9,11 @@ import { Server as LogicCore } from '../../../backend/server.js';
 import { Webhooks } from '../../../backend/payments/webhookHandler.js';
 import { platformFeeService } from '../../../backend/payments/PlatformFeeService.js';
 import { gatewayPaymentIntentService } from '../../../backend/payments/GatewayPaymentIntentService.js';
+import { PaymentProfileService } from '../../../backend/payments/PaymentProfileService.js';
 import { Messaging } from '../../../backend/features/MessagingService.js';
 import { OTPService } from '../../../backend/security/otpService.js';
 import { Identity } from '../../../iam/identityService.js';
+import { BusinessIdentity } from '../../../backend/business/BusinessIdentityService.js';
 import {
   createInternalWorkerMiddleware,
   getInternalAuditMetadata,
@@ -170,6 +172,38 @@ const IdentityResolveRequestSchema = z.object({
   serviceCode: z.string().min(1),
   identifier: z.string().trim().min(3).max(120),
   metadata: z.record(z.string(), z.unknown()).default({}),
+});
+
+const BusinessRegistrationRequestSchema = z.object({
+  serviceCode: z.string().min(1),
+  userId: z.string().optional(),
+  email: z.string().email().optional(),
+  phone: z.string().trim().min(1).max(40).optional(),
+  requestedRole: z.string().optional(),
+  requested_role: z.string().optional(),
+  businessName: z.string().trim().min(1).max(160).optional(),
+  business_name: z.string().trim().min(1).max(160).optional(),
+  externalBusinessId: z.string().trim().max(160).optional(),
+  note: z.string().trim().max(1000).optional(),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+}).refine((value) => value.userId || value.email || value.phone, {
+  message: 'userId, email, or phone is required',
+});
+
+const PaymentProfileRequestSchema = z.object({
+  serviceCode: z.string().min(1),
+  userId: z.string().optional(),
+  customerId: z.string().optional(),
+  email: z.string().email().optional(),
+  phone: z.string().trim().min(1).max(40).optional(),
+  externalCustomerId: z.string().trim().min(1).max(160).optional(),
+  scopes: z.array(z.string().trim().min(1).max(80)).min(1).max(20),
+  consent: z.record(z.string(), z.unknown()).default({}),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+  expiresAt: z.string().datetime().optional(),
+  idempotencyKey: z.string().trim().min(8).max(160).optional(),
+}).refine((value) => value.userId || value.customerId || value.email || value.phone, {
+  message: 'userId, customerId, email, or phone is required',
 });
 
 const MerchantOrderPaymentStatusRequestSchema = z.object({
@@ -1497,6 +1531,117 @@ export const registerInternalRoutes = (internal: Router) => {
         activeForPayments,
       },
     });
+  });
+
+  internal.post('/pay-gateway/business/registrations', requireWorkerScope(['gateway:business-registration:write']), async (req, res) => {
+    const parsed = BusinessRegistrationRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        error: 'BUSINESS_REGISTRATION_REQUEST_INVALID',
+        issues: parsed.error.issues.map((issue) => ({
+          path: issue.path.join('.'),
+          message: issue.message,
+        })),
+      });
+    }
+
+    const workerId = String((req as any).internalWorker?.id || req.get('x-worker-id') || 'payment-gateway');
+    const body = parsed.data;
+
+    try {
+      const result = await BusinessIdentity.submitGatewayBusinessRegistration({
+        serviceCode: body.serviceCode,
+        userId: body.userId,
+        email: body.email,
+        phone: body.phone,
+        requestedRole: body.requestedRole || body.requested_role,
+        businessName: body.businessName || body.business_name,
+        externalBusinessId: body.externalBusinessId,
+        note: body.note,
+        submittedVia: 'pay_gateway_business_registration',
+        metadata: body.metadata || {},
+      }, workerId);
+
+      await Audit.log('ADMIN', workerId, 'PAY_GATEWAY_BUSINESS_REGISTRATION_SUBMITTED', {
+        serviceCode: body.serviceCode,
+        requestId: result.request?.id,
+        alreadyPending: result.alreadyPending,
+        externalBusinessId: body.externalBusinessId || null,
+        ...getInternalAuditMetadata(req),
+      });
+
+      return res.status(result.alreadyPending ? 200 : 201).json({
+        success: true,
+        data: result,
+      });
+    } catch (e: any) {
+      const message = String(e?.message || 'BUSINESS_REGISTRATION_FAILED');
+      await Audit.log('ADMIN', workerId, 'PAY_GATEWAY_BUSINESS_REGISTRATION_FAILED', {
+        serviceCode: body.serviceCode,
+        error: message,
+        externalBusinessId: body.externalBusinessId || null,
+        ...getInternalAuditMetadata(req),
+      }).catch(() => undefined);
+      return res.status(quoteErrorStatus(message)).json({ success: false, error: message });
+    }
+  });
+
+  internal.post('/pay-gateway/payment-profiles', requireWorkerScope(['gateway:payment-profiles:write']), async (req, res) => {
+    const parsed = PaymentProfileRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        error: 'PAYMENT_PROFILE_REQUEST_INVALID',
+        issues: parsed.error.issues.map((issue) => ({
+          path: issue.path.join('.'),
+          message: issue.message,
+        })),
+      });
+    }
+
+    const workerId = String((req as any).internalWorker?.id || req.get('x-worker-id') || 'payment-gateway');
+    const body = parsed.data;
+
+    try {
+      const result = await PaymentProfileService.createOrLink({
+        serviceCode: body.serviceCode,
+        userId: body.userId,
+        customerId: body.customerId,
+        email: body.email,
+        phone: body.phone,
+        externalCustomerId: body.externalCustomerId,
+        scopes: body.scopes,
+        consent: body.consent,
+        metadata: body.metadata,
+        expiresAt: body.expiresAt,
+        idempotencyKey: body.idempotencyKey,
+        createdByWorkerId: workerId,
+      });
+
+      await Audit.log('FINANCIAL', result.profile.userId || workerId, 'PAY_GATEWAY_PAYMENT_PROFILE_CREATED', {
+        serviceCode: body.serviceCode,
+        paymentProfileId: result.profile.paymentProfileId,
+        externalCustomerId: body.externalCustomerId || null,
+        scopes: body.scopes,
+        replayed: result.replayed,
+        ...getInternalAuditMetadata(req),
+      });
+
+      return res.status(result.replayed ? 200 : 201).json({
+        success: true,
+        data: result,
+      });
+    } catch (e: any) {
+      const message = String(e?.message || 'PAYMENT_PROFILE_CREATE_FAILED');
+      await Audit.log('FINANCIAL', workerId, 'PAY_GATEWAY_PAYMENT_PROFILE_FAILED', {
+        serviceCode: body.serviceCode,
+        error: message,
+        externalCustomerId: body.externalCustomerId || null,
+        ...getInternalAuditMetadata(req),
+      }).catch(() => undefined);
+      return res.status(quoteErrorStatus(message)).json({ success: false, error: message });
+    }
   });
 
   internal.post('/pay-gateway/paysafe-balances', requireWorkerScope(['gateway:paysafe-balances:read']), async (req, res) => {

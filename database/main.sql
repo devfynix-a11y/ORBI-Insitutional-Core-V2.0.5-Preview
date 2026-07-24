@@ -9259,3 +9259,168 @@ END $$;
 
 NOTIFY pgrst, 'reload schema';
 -- END SYNCED MIGRATION: 20260716_shared_budget_funded_ledger.sql
+
+-- BEGIN SYNCED MIGRATION: 20260720_payment_profiles.sql
+-- ORBI payment profiles for external merchant/platform infrastructure.
+-- Merchants store profile references; Core keeps consent and financial identity linkage.
+
+CREATE TABLE IF NOT EXISTS public.payment_profiles (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    profile_id TEXT NOT NULL UNIQUE,
+    service_code TEXT NOT NULL,
+    external_customer_id TEXT,
+    user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
+    customer_id TEXT,
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'suspended', 'revoked', 'expired')),
+    scopes TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+    consent_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    expires_at TIMESTAMP WITH TIME ZONE,
+    last_used_at TIMESTAMP WITH TIME ZONE,
+    revoked_at TIMESTAMP WITH TIME ZONE,
+    created_by_worker_id TEXT,
+    idempotency_key TEXT,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CHECK (array_length(scopes, 1) IS NOT NULL AND array_length(scopes, 1) > 0)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_profiles_service_idempotency
+    ON public.payment_profiles(service_code, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_profiles_service_external_customer
+    ON public.payment_profiles(service_code, external_customer_id)
+    WHERE external_customer_id IS NOT NULL AND status <> 'revoked';
+
+CREATE INDEX IF NOT EXISTS idx_payment_profiles_user
+    ON public.payment_profiles(user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_payment_profiles_service_status
+    ON public.payment_profiles(service_code, status, updated_at DESC);
+
+ALTER TABLE public.payment_profiles ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS payment_profiles_service_role
+    ON public.payment_profiles;
+CREATE POLICY payment_profiles_service_role
+    ON public.payment_profiles
+    FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+DROP POLICY IF EXISTS payment_profiles_user_read_own
+    ON public.payment_profiles;
+CREATE POLICY payment_profiles_user_read_own
+    ON public.payment_profiles
+    FOR SELECT TO authenticated
+    USING (auth.uid() = user_id);
+
+NOTIFY pgrst, 'reload schema';
+-- END SYNCED MIGRATION: 20260720_payment_profiles.sql
+
+-- BEGIN SYNCED MIGRATION: 20260723_pay_gateway_developer_secret_vault.sql
+-- Official Pay Gateway developer secret vault.
+-- Stores fingerprints only. Raw API keys and webhook secrets must never be persisted.
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+CREATE TABLE IF NOT EXISTS public.pay_gateway_developer_services (
+  service_code TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL,
+  legal_name TEXT,
+  business_type TEXT,
+  country_code TEXT,
+  contact_email TEXT,
+  contact_phone TEXT,
+  status TEXT NOT NULL DEFAULT 'draft',
+  environments TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  scopes_granted TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  scopes_pending TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  redirect_urls TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  webhook_urls TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  external_developer_id TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  CONSTRAINT pay_gateway_developer_services_status_check
+    CHECK (status IN ('draft', 'active', 'suspended', 'revoked'))
+);
+
+CREATE TABLE IF NOT EXISTS public.pay_gateway_developer_api_keys (
+  key_id TEXT PRIMARY KEY,
+  service_code TEXT NOT NULL REFERENCES public.pay_gateway_developer_services(service_code) ON DELETE CASCADE,
+  environment TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  encrypted_secret JSONB,
+  status TEXT NOT NULL DEFAULT 'active',
+  issued_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMP WITH TIME ZONE,
+  revoked_at TIMESTAMP WITH TIME ZONE,
+  issued_by TEXT,
+  revoked_by TEXT,
+  rotation_reason TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  CONSTRAINT pay_gateway_developer_api_keys_environment_check
+    CHECK (environment IN ('sandbox', 'live')),
+  CONSTRAINT pay_gateway_developer_api_keys_status_check
+    CHECK (status IN ('active', 'revoked', 'expired')),
+  CONSTRAINT pay_gateway_developer_api_keys_fingerprint_unique
+    UNIQUE (fingerprint)
+);
+
+CREATE TABLE IF NOT EXISTS public.pay_gateway_developer_webhook_secrets (
+  secret_id TEXT PRIMARY KEY,
+  service_code TEXT NOT NULL REFERENCES public.pay_gateway_developer_services(service_code) ON DELETE CASCADE,
+  environment TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  issued_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMP WITH TIME ZONE,
+  revoked_at TIMESTAMP WITH TIME ZONE,
+  issued_by TEXT,
+  revoked_by TEXT,
+  rotation_reason TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  CONSTRAINT pay_gateway_developer_webhook_secrets_environment_check
+    CHECK (environment IN ('sandbox', 'live')),
+  CONSTRAINT pay_gateway_developer_webhook_secrets_status_check
+    CHECK (status IN ('active', 'revoked', 'expired')),
+  CONSTRAINT pay_gateway_developer_webhook_secrets_fingerprint_unique
+    UNIQUE (fingerprint)
+);
+
+CREATE TABLE IF NOT EXISTS public.pay_gateway_developer_secret_events (
+  event_id TEXT PRIMARY KEY,
+  service_code TEXT REFERENCES public.pay_gateway_developer_services(service_code) ON DELETE SET NULL,
+  environment TEXT,
+  event_type TEXT NOT NULL,
+  actor_id TEXT,
+  actor_name TEXT,
+  target_type TEXT,
+  target_id TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  occurred_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  CONSTRAINT pay_gateway_developer_secret_events_environment_check
+    CHECK (environment IS NULL OR environment IN ('sandbox', 'live'))
+);
+
+CREATE INDEX IF NOT EXISTS pay_gateway_developer_api_keys_lookup_idx
+  ON public.pay_gateway_developer_api_keys (fingerprint, status, environment);
+
+CREATE INDEX IF NOT EXISTS pay_gateway_developer_api_keys_service_idx
+  ON public.pay_gateway_developer_api_keys (service_code, environment, status);
+
+CREATE INDEX IF NOT EXISTS pay_gateway_developer_webhook_secrets_lookup_idx
+  ON public.pay_gateway_developer_webhook_secrets (fingerprint, status, environment);
+
+CREATE INDEX IF NOT EXISTS pay_gateway_developer_secret_events_service_idx
+  ON public.pay_gateway_developer_secret_events (service_code, occurred_at DESC);
+
+COMMENT ON TABLE public.pay_gateway_developer_api_keys IS
+  'Developer API key vault. Stores fingerprints only; raw keys are displayed once and never persisted.';
+
+COMMENT ON TABLE public.pay_gateway_developer_webhook_secrets IS
+  'Developer webhook secret vault. Stores fingerprints and encrypted signing secrets. Raw webhook secrets are never stored in plaintext.';
+
+NOTIFY pgrst, 'reload schema';
+-- END SYNCED MIGRATION: 20260723_pay_gateway_developer_secret_vault.sql

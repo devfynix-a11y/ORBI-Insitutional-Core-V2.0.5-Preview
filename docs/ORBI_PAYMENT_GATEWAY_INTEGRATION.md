@@ -14,6 +14,17 @@ Standalone gateway folder during local development:
 D:\FYNIX\ORBI\ORBI CORE\ORBI PAY GATEWAY
 ```
 
+Gateway-side canonical integration contracts live in:
+
+```txt
+D:\FYNIX\ORBI\ORBI CORE\ORBI PAY GATEWAY\docs\PLATFORM_INTEGRATION_CONTRACTS.md
+```
+
+Use that document for merchant/developer-facing contracts: payment profiles,
+hosted challenge, payment intents, PaySafe lifecycle, signed webhooks, and
+developer scopes. Use this Core document for the Core/Gateway authority
+boundary and signed internal worker routes.
+
 ## Boundary
 
 Core owns:

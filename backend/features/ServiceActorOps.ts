@@ -778,9 +778,17 @@ class ServiceActorOperations {
         };
     }
 
-    public async provisionApprovedActorAccess(userId: string, actorRole: ServiceActorRole) {
+    public async provisionApprovedActorAccess(userId: string, actorRole: ServiceActorRole, actorContext: any = {}) {
         if (actorRole === 'MERCHANT') {
-            const merchant = await this.ensureMerchantProfile({ id: userId });
+            const merchant = await this.ensureMerchantProfile({
+                id: userId,
+                user_metadata: {
+                    business_name: actorContext.business_name || actorContext.businessName,
+                    merchant_name: actorContext.business_name || actorContext.businessName,
+                    business_type: actorContext.business_type || actorContext.businessType,
+                    ...(actorContext.metadata || {}),
+                },
+            });
             const wallets = await this.syncMerchantWallets(userId);
             const primaryWallet =
                 wallets.find((wallet: any) => wallet.is_primary) ||

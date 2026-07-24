@@ -4,6 +4,7 @@ import { mountPublicRoutes, registerLegacyGatewayRoute, registerTerminalHandlers
 import { registerAuthUserRoutes } from '../routes/public/authUser.js';
 import { registerSupportOpsRoutes } from '../routes/public/supportOps.js';
 import { registerAdminOpsRoutes } from '../routes/public/adminOps.js';
+import { registerBusinessRoutes } from '../routes/public/business.js';
 import { registerCommerceRoutes } from '../routes/public/commerce.js';
 import { registerCoreFinanceRoutes } from '../routes/public/coreFinance.js';
 import { registerEngagementRoutes } from '../routes/public/engagement.js';
@@ -207,6 +208,10 @@ export const registerAppPublicRoutes = (deps: Deps) => {
     AccountStatusUpdateSchema,
     UserProfileUpdateSchema,
     messagingTestRoutesEnabled,
+  });
+
+  registerBusinessRoutes(v1, {
+    authenticate: authenticate as any,
   });
 
   registerCoreFinanceRoutes(v1, {

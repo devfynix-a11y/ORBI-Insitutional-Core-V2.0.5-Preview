@@ -398,9 +398,17 @@ status and audit evidence.
 
 The production stack creates encrypted PostgreSQL dump artifacts under
 `/srv/orbi/backups/database` and mirrors those encrypted artifacts to Cloudflare
-R2 using `backup-r2-replicator`. Do not copy raw PostgreSQL volume files while
-PostgreSQL is running; use logical dumps for baseline recovery, then add WAL
-archive and point-in-time recovery once the restore drill is proven.
+R2 using `backup-r2-replicator`. The backup job must include both the Core
+database and the auth database, for example `ORBI_BACKUP_DATABASES=orbi,keycloak`.
+This restores users, auth credential hashes, Core identity links, wallets,
+ledger state, and developer credential fingerprints. Do not copy raw PostgreSQL
+volume files while PostgreSQL is running; use logical dumps for baseline
+recovery, then add WAL archive and point-in-time recovery once the restore drill
+is proven.
+
+Passwords, PINs, OTPs, developer API keys, and webhook secrets must never be
+stored as readable secrets. Backups may contain password hashes and secret
+fingerprints only. See `docs/IDENTITY_AND_SECRET_STORAGE_BACKUP.md`.
 
 ## 13. Native PostgreSQL migration status
 

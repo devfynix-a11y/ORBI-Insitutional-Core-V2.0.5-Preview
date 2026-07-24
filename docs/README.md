@@ -6,7 +6,14 @@ This is the **Sovereign Financial Operating System** powering the ORBI ecosystem
 ## 📚 Documentation
 
 *   **[Documentation Index](./DOCUMENTATION_INDEX.md)**: Canonical map for all maintained docs and merged compatibility files.
+*   **[ORBI Open Digital Banking And BaaS Roadmap](./ORBI_OPEN_BANKING_BAAS_ROADMAP.md)**: Phased TODO checklist for developer portal, consent, sandbox, webhooks, onboarding, SDKs, reconciliation, risk, control room, and production hardening.
+*   **[ORBI Infrastructure Platform Blueprint](./ORBI_INFRASTRUCTURE_PLATFORM_BLUEPRINT.md)**: ORBI as financial infrastructure for merchants and third parties, including hosted secure UI, payment profiles, consent scopes, PaySafe lifecycle, webhooks, and authority boundaries.
+*   **Pay Gateway Developer Portal Contracts**: `ORBI PAY GATEWAY/docs/DEVELOPER_PORTAL_CONTRACTS.md` defines service onboarding, sandbox/live access, scopes, allowlists, API key rotation, webhook secret rotation, and developer events.
 *   **[ORBI Business Operational Playbook](./ORBI_BUSINESS_OPERATIONAL_PLAYBOOK.md)**: Business model, B2C/B2B/B2B2C operating model, staff roles, merchant/agent operations, risk, support, and daily control-room procedures.
+*   **[ORBI Business Identity Federation](./ORBI_BUSINESS_IDENTITY_FEDERATION.md)**: Core/Auth, ORBI Shop, and Pay Gateway identity federation contract for shared business accounts.
+*   **[ORBI Registration Identity Contract](./ORBI_REGISTRATION_IDENTITY_CONTRACT.md)**: Required signup payload, `public.users` identity fields, registry families, access levels, and transaction-readiness rules.
+*   **[ORBI Global Registration Protocol](./registration/ORBI_GLOBAL_REGISTRATION_PROTOCOL.md)**: Global registration blueprint for mobile, auth web, gateway, merchant, agent, organization, and third-party sources.
+*   **[ORBI API Request Contracts](./registration/ORBI_API_REQUEST_CONTRACTS.md)**: Canonical headers, payload examples, method rules, idempotency keys, and error shape for registration and gateway identity requests.
 *   **[Production Deployment](./PRODUCTION_DEPLOYMENT.md)**: Active production deployment checks, env requirements, TLS, migrations, workers, release automation, and rollback guidance.
 *   **[Environment Variables Reference](./ENVIRONMENT_VARIABLES_REFERENCE.md)**: Complete environment variable catalog.
 *   **[ORBI Admin Frontend API SDK](./ORBI_ADMIN_FRONTEND_API_SDK.md)**: Admin portal SDK, failover, activity accounting, safe mutations, and API groups.

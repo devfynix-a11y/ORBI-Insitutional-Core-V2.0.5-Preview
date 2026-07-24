@@ -38,7 +38,8 @@ export const SignUpSchema = z.object({
     country_name: z.string().optional(),
     dial_code: z.string().optional(),
     fcm_token: z.string().optional(),
-    registry_type: z.string().default('CONSUMER'),
+    app_origin: z.string().trim().min(1).optional(),
+    registry_type: z.enum(['CONSUMER', 'MERCHANT', 'AGENT', 'STAFF']).default('CONSUMER'),
     metadata: z.record(z.string(), z.any()).optional()
 }).refine(data => (data.email || data.e) || data.phone, {
     message: "Must provide either email or phone"
