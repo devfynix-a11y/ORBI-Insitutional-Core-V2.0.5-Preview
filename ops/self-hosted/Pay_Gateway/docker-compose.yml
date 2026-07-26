@@ -3,7 +3,7 @@ services:
     profiles:
       - live
     build:
-      context: ../../../../ORBI PAY GATEWAY
+      context: D:/FYNIX/ORBI/Orbi Infrastructures/ORBI GATEWAY/Pay Gateway Backend
       dockerfile: Dockerfile
     image: orbi-pay-gateway:${ORBI_PAY_GATEWAY_RELEASE_ID:-local}
     container_name: orbi-pay-gateway
@@ -21,8 +21,8 @@ services:
       PAYMENT_GATEWAY_SERVICE_REGISTRY_PATH: /app/config/services.json
       PAYMENT_GATEWAY_OBP_SANDBOX_TOOLS_ENABLED: "false"
     volumes:
-      - ../../../../ORBI PAY GATEWAY/config/providers.example.json:/app/config/providers.json:ro
-      - ../../../../ORBI PAY GATEWAY/config/services.json:/app/config/services.json:ro
+      - D:/FYNIX/ORBI/Orbi Infrastructures/ORBI GATEWAY/Pay Gateway Backend/config/providers.example.json:/app/config/providers.json:ro
+      - D:/FYNIX/ORBI/Orbi Infrastructures/ORBI GATEWAY/Pay Gateway Backend/config/services.json:/app/config/services.json:ro
     ports:
       - "${ORBI_PAY_GATEWAY_BIND_ADDRESS:-127.0.0.1}:3100:3100"
     healthcheck:
@@ -45,7 +45,7 @@ services:
     profiles:
       - sandbox
     build:
-      context: ../../../../ORBI PAY GATEWAY
+      context: D:/FYNIX/ORBI/Orbi Infrastructures/ORBI GATEWAY/Pay Gateway Backend
       dockerfile: Dockerfile
     image: orbi-pay-gateway:${ORBI_PAY_GATEWAY_RELEASE_ID:-local}
     container_name: orbi-pay-gateway-sandbox
@@ -63,8 +63,8 @@ services:
       PAYMENT_GATEWAY_SERVICE_REGISTRY_PATH: /app/config/services.json
       PAYMENT_GATEWAY_OBP_SANDBOX_TOOLS_ENABLED: "true"
     volumes:
-      - ../../../../ORBI PAY GATEWAY/config/providers.example.json:/app/config/providers.json:ro
-      - ../../../../ORBI PAY GATEWAY/config/services.json:/app/config/services.json:ro
+      - D:/FYNIX/ORBI/Orbi Infrastructures/ORBI GATEWAY/Pay Gateway Backend/config/providers.example.json:/app/config/providers.json:ro
+      - D:/FYNIX/ORBI/Orbi Infrastructures/ORBI GATEWAY/Pay Gateway Backend/config/services.json:/app/config/services.json:ro
     ports:
       - "${ORBI_PAY_GATEWAY_SANDBOX_BIND_ADDRESS:-127.0.0.1}:3101:3101"
     healthcheck:
