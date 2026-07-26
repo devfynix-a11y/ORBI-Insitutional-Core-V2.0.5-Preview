@@ -71,10 +71,28 @@ Cloudflare Tunnel public hostnames for the local VM:
 - `api.orbifinancial.com` -> `http://orbi-core:3000` or `http://core:3000`
   depending on the active compose project aliases.
 - `pay.orbifinancial.com` -> `http://pay-gateway:3100`.
-- `sandbox-pay.orbifinancial.com` -> `http://pay-gateway:3100`.
+- `sandbox-pay.orbifinancial.com` -> `http://pay-gateway-sandbox:3101`.
 - `auth.orbifinancial.com` -> `http://keycloak:8080`.
 - `ops.orbifinancial.com` -> `http://orbi-core:3000` or `http://core:3000`
   and protect it with Cloudflare Access/VPN.
+
+Pay Gateway live and sandbox must never share a runtime database, service key,
+worker key, or merchant secret. The sandbox container is intentionally
+fail-closed and requires these separate environment values before it starts:
+
+```env
+PAYMENT_GATEWAY_SANDBOX_DATABASE_URL=postgresql://<user>:<password>@postgres:5432/orbi_pay_gateway_sandbox
+PAYMENT_GATEWAY_SANDBOX_SECRET_ENCRYPTION_KEY=<separate-sandbox-secret-key>
+PAYMENT_GATEWAY_SANDBOX_OPERATOR_DISCOVERY_API_KEY=<separate-sandbox-operator-key>
+PAYMENT_GATEWAY_SANDBOX_WORKER_ID=orbi-payment-gateway-sandbox
+PAYMENT_GATEWAY_SANDBOX_WORKER_SIGNING_SECRET=<separate-sandbox-worker-secret>
+PAYMENT_GATEWAY_SANDBOX_WORKER_KEY_ID=payment-gateway-sandbox-v1
+ORBI_CORE_SANDBOX_INTERNAL_BASE_URL=http://core-sandbox:3000
+ORBI_SHOP_SANDBOX_PAY_API_KEY=<sandbox-shop-service-key>
+ORBI_SHOP_SANDBOX_PAY_WEBHOOK_SECRET=<sandbox-shop-webhook-secret>
+ORBI_SHOP_SANDBOX_PAY_WEBHOOK_URL=https://shop.orbifinancial.com/api/orbi-pay/sandbox/webhooks
+ORBI_SHOP_SANDBOX_MERCHANT_ID=<sandbox-shop-merchant-id>
+```
 
 Pay Gateway readiness can show provider adapters as `DOWN` until real bank or
 mobile-money token references are configured. That is expected while PaySafe
