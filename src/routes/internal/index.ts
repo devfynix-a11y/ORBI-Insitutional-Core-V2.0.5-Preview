@@ -50,6 +50,39 @@ const normalizeChallengeDecision = (value: unknown) => {
   throw new Error('SERVICE_CHALLENGE_DECISION_INVALID');
 };
 
+const servicePaymentNotificationTimeoutMs = Math.max(
+  250,
+  Number(process.env.ORBI_NOTIFICATION_SIDE_EFFECT_TIMEOUT_MS || 2500),
+);
+
+const dispatchServicePaymentNotificationSafely = (
+  factory: () => Promise<unknown>,
+  context: Record<string, unknown>,
+) => {
+  const task = Promise.resolve()
+    .then(factory)
+    .catch((error: any) => {
+      console.warn('[PayGateway] service authorization notification failed', {
+        ...context,
+        error: error?.message || String(error || 'UNKNOWN_NOTIFICATION_ERROR'),
+      });
+    });
+
+  Promise.race([
+    task,
+    new Promise((resolve) => setTimeout(() => resolve('timeout'), servicePaymentNotificationTimeoutMs)),
+  ])
+    .then((result) => {
+      if (result === 'timeout') {
+        console.warn('[PayGateway] service authorization notification still running in background', {
+          ...context,
+          timeoutMs: servicePaymentNotificationTimeoutMs,
+        });
+      }
+    })
+    .catch(() => undefined);
+};
+
 async function completeApprovedServiceChallengeWithPaySafeHold(
   actorUserId: string,
   response: Awaited<ReturnType<typeof gatewayPaymentIntentService.respondToChallenge>>,
@@ -1195,57 +1228,66 @@ export const registerInternalRoutes = (internal: Router) => {
       if (event.status === 'requires_action' && event.challenge && resolvedCustomer?.id) {
         const merchantName = String(merchantContext?.merchant?.business_name || request.serviceCode || 'ORBI service');
         const amountText = `${request.currency.toUpperCase()} ${Number(request.amount || 0).toLocaleString('en-US')}`;
-        await Messaging.dispatch(
-          String(resolvedCustomer.id),
-          'update',
-          'Approve ORBI payment request',
-          `Enter your ORBI OTC to approve ${amountText} for ${merchantName}. Reference ${request.reference}.`,
-          {
-            push: true,
-            email: false,
-            sms: false,
-            template: 'SERVICE_PAYMENT_AUTHORIZATION_REQUIRED',
-            eventCode: 'SERVICE_PAYMENT_AUTHORIZATION_REQUIRED',
-            variables: {
-              amount: request.amount,
-              currency: request.currency,
-              serviceName: merchantName,
-              reference: request.reference,
-            },
-            localized: {
-              en: {
-                subject: 'Approve ORBI payment request',
-                body: `Enter your ORBI OTC to approve ${amountText} for ${merchantName}. Reference ${request.reference}.`,
-              },
-              sw: {
-                subject: 'Thibitisha ombi la malipo ya ORBI',
-                body: `Weka OTC yako ya ORBI kuthibitisha ${amountText} kwa ${merchantName}. Kumbukumbu ${request.reference}.`,
-              },
-            },
-            metadata: {
-              source: 'pay_gateway',
-              category: 'service_payment_authorization',
-              servicePaymentChallenge: {
-                challengeId: event.challenge.challengeId,
-                challengeType: event.challenge.type,
-                intentId: event.intentId,
-                serviceCode: event.serviceCode,
-                reference: request.reference,
+        const notificationCustomerId = String(resolvedCustomer.id);
+        const notificationEvent = event;
+        const notificationChallenge = event.challenge;
+        dispatchServicePaymentNotificationSafely(
+          () => Messaging.dispatch(
+            notificationCustomerId,
+            'update',
+            'Approve ORBI payment request',
+            `Enter your ORBI OTC to approve ${amountText} for ${merchantName}. Reference ${request.reference}.`,
+            {
+              push: true,
+              email: false,
+              sms: false,
+              template: 'SERVICE_PAYMENT_AUTHORIZATION_REQUIRED',
+              eventCode: 'SERVICE_PAYMENT_AUTHORIZATION_REQUIRED',
+              variables: {
                 amount: request.amount,
                 currency: request.currency,
-                operation: request.operation,
-                expiresAt: event.challenge.expiresAt,
-                merchantName,
-                otcRequired: event.challenge.metadata?.otcRequired === true,
-                otcRequestId: event.challenge.metadata?.otcRequestId || null,
-                otcDeliveryType: event.challenge.metadata?.otcDeliveryType || null,
-                otcDeliveryContact: event.challenge.metadata?.otcDeliveryContact || null,
+                serviceName: merchantName,
+                reference: request.reference,
+              },
+              localized: {
+                en: {
+                  subject: 'Approve ORBI payment request',
+                  body: `Enter your ORBI OTC to approve ${amountText} for ${merchantName}. Reference ${request.reference}.`,
+                },
+                sw: {
+                  subject: 'Thibitisha ombi la malipo ya ORBI',
+                  body: `Weka OTC yako ya ORBI kuthibitisha ${amountText} kwa ${merchantName}. Kumbukumbu ${request.reference}.`,
+                },
+              },
+              metadata: {
+                source: 'pay_gateway',
+                category: 'service_payment_authorization',
+                servicePaymentChallenge: {
+                  challengeId: notificationChallenge.challengeId,
+                  challengeType: notificationChallenge.type,
+                  intentId: notificationEvent.intentId,
+                  serviceCode: notificationEvent.serviceCode,
+                  reference: request.reference,
+                  amount: request.amount,
+                  currency: request.currency,
+                  operation: request.operation,
+                  expiresAt: notificationChallenge.expiresAt,
+                  merchantName,
+                  otcRequired: notificationChallenge.metadata?.otcRequired === true,
+                  otcRequestId: notificationChallenge.metadata?.otcRequestId || null,
+                  otcDeliveryType: notificationChallenge.metadata?.otcDeliveryType || null,
+                  otcDeliveryContact: notificationChallenge.metadata?.otcDeliveryContact || null,
+                },
               },
             },
+          ),
+          {
+            intentId: notificationEvent.intentId,
+            serviceCode: notificationEvent.serviceCode,
+            customerId: notificationCustomerId,
+            reference: request.reference,
           },
-        ).catch((error: any) => {
-          console.warn('[PayGateway] service authorization notification failed', error?.message || error);
-        });
+        );
       }
 
       const gatewayDelivery = await postServicePaymentEventToPayGateway(event).catch((error: any) => ({

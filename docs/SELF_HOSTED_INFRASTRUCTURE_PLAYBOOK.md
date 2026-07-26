@@ -116,12 +116,16 @@ change to move forward:
 .\ops\self-hosted\scripts\test-sandbox-pay-gateway.ps1 -EnsureContainers -SeedFixtures -RotateSecrets
 ```
 
-The smoke checks Core and Pay Gateway health, creates a sandbox PaySafe checkout
+The smoke checks Core and Pay Gateway health, resolves a seeded sandbox identity
+through the same SDK method used in live, creates a sandbox PaySafe checkout
 through the published Node SDK contract, approves the hosted challenge using the
 sandbox OTC stored in Valkey, verifies the redirect result, confirms the final
-payment intent is `completed`, and scans recent sandbox logs for fatal gateway
-integration errors. It must not print service keys, webhook secrets, Valkey
-passwords, or OTC codes.
+payment intent is `completed`, verifies that a replayable webhook delivery
+record exists, replays that webhook through the operator replay API, runs
+negative checks for invalid keys, unallowlisted redirects, idempotency
+replay/mismatch, and declined hosted challenges, then scans recent sandbox logs
+for fatal gateway integration errors. It must not print service keys, webhook
+secrets, Valkey passwords, or OTC codes.
 
 Pay Gateway readiness can show provider adapters as `DOWN` until real bank or
 mobile-money token references are configured. That is expected while PaySafe

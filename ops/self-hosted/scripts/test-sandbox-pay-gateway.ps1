@@ -7,6 +7,8 @@ param(
   [switch]$EnsureContainers,
   [switch]$SeedFixtures,
   [switch]$RotateSecrets,
+  [switch]$SkipWebhookAssertion,
+  [switch]$SkipNegativeTests,
   [switch]$SkipLogScan
 )
 
@@ -42,6 +44,66 @@ function Get-ValkeyPassword {
     }
   }
   throw "Could not read Valkey password from orbi-valkey container command."
+}
+
+function Get-ContainerEnvMap([string]$ContainerName) {
+  $rows = docker inspect $ContainerName --format '{{json .Config.Env}}' | ConvertFrom-Json
+  $map = [ordered]@{}
+  foreach ($row in $rows) {
+    $parts = $row -split '=', 2
+    if ($parts.Length -eq 2) {
+      $map[$parts[0]] = $parts[1]
+    }
+  }
+  $map
+}
+
+function Get-GatewayOperatorKey {
+  $envMap = Get-ContainerEnvMap "orbi-pay-gateway-sandbox"
+  if (-not $envMap.Contains("PAYMENT_GATEWAY_OPERATOR_DISCOVERY_API_KEY")) {
+    throw "Sandbox gateway operator key is not present on orbi-pay-gateway-sandbox."
+  }
+  return $envMap["PAYMENT_GATEWAY_OPERATOR_DISCOVERY_API_KEY"]
+}
+
+function Invoke-GatewayOperator([string]$Path) {
+  $operatorKey = Get-GatewayOperatorKey
+  try {
+    return Invoke-RestMethod `
+      -Method GET `
+      -Uri "$GatewayBaseUrl$Path" `
+      -Headers @{ "x-orbi-pay-operator-key" = $operatorKey } `
+      -TimeoutSec 20
+  } finally {
+    Remove-Variable operatorKey -ErrorAction SilentlyContinue
+  }
+}
+
+function Invoke-GatewayOperatorPost([string]$Path) {
+  $operatorKey = Get-GatewayOperatorKey
+  $bodyFile = [System.IO.Path]::GetTempFileName()
+  try {
+    $statusCodeText = & curl.exe `
+      -sS `
+      -o $bodyFile `
+      -w "%{http_code}" `
+      -X POST `
+      "$GatewayBaseUrl$Path" `
+      -H "Content-Type: application/json" `
+      -H "x-orbi-pay-operator-key: $operatorKey" `
+      --data "{}"
+    if ($LASTEXITCODE -ne 0) {
+      throw "curl operator POST failed for $Path."
+    }
+    $body = Get-Content -LiteralPath $bodyFile -Raw -ErrorAction SilentlyContinue
+    if ([string]::IsNullOrWhiteSpace($body)) {
+      throw "Operator POST $Path returned HTTP $statusCodeText with an empty body."
+    }
+    return $body | ConvertFrom-Json
+  } finally {
+    Remove-Variable operatorKey -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $bodyFile -Force -ErrorAction SilentlyContinue
+  }
 }
 
 function Get-OtcFromValkey([string]$RequestId) {
@@ -156,6 +218,40 @@ function Assert-NoBadLogs([datetime]$StartedAtUtc) {
   Write-Output "Sandbox log scan OK"
 }
 
+function Assert-WebhookDelivery([string]$IntentId) {
+  $deliveryResponse = Invoke-GatewayOperator "/v1/developer/webhook-deliveries?intentId=$IntentId"
+  if (-not $deliveryResponse.success) {
+    throw "Webhook delivery query failed for intent $IntentId."
+  }
+  $deliveries = @($deliveryResponse.data)
+  $completedDelivery = $deliveries | Where-Object {
+    $_.eventType -eq "payment_intent.updated" -and
+    $_.payload.paymentIntent.status -eq "completed"
+  } | Select-Object -First 1
+  if (-not $completedDelivery) {
+    throw "No completed payment_intent.updated webhook delivery record found for intent $IntentId."
+  }
+  if (-not $completedDelivery.deliveryId -or -not $completedDelivery.callbackUrl -or -not $completedDelivery.status) {
+    throw "Webhook delivery record for intent $IntentId is missing replay evidence."
+  }
+  $script:LastCompletedWebhookDeliveryId = $completedDelivery.deliveryId
+  Write-Output "Webhook delivery recorded: status=$($completedDelivery.status) deliveryId=$($completedDelivery.deliveryId)"
+}
+
+function Assert-WebhookReplay([string]$DeliveryId) {
+  if ([string]::IsNullOrWhiteSpace($DeliveryId)) {
+    throw "Webhook replay assertion requires a delivery id."
+  }
+  $replayResponse = Invoke-GatewayOperatorPost "/v1/developer/webhook-deliveries/$DeliveryId/replay"
+  if (-not $replayResponse.data -or -not $replayResponse.data.deliveryId) {
+    throw "Webhook replay did not return replay delivery evidence for $DeliveryId."
+  }
+  if ($replayResponse.data.replayOf -ne $DeliveryId) {
+    throw "Webhook replay record did not preserve replayOf lineage for $DeliveryId."
+  }
+  Write-Output "Webhook replay recorded: status=$($replayResponse.data.status) deliveryId=$($replayResponse.data.deliveryId)"
+}
+
 Assert-Command "docker"
 Assert-Command "node"
 Assert-Command "curl.exe"
@@ -217,6 +313,20 @@ const orbi = createOrbi({
   environment: 'Demo',
 });
 
+const identity = await orbi.identity.resolve({
+  identifier: fixture.demoUsers?.[0]?.phone || '+255700000101',
+  metadata: {
+    sandbox: true,
+    smokeTest: true,
+  },
+}, {
+  environment: 'Demo',
+  idempotencyKey: `sandbox-identity:${Date.now()}`,
+});
+if (!identity.success) {
+  throw new Error(`SANDBOX_IDENTITY_LOOKUP_FAILED:${identity.error || identity.message || 'unknown'}`);
+}
+
 const reference = `SANDBOX-SMOKE-${Date.now()}`;
 const amount = Number(process.env.ORBI_SMOKE_AMOUNT || 1500);
 const response = await orbi.payments.checkout({
@@ -258,6 +368,7 @@ console.log(JSON.stringify({
   otcRequestId: challenge.metadata?.otcRequestId || null,
   challengeId: challenge.challengeId || null,
   coreStatus: data.coreStatus || null,
+  identityResolved: identity.success,
   error: response.error || null,
   message: response.message || null,
 }));
@@ -329,6 +440,159 @@ console.log(JSON.stringify({
 $final = Invoke-NodeJson $finalScript $gatewayRepoFull
 if (-not $final.success -or $final.status -ne "completed") {
   throw "Payment intent did not complete. status=$($final.status) coreStatus=$($final.coreStatus) error=$($final.error) message=$($final.message)"
+}
+
+if (-not $SkipWebhookAssertion) {
+  Assert-WebhookDelivery $created.intentId
+  Assert-WebhookReplay $script:LastCompletedWebhookDeliveryId
+}
+
+if (-not $SkipNegativeTests) {
+  $env:ORBI_SMOKE_NEGATIVE_PATH = (Join-Path $sandboxDirectory "last-sandbox-smoke-negative.json")
+  $negativeScript = @'
+import { createOrbi } from './sdk/node/dist/index.js';
+import { readFileSync, writeFileSync } from 'node:fs';
+
+const fixture = JSON.parse(readFileSync(process.env.ORBI_SMOKE_FIXTURE_PATH, 'utf8').replace(/^\uFEFF/, ''));
+const baseUrl = process.env.ORBI_SMOKE_GATEWAY_BASE_URL;
+const amount = Number(process.env.ORBI_SMOKE_AMOUNT || 1500);
+const goodReturnUrl = 'https://shop.orbifinancial.com/checkout/orbi/return';
+const badReturnUrl = 'https://evil.example.invalid/checkout/return';
+const valid = createOrbi({ baseUrl, serviceKey: fixture.apiKey, environment: 'Demo' });
+const invalid = createOrbi({ baseUrl, serviceKey: 'orbi_sk_demo_invalid_negative_test', environment: 'Demo' });
+
+const basePayload = (reference, extra = {}) => ({
+  operation: 'collection',
+  paymentCategory: 'orbi',
+  paymentRail: 'orbi_wallet',
+  reference,
+  amount,
+  currency: 'TZS',
+  description: 'Sandbox negative checkout',
+  returnUrl: goodReturnUrl,
+  customer: {
+    type: 'user',
+    name: fixture.demoUsers?.[0]?.name || 'Daniel Zakaria Sandbox',
+    phone: fixture.demoUsers?.[0]?.phone || '+255700000101',
+  },
+  metadata: {
+    sandbox: true,
+    smokeNegativeTest: true,
+    merchantId: fixture.merchantId,
+    serviceCode: fixture.serviceCode,
+  },
+  ...extra,
+});
+
+const timestamp = Date.now();
+const invalidKey = await invalid.payments.createIntent(basePayload(`SANDBOX-NEG-INVALID-KEY-${timestamp}`, { confirm: false }), {
+  environment: 'Demo',
+  idempotencyKey: `sandbox-neg-invalid-key:${timestamp}`,
+});
+
+const badRedirect = await valid.payments.createIntent(basePayload(`SANDBOX-NEG-BAD-REDIRECT-${timestamp}`, {
+  confirm: false,
+  returnUrl: badReturnUrl,
+}), {
+  environment: 'Demo',
+  idempotencyKey: `sandbox-neg-bad-redirect:${timestamp}`,
+});
+
+const replayKey = `sandbox-neg-idempotent:${timestamp}`;
+const replayReference = `SANDBOX-NEG-IDEMPOTENT-${timestamp}`;
+const replayPayload = basePayload(replayReference, { confirm: false });
+const replayFirst = await valid.payments.createIntent(replayPayload, {
+  environment: 'Demo',
+  idempotencyKey: replayKey,
+});
+const replaySecond = await valid.payments.createIntent(replayPayload, {
+  environment: 'Demo',
+  idempotencyKey: replayKey,
+});
+const replayMismatch = await valid.payments.createIntent(basePayload(`${replayReference}-MISMATCH`, {
+  confirm: false,
+  amount: amount + 1,
+}), {
+  environment: 'Demo',
+  idempotencyKey: replayKey,
+});
+
+let decline = null;
+let declineReference = '';
+const declineCustomer = {
+  type: 'user',
+  name: fixture.demoUsers?.[1]?.name || 'Catherine Daniel Sandbox',
+  phone: fixture.demoUsers?.[1]?.phone || '+255700000202',
+};
+for (let attempt = 0; attempt < 3; attempt += 1) {
+  declineReference = `SANDBOX-NEG-DECLINE-${timestamp}-${attempt}`;
+  decline = await valid.payments.checkout(basePayload(declineReference, {
+    customer: declineCustomer,
+  }), {
+    environment: 'Demo',
+    idempotencyKey: `sandbox-neg-decline:${timestamp}:${attempt}`,
+    requestId: `sandbox-neg-decline-${timestamp}-${attempt}`,
+  });
+  const possibleChallenge = decline.data?.coreResult?.challenge || {};
+  if (decline.success && decline.data?.status === 'requires_action' && possibleChallenge.challengeId) {
+    break;
+  }
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+}
+
+const challenge = decline?.data?.coreResult?.challenge || {};
+const results = {
+  invalidKey: { success: invalidKey.success, error: invalidKey.error || null },
+  badRedirect: { success: badRedirect.success, error: badRedirect.error || null },
+  replay: {
+    firstSuccess: replayFirst.success,
+    secondSuccess: replaySecond.success,
+    sameIntent: Boolean(replayFirst.success && replaySecond.success && replayFirst.data.id === replaySecond.data.id),
+    mismatchSuccess: replayMismatch.success,
+    mismatchError: replayMismatch.error || null,
+  },
+  decline: {
+    success: Boolean(decline?.success),
+    intentId: decline?.data?.id || null,
+    status: decline?.data?.status || null,
+    challengeId: challenge.challengeId || null,
+    otcRequestId: challenge.metadata?.otcRequestId || null,
+    error: decline?.error || null,
+  },
+};
+
+writeFileSync(process.env.ORBI_SMOKE_NEGATIVE_PATH, JSON.stringify(results, null, 2));
+console.log(JSON.stringify(results));
+'@
+
+  $negative = Invoke-NodeJson $negativeScript $gatewayRepoFull
+  if ($negative.invalidKey.success -or $negative.invalidKey.error -ne "PAY_SERVICE_AUTH_FAILED") {
+    throw "Invalid key negative test failed. error=$($negative.invalidKey.error)"
+  }
+  if ($negative.badRedirect.success -or $negative.badRedirect.error -ne "DEVELOPER_REDIRECT_URL_NOT_ALLOWED") {
+    throw "Bad redirect negative test failed. error=$($negative.badRedirect.error)"
+  }
+  if (-not $negative.replay.firstSuccess -or -not $negative.replay.secondSuccess -or -not $negative.replay.sameIntent) {
+    throw "Idempotency replay test failed."
+  }
+  if ($negative.replay.mismatchSuccess -or $negative.replay.mismatchError -ne "PAYMENT_INTENT_IDEMPOTENCY_MISMATCH") {
+    throw "Idempotency mismatch negative test failed. error=$($negative.replay.mismatchError)"
+  }
+  if (-not $negative.decline.success -or -not $negative.decline.intentId -or -not $negative.decline.challengeId) {
+    throw "Decline challenge setup failed."
+  }
+
+  $declineOtc = Get-OtcFromValkey $negative.decline.otcRequestId
+  $declineResponse = Invoke-NoRedirectForm "$GatewayBaseUrl/v1/challenges/$($negative.decline.intentId)/respond" @{
+    challengeId = $negative.decline.challengeId
+    decision = "reject"
+    otcCode = $declineOtc
+  }
+  $declineLocation = Get-HeaderValue $declineResponse.Headers "Location"
+  if ([int]$declineResponse.StatusCode -lt 300 -or [int]$declineResponse.StatusCode -ge 400 -or $declineLocation -notmatch "orbi_payment_status=declined") {
+    throw "Decline challenge did not redirect with declined status."
+  }
+  Write-Output "Negative tests OK"
 }
 
 if (-not $SkipLogScan) {
