@@ -1,5 +1,6 @@
 param(
   [string]$CoreDatabase = "orbi_core_sandbox",
+  [string]$GatewayDatabase = "orbi_pay_gateway_sandbox",
   [string]$GatewayBaseUrl = "http://127.0.0.1:3101",
   [string]$OutputPath = ".sandbox\orbi-sandbox-fixtures.json",
   [switch]$RotateSecrets
@@ -331,6 +332,30 @@ begin
       now_utc
     )
     on conflict do nothing;
+
+    insert into public.platform_fee_configs (
+      name, flow_code, currency, country_code, percentage_rate, fixed_amount,
+      minimum_fee, maximum_fee, tax_rate, gov_fee_rate, stamp_duty_fixed,
+      priority, status, metadata, created_at, updated_at
+    ) values (
+      'Sandbox zero fee - ' || fee_flow || ' - global',
+      fee_flow,
+      'TZS',
+      null,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      'ACTIVE',
+      jsonb_build_object('sandbox', true, 'seeded_by', 'seed-sandbox-fixtures'),
+      now_utc,
+      now_utc
+    )
+    on conflict do nothing;
   end loop;
 end $$;
 '@
@@ -370,6 +395,15 @@ $applicationBody = @{
     sandbox = $true
     coreMerchantId = "44444444-4444-4444-8444-444444444444"
     merchantAccountRef = "merchant_orbi_shop_sandbox"
+    allowedOperations = @("collection", "paysafe", "refund")
+    allowedCurrencies = @("TZS")
+    allowedCountries = @("TZ")
+    merchant = @{
+      merchantIdEnv = "ORBI_SHOP_SANDBOX_MERCHANT_ID"
+      feeProfileCode = "sandbox-zero-fee"
+      feeFlowCode = "MERCHANT_PAYMENT"
+      requireActiveMerchant = $true
+    }
   }
   termsAccepted = $true
 }
@@ -385,6 +419,39 @@ if (-not $service) {
   }
   $service = $approval.data
 }
+
+$serviceMetadata = @'
+{
+  "sandbox": true,
+  "coreMerchantId": "44444444-4444-4444-8444-444444444444",
+  "merchantAccountRef": "merchant_orbi_shop_sandbox",
+  "allowedOperations": ["collection", "paysafe", "refund"],
+  "allowedCurrencies": ["TZS"],
+  "allowedCountries": ["TZ"],
+  "merchant": {
+    "merchantIdEnv": "ORBI_SHOP_SANDBOX_MERCHANT_ID",
+    "feeProfileCode": "sandbox-zero-fee",
+    "feeFlowCode": "MERCHANT_PAYMENT",
+    "requireActiveMerchant": true
+  }
+}
+'@
+$serviceMetadata = ($serviceMetadata -replace "\s+", "").Replace("'", "''")
+$serviceScopes = ($applicationBody.requestedScopes | ConvertTo-Json -Compress).Replace("'", "''")
+Invoke-PostgresFile $GatewayDatabase @"
+update public.pay_gateway_developer_services
+set metadata = coalesce(metadata, '{}'::jsonb) || '$serviceMetadata'::jsonb,
+    scopes_granted = (
+      select array_agg(distinct scope_value)
+      from (
+        select unnest(coalesce(scopes_granted, array[]::text[])) as scope_value
+        union
+        select jsonb_array_elements_text('$serviceScopes'::jsonb) as scope_value
+      ) merged_scopes
+    ),
+    updated_at = now()
+where service_code = '$serviceCode';
+"@
 
 foreach ($scope in $applicationBody.requestedScopes) {
   if ($service.scopesGranted -notcontains $scope) {
@@ -434,6 +501,21 @@ if ($RotateSecrets -or -not $activeWebhookSecret) {
   $webhookSecret = $secretResult.data.oneTimeSecret
   $activeWebhookSecret = $secretResult.data.webhookSecret
 }
+
+Invoke-PostgresFile $GatewayDatabase @"
+update public.pay_gateway_developer_services
+set metadata = coalesce(metadata, '{}'::jsonb) || '$serviceMetadata'::jsonb,
+    scopes_granted = (
+      select array_agg(distinct scope_value)
+      from (
+        select unnest(coalesce(scopes_granted, array[]::text[])) as scope_value
+        union
+        select jsonb_array_elements_text('$serviceScopes'::jsonb) as scope_value
+      ) merged_scopes
+    ),
+    updated_at = now()
+where service_code = '$serviceCode';
+"@
 
 $output = @{
   generatedAt = (Get-Date).ToUniversalTime().ToString("o")

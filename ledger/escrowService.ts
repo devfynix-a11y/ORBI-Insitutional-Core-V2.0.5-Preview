@@ -862,13 +862,35 @@ export class EscrowService {
             const localizedSubject = typeof subject === 'string'
                 ? subject
                 : subject[language] || subject.en;
-            await Messaging.dispatch(
+            const dispatchPromise = Messaging.dispatch(
                 userId,
                 type,
                 localizedSubject,
                 language === 'sw' ? body.sw : body.en,
                 { push: true, sms: true, email: true, ...options },
-            );
+            ).catch((error) => {
+                console.error('[EscrowService] Notification dispatch failed.', {
+                    userId,
+                    subject,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+            });
+            const timeoutMs = Number(process.env.ORBI_NOTIFICATION_SIDE_EFFECT_TIMEOUT_MS || 2500);
+            let timedOut = false;
+            await Promise.race([
+                dispatchPromise,
+                new Promise<void>((resolve) => setTimeout(() => {
+                    timedOut = true;
+                    resolve();
+                }, Math.max(500, timeoutMs))),
+            ]);
+            if (timedOut) {
+                console.warn('[EscrowService] Notification dispatch continuing in background.', {
+                    userId,
+                    subject: localizedSubject,
+                    timeoutMs,
+                });
+            }
         } catch (error) {
             console.error('[EscrowService] Notification dispatch failed.', {
                 userId,

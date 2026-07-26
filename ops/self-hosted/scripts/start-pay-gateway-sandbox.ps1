@@ -2,7 +2,9 @@ param(
   [string]$GatewayImage = "orbi-pay-gateway:local",
   [string]$GatewayRepoPath = "D:\FYNIX\ORBI\ORBI CORE\ORBI PAY GATEWAY",
   [string]$SandboxDatabase = "orbi_pay_gateway_sandbox",
-  [string]$SandboxCoreUrl = "http://core-sandbox:3000"
+  [string]$SandboxCoreUrl = "http://core-sandbox:3000",
+  [string]$SandboxWorkerSecretPath = ".sandbox\pay-gateway-sandbox-worker-signing-secret.txt",
+  [string]$SandboxEncryptionSecretPath = ".sandbox\pay-gateway-sandbox-secret-encryption-key.txt"
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,6 +12,21 @@ $ErrorActionPreference = "Stop"
 function New-OrbiSecret([int]$Length) {
   $chars = 48..57 + 65..90 + 97..122
   -join ($chars | Get-Random -Count $Length | ForEach-Object { [char]$_ })
+}
+
+function Get-OrCreateSecretFile([string]$Path, [int]$Length) {
+  $fullPath = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $Path))
+  $parent = Split-Path -Parent $fullPath
+  if (-not (Test-Path $parent)) {
+    New-Item -ItemType Directory -Path $parent -Force | Out-Null
+  }
+  if (Test-Path $fullPath) {
+    $existing = (Get-Content -LiteralPath $fullPath -Raw).Trim()
+    if ($existing) { return $existing }
+  }
+  $secret = New-OrbiSecret $Length
+  Set-Content -LiteralPath $fullPath -Value $secret -NoNewline -Encoding ASCII
+  return $secret
 }
 
 function Get-ContainerEnvValue([string]$ContainerName, [string]$Key) {
@@ -27,6 +44,8 @@ function Invoke-Postgres([string]$Database, [string]$Sql) {
 
 $providersPath = Join-Path $GatewayRepoPath "config\providers.example.json"
 $servicesPath = Join-Path $GatewayRepoPath "config\services.json"
+$workerSigningSecret = Get-OrCreateSecretFile $SandboxWorkerSecretPath 96
+$gatewayEncryptionSecret = Get-OrCreateSecretFile $SandboxEncryptionSecretPath 96
 
 if (-not (Test-Path $providersPath)) {
   throw "Provider manifest not found: $providersPath"
@@ -73,7 +92,7 @@ docker create `
   -e PAYMENT_GATEWAY_CREDENTIAL_MODE=tokenized `
   -e PAYMENT_GATEWAY_REQUIRE_STRONG_CUSTOMER_AUTH=true `
   -e DATABASE_URL=$sandboxDatabaseUrl `
-  -e ORBI_SECRET_ENCRYPTION_KEY=$(New-OrbiSecret 96) `
+  -e ORBI_SECRET_ENCRYPTION_KEY=$gatewayEncryptionSecret `
   -e PAYMENT_GATEWAY_PROVIDER_MANIFEST_PATH=/app/config/providers.json `
   -e PAYMENT_GATEWAY_SERVICE_REGISTRY_PATH=/app/config/services.json `
   -e PAYMENT_GATEWAY_OPERATOR_DISCOVERY_API_KEY=$(New-OrbiSecret 64) `
@@ -91,7 +110,7 @@ docker create `
   -e ORBI_CORE_CALLBACK_TIMEOUT_MS=30000 `
   -e PAYMENT_GATEWAY_WORKER_ID=orbi-payment-gateway-sandbox `
   -e PAYMENT_GATEWAY_WORKER_SCOPES=gateway:events:write,gateway:service-payments:write,gateway:service-payments:result,gateway:identity:read,gateway:paysafe-balances:read,gateway:business-registration:write,gateway:payment-profiles:write,gateway:merchant-payments:read,gateway:merchant-settlements:read `
-  -e WORKER_SIGNING_SECRET=$(New-OrbiSecret 96) `
+  -e WORKER_SIGNING_SECRET=$workerSigningSecret `
   -e WORKER_KEY_ID=payment-gateway-sandbox-v1 `
   -e PAYMENT_GATEWAY_INTERNAL_MTLS_ENABLED=false `
   -e ORBI_SHOP_PAY_API_KEY_TOKEN_REF=env://ORBI_SHOP_SANDBOX_PAY_API_KEY `
@@ -99,7 +118,8 @@ docker create `
   -e ORBI_SHOP_PAY_WEBHOOK_SECRET_TOKEN_REF=env://ORBI_SHOP_SANDBOX_PAY_WEBHOOK_SECRET `
   -e ORBI_SHOP_PAY_WEBHOOK_SECRET=$(New-OrbiSecret 64) `
   -e ORBI_SHOP_PAY_WEBHOOK_URL=https://shop.orbifinancial.com/api/orbi-pay/sandbox/webhooks `
-  -e ORBI_SHOP_MERCHANT_ID=orbi-shop-sandbox `
+  -e ORBI_SHOP_MERCHANT_ID=44444444-4444-4444-8444-444444444444 `
+  -e ORBI_SHOP_SANDBOX_MERCHANT_ID=44444444-4444-4444-8444-444444444444 `
   -v "${providersPath}:/app/config/providers.json:ro" `
   -v "${servicesPath}:/app/config/services.json:ro" `
   -p 127.0.0.1:3101:3101 `

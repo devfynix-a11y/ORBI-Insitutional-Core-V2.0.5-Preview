@@ -1,6 +1,8 @@
 param(
   [string]$CoreImage = "self-hosted-core",
   [string]$SandboxDatabase = "orbi_core_sandbox",
+  [string]$SandboxWorkerSecretPath = ".sandbox\pay-gateway-sandbox-worker-signing-secret.txt",
+  [string]$SandboxSecretPrefix = ".sandbox\core-sandbox",
   [switch]$RebuildSchema
 )
 
@@ -9,6 +11,21 @@ $ErrorActionPreference = "Stop"
 function New-OrbiSecret([int]$Length) {
   $chars = 48..57 + 65..90 + 97..122
   -join ($chars | Get-Random -Count $Length | ForEach-Object { [char]$_ })
+}
+
+function Get-OrCreateSecretFile([string]$Path, [int]$Length) {
+  $fullPath = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $Path))
+  $parent = Split-Path -Parent $fullPath
+  if (-not (Test-Path $parent)) {
+    New-Item -ItemType Directory -Path $parent -Force | Out-Null
+  }
+  if (Test-Path $fullPath) {
+    $existing = (Get-Content -LiteralPath $fullPath -Raw).Trim()
+    if ($existing) { return $existing }
+  }
+  $secret = New-OrbiSecret $Length
+  Set-Content -LiteralPath $fullPath -Value $secret -NoNewline -Encoding ASCII
+  return $secret
 }
 
 function Get-ContainerEnvMap([string]$ContainerName) {
@@ -28,13 +45,17 @@ function Invoke-Postgres([string]$Database, [string]$Sql) {
 }
 
 $liveCoreEnv = Get-ContainerEnvMap "orbi-core"
-$sandboxGatewayEnv = Get-ContainerEnvMap "orbi-pay-gateway-sandbox"
+$workerSigningSecret = Get-OrCreateSecretFile $SandboxWorkerSecretPath 96
+$workerSecret = Get-OrCreateSecretFile "$SandboxSecretPrefix-worker-secret.txt" 96
+$jwtSecret = Get-OrCreateSecretFile "$SandboxSecretPrefix-jwt-secret.txt" 96
+$sessionSecret = Get-OrCreateSecretFile "$SandboxSecretPrefix-session-secret.txt" 96
+$kmsMasterKey = Get-OrCreateSecretFile "$SandboxSecretPrefix-kms-master-key.txt" 96
+$kmsMasterSalt = Get-OrCreateSecretFile "$SandboxSecretPrefix-kms-master-salt.txt" 64
+$bootstrapAdminSecret = Get-OrCreateSecretFile "$SandboxSecretPrefix-bootstrap-admin-secret.txt" 64
+$monitorApiKey = Get-OrCreateSecretFile "$SandboxSecretPrefix-monitor-api-key.txt" 64
 
 if (-not $liveCoreEnv.Contains("DATABASE_URL")) {
   throw "DATABASE_URL not found on orbi-core."
-}
-if (-not $sandboxGatewayEnv.Contains("WORKER_SIGNING_SECRET")) {
-  throw "WORKER_SIGNING_SECRET not found on orbi-pay-gateway-sandbox."
 }
 
 $sandboxDatabaseUrl = $liveCoreEnv["DATABASE_URL"] -replace "/orbi(\?.*)?$", "/$SandboxDatabase`$1"
@@ -85,14 +106,14 @@ foreach ($key in $liveCoreEnv.Keys) {
     "PAYMENT_GATEWAY_PUBLIC_BASE_URL" { $value = "https://sandbox-pay.orbifinancial.com" }
     "PAYMENT_GATEWAY_PROVIDER_MODE" { $value = "sandbox" }
     "PAYMENT_GATEWAY_WORKER_ID" { $value = "orbi-payment-gateway-sandbox" }
-    "WORKER_SIGNING_SECRET" { $value = $sandboxGatewayEnv["WORKER_SIGNING_SECRET"] }
-    "WORKER_SECRET" { $value = New-OrbiSecret 96 }
-    "JWT_SECRET" { $value = New-OrbiSecret 96 }
-    "SESSION_SECRET" { $value = New-OrbiSecret 96 }
-    "KMS_MASTER_KEY" { $value = New-OrbiSecret 96 }
-    "KMS_MASTER_SALT" { $value = New-OrbiSecret 64 }
-    "ORBI_BOOTSTRAP_ADMIN_SECRET" { $value = New-OrbiSecret 64 }
-    "ORBI_MONITOR_API_KEY" { $value = New-OrbiSecret 64 }
+    "WORKER_SIGNING_SECRET" { $value = $workerSigningSecret }
+    "WORKER_SECRET" { $value = $workerSecret }
+    "JWT_SECRET" { $value = $jwtSecret }
+    "SESSION_SECRET" { $value = $sessionSecret }
+    "KMS_MASTER_KEY" { $value = $kmsMasterKey }
+    "KMS_MASTER_SALT" { $value = $kmsMasterSalt }
+    "ORBI_BOOTSTRAP_ADMIN_SECRET" { $value = $bootstrapAdminSecret }
+    "ORBI_MONITOR_API_KEY" { $value = $monitorApiKey }
     "ORBI_ENABLE_SANDBOX_ROUTES" { $value = "true" }
     "ORBI_ENABLE_GATEWAY_BACKGROUND_JOBS" { $value = "false" }
     "ORBI_ENABLE_INTERNAL_BACKGROUND_JOBS" { $value = "false" }
