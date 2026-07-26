@@ -1,6 +1,6 @@
 param(
   [string]$GatewayImage = "orbi-pay-gateway:local",
-  [string]$GatewayRepoPath = "D:\FYNIX\ORBI\ORBI CORE\ORBI PAY GATEWAY",
+  [string]$GatewayRepoPath = "D:\FYNIX\ORBI\Orbi Infrastructures\ORBI GATEWAY\Pay Gateway Backend",
   [string]$SandboxDatabase = "orbi_pay_gateway_sandbox",
   [string]$SandboxCoreUrl = "http://core-sandbox:3000",
   [string]$SandboxWorkerSecretPath = ".sandbox\pay-gateway-sandbox-worker-signing-secret.txt",

@@ -9,7 +9,7 @@ services:
     container_name: orbi-pay-gateway
     restart: unless-stopped
     env_file:
-      - ${ORBI_PAY_GATEWAY_LIVE_ENV_FILE:-../../../../../SECREATES/ORBI PAY GATEWAY LIVE ENV.txt}
+      - ${ORBI_PAY_GATEWAY_LIVE_ENV_FILE:-D:/FYNIX/ORBI/SECREATES/ORBI PAY GATEWAY LIVE ENV.txt}
     environment:
       NODE_ENV: production
       PAYMENT_GATEWAY_PORT: 3100
@@ -51,7 +51,7 @@ services:
     container_name: orbi-pay-gateway-sandbox
     restart: unless-stopped
     env_file:
-      - ${ORBI_PAY_GATEWAY_SANDBOX_ENV_FILE:-../../../../../SECREATES/ORBI PAY GATEWAY SANDBOX ENV.txt}
+      - ${ORBI_PAY_GATEWAY_SANDBOX_ENV_FILE:-D:/FYNIX/ORBI/SECREATES/ORBI PAY GATEWAY SANDBOX ENV.txt}
     environment:
       NODE_ENV: production
       PAYMENT_GATEWAY_PORT: 3101

@@ -1,5 +1,5 @@
 param(
-  [string]$GatewayRepoPath = "D:\FYNIX\ORBI\ORBI CORE\ORBI PAY GATEWAY",
+  [string]$GatewayRepoPath = "D:\FYNIX\ORBI\Orbi Infrastructures\ORBI GATEWAY\Pay Gateway Backend",
   [string]$CoreImage = "self-hosted-core",
   [string]$GatewayBaseUrl = "http://127.0.0.1:3101",
   [string]$CoreHealthUrl = "http://127.0.0.1:3001/health",
