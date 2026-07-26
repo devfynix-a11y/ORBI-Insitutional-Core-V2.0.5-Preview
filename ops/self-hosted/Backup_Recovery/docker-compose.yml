@@ -15,7 +15,8 @@ services:
       ORBI_BACKUP_ENCRYPTION_KEY: ${ORBI_BACKUP_ENCRYPTION_KEY:?Set ORBI_BACKUP_ENCRYPTION_KEY}
     entrypoint:
       - /bin/sh
-      - /opt/orbi/backup-postgres.sh
+      - -ec
+      - tr -d '\r' < /opt/orbi/backup-postgres.sh > /tmp/backup-postgres.sh && /bin/sh /tmp/backup-postgres.sh
     volumes:
       - ./backup-postgres.sh:/opt/orbi/backup-postgres.sh:ro
       - orbi_database_backups:/backups
