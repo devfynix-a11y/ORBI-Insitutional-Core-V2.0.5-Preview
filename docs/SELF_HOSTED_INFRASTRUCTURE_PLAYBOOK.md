@@ -109,6 +109,20 @@ written only to `.sandbox/orbi-sandbox-fixtures.json`; `.sandbox/` must remain
 git-ignored and should be copied into the server secret store if the sandbox is
 rebuilt.
 
+Run the end-to-end sandbox smoke before allowing a merchant, SDK, or portal
+change to move forward:
+
+```powershell
+.\ops\self-hosted\scripts\test-sandbox-pay-gateway.ps1 -EnsureContainers -SeedFixtures -RotateSecrets
+```
+
+The smoke checks Core and Pay Gateway health, creates a sandbox PaySafe checkout
+through the published Node SDK contract, approves the hosted challenge using the
+sandbox OTC stored in Valkey, verifies the redirect result, confirms the final
+payment intent is `completed`, and scans recent sandbox logs for fatal gateway
+integration errors. It must not print service keys, webhook secrets, Valkey
+passwords, or OTC codes.
+
 Pay Gateway readiness can show provider adapters as `DOWN` until real bank or
 mobile-money token references are configured. That is expected while PaySafe
 service intake and signed Core callbacks are being tested.
