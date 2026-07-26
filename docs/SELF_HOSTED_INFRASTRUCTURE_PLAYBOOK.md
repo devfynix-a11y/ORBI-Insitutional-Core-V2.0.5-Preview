@@ -126,6 +126,12 @@ negative checks, and fails closed before anything is promoted:
 .\ops\self-hosted\scripts\release-gate.ps1
 ```
 
+The gate writes local release evidence under
+`ops/self-hosted/.release-gate/`. The production deploy script checks that the
+evidence was produced for the exact commit currently being deployed and that
+the sandbox gate was not skipped. This keeps release approval tied to the
+tested source state instead of a verbal/manual checklist.
+
 Use `-SkipSandboxGate` only for an explicitly documented incident diagnostic.
 It is not a valid production release path.
 
