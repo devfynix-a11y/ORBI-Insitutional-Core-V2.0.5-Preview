@@ -10,3 +10,4 @@ ops/self-hosted/**/secrets/*.txt
 ops/self-hosted/Gateway/certs/*
 !ops/self-hosted/Gateway/certs/README.md
 backups/local/
+.sandbox/

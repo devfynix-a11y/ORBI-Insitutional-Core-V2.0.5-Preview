@@ -94,6 +94,21 @@ ORBI_SHOP_SANDBOX_PAY_WEBHOOK_URL=https://shop.orbifinancial.com/api/orbi-pay/sa
 ORBI_SHOP_SANDBOX_MERCHANT_ID=<sandbox-shop-merchant-id>
 ```
 
+Bootstrap isolated sandbox services after the tunnel route is created:
+
+```powershell
+.\ops\self-hosted\scripts\start-pay-gateway-sandbox.ps1
+.\ops\self-hosted\scripts\start-core-sandbox.ps1 -RebuildSchema
+.\ops\self-hosted\scripts\seed-sandbox-fixtures.ps1
+```
+
+The seed script creates deterministic sandbox-only demo users, merchant records,
+zero-fee sandbox platform configs, provider routing, and the
+`orbi-shop-sandbox` developer service. One-time sandbox API/webhook secrets are
+written only to `.sandbox/orbi-sandbox-fixtures.json`; `.sandbox/` must remain
+git-ignored and should be copied into the server secret store if the sandbox is
+rebuilt.
+
 Pay Gateway readiness can show provider adapters as `DOWN` until real bank or
 mobile-money token references are configured. That is expected while PaySafe
 service intake and signed Core callbacks are being tested.
