@@ -71,6 +71,7 @@ Cloudflare Tunnel public hostnames for the local VM:
 - `api.orbifinancial.com` -> `http://orbi-core:3000` or `http://core:3000`
   depending on the active compose project aliases.
 - `pay.orbifinancial.com` -> `http://pay-gateway:3100`.
+- `sandbox-pay.orbifinancial.com` -> `http://pay-gateway:3100`.
 - `auth.orbifinancial.com` -> `http://keycloak:8080`.
 - `ops.orbifinancial.com` -> `http://orbi-core:3000` or `http://core:3000`
   and protect it with Cloudflare Access/VPN.
