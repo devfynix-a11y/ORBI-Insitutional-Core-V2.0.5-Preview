@@ -116,6 +116,19 @@ change to move forward:
 .\ops\self-hosted\scripts\test-sandbox-pay-gateway.ps1 -EnsureContainers -SeedFixtures -RotateSecrets
 ```
 
+Release candidates must use the release gate wrapper, not a manual copy of the
+smoke command. The wrapper builds the candidate image first, starts isolated
+sandbox containers, rotates sandbox-only fixture secrets, runs the complete
+SDK-to-gateway-to-Core payment flow, webhook replay, redirect, idempotency, and
+negative checks, and fails closed before anything is promoted:
+
+```powershell
+.\ops\self-hosted\scripts\release-gate.ps1
+```
+
+Use `-SkipSandboxGate` only for an explicitly documented incident diagnostic.
+It is not a valid production release path.
+
 The smoke checks Core and Pay Gateway health, resolves a seeded sandbox identity
 through the same SDK method used in live, creates a sandbox PaySafe checkout
 through the published Node SDK contract, approves the hosted challenge using the
