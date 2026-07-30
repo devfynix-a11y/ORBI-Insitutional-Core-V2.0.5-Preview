@@ -61,6 +61,47 @@ The completion gate is:
 
 Anything missing from this gate should stay visible in the phase TODOs below.
 
+## Active Hardening Memory
+
+This is the current operator and engineering sequence. Complete it one step at
+a time, verify each step, then commit and deploy before moving forward.
+
+```text
+1. Live mTLS cutover.
+   Sandbox direct mTLS is verified. Live remains intentionally disabled until an
+   approved maintenance window. HMAC must remain enabled permanently.
+
+2. Developer Portal backend-only finalization.
+   The portal must be frontend-only. Login, roles, approvals, keys, rotation,
+   sandbox/live access, service grants, and audit activity must be served by
+   gateway/backend APIs. The portal must not connect directly to databases or
+   hold operational secrets.
+
+3. Merchant domain and origin governance.
+   Browser origins, redirect URLs, callback URLs, and webhook URLs must be
+   registered, verified, approved, environment-scoped, and enforced per
+   developer application.
+
+4. Audit correlation everywhere.
+   SDK, gateway, Core, hosted challenge, webhooks, operator actions, and
+   reconciliation must share trace IDs, correlation IDs, actor identity, and
+   request evidence.
+
+5. Webhook replay production layer.
+   Replay must include operator controls, retry policy, signed replay evidence,
+   replay lineage, delivery attempts, and developer/operator visibility.
+
+6. SDK production polish.
+   Node, Python, PHP, and future SDKs must have stable versioning, changelog,
+   examples, sandbox/live parity tests, release checklist, and contract-driven
+   methods such as `orbi.transfers.send(...)`.
+
+7. Open Banking/BaaS compliance layer.
+   Consent receipts, scopes, revocation, access grants, rate limits by plan,
+   audit exports, developer certification, and compliance-ready records must be
+   production-grade.
+```
+
 ## Phase 1: Platform Contracts Lock
 
 Status:
