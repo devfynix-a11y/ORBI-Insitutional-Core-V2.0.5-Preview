@@ -4,7 +4,11 @@ param(
   [string]$SandboxDatabase = "orbi_pay_gateway_sandbox",
   [string]$SandboxCoreUrl = "http://core-sandbox:3000",
   [string]$SandboxWorkerSecretPath = ".sandbox\pay-gateway-sandbox-worker-signing-secret.txt",
-  [string]$SandboxEncryptionSecretPath = ".sandbox\pay-gateway-sandbox-secret-encryption-key.txt"
+  [string]$SandboxEncryptionSecretPath = ".sandbox\pay-gateway-sandbox-secret-encryption-key.txt",
+  [string]$SandboxPortalAuthSecretPath = ".sandbox\pay-gateway-sandbox-portal-auth-secret.txt",
+  [string]$SandboxServiceAccessTokenSecretPath = ".sandbox\pay-gateway-sandbox-service-access-token-secret.txt",
+  [string]$SandboxMtlsDirectory = "D:\FYNIX\ORBI\SECREATES\ORBI_MTLS_SANDBOX",
+  [switch]$EnableDirectMtls
 )
 
 $ErrorActionPreference = "Stop"
@@ -46,6 +50,8 @@ $providersPath = Join-Path $GatewayRepoPath "config\providers.example.json"
 $servicesPath = Join-Path $GatewayRepoPath "config\services.json"
 $workerSigningSecret = Get-OrCreateSecretFile $SandboxWorkerSecretPath 96
 $gatewayEncryptionSecret = Get-OrCreateSecretFile $SandboxEncryptionSecretPath 96
+$portalAuthSecret = Get-OrCreateSecretFile $SandboxPortalAuthSecretPath 96
+$serviceAccessTokenSecret = Get-OrCreateSecretFile $SandboxServiceAccessTokenSecretPath 96
 
 if (-not (Test-Path $providersPath)) {
   throw "Provider manifest not found: $providersPath"
@@ -80,6 +86,36 @@ if ($existing) {
   docker rm -f orbi-pay-gateway-sandbox | Out-Null
 }
 
+if ($EnableDirectMtls) {
+  if (-not (Test-Path -LiteralPath $SandboxMtlsDirectory)) {
+    throw "Sandbox mTLS directory not found: $SandboxMtlsDirectory. Run generate-mtls-certificates.ps1 -Environment sandbox first."
+  }
+  $SandboxCoreUrl = "https://core-sandbox:3000"
+}
+
+$mtlsEnvArgs = New-Object System.Collections.Generic.List[string]
+if ($EnableDirectMtls) {
+  $mtlsEnvArgs.Add("-e")
+  $mtlsEnvArgs.Add("PAYMENT_GATEWAY_INTERNAL_MTLS_ENABLED=true")
+  $mtlsEnvArgs.Add("-e")
+  $mtlsEnvArgs.Add("PAYMENT_GATEWAY_INTERNAL_MTLS_CERT_PATH=/opt/orbi/mtls/pay-gateway-client.crt")
+  $mtlsEnvArgs.Add("-e")
+  $mtlsEnvArgs.Add("PAYMENT_GATEWAY_INTERNAL_MTLS_KEY_PATH=/opt/orbi/mtls/pay-gateway-client.key")
+  $mtlsEnvArgs.Add("-e")
+  $mtlsEnvArgs.Add("PAYMENT_GATEWAY_INTERNAL_MTLS_CA_PATH=/opt/orbi/mtls/orbi-internal-ca.crt")
+  $mtlsEnvArgs.Add("-e")
+  $mtlsEnvArgs.Add("PAYMENT_GATEWAY_INTERNAL_MTLS_REJECT_UNAUTHORIZED=true")
+}
+
+$mtlsVolumeArgs = New-Object System.Collections.Generic.List[string]
+if ($EnableDirectMtls) {
+  $mtlsVolumeArgs.Add("-v")
+  $mtlsVolumeArgs.Add("${SandboxMtlsDirectory}:/opt/orbi/mtls:ro")
+}
+
+$allowPrivateHttpCore = if ($EnableDirectMtls) { "false" } else { "true" }
+$gatewayMtlsEnabled = if ($EnableDirectMtls) { "true" } else { "false" }
+
 docker create `
   --name orbi-pay-gateway-sandbox `
   --restart unless-stopped `
@@ -96,9 +132,14 @@ docker create `
   -e PAYMENT_GATEWAY_PROVIDER_MANIFEST_PATH=/app/config/providers.json `
   -e PAYMENT_GATEWAY_SERVICE_REGISTRY_PATH=/app/config/services.json `
   -e PAYMENT_GATEWAY_OPERATOR_DISCOVERY_API_KEY=$(New-OrbiSecret 64) `
+  -e PAYMENT_GATEWAY_PORTAL_AUTH_SECRET=$portalAuthSecret `
+  -e PAYMENT_GATEWAY_SERVICE_ACCESS_TOKEN_SECRET=$serviceAccessTokenSecret `
+  -e PAYMENT_GATEWAY_ALLOWED_BROWSER_ORIGINS=https://sandbox-pay.orbifinancial.com,https://shop.orbifinancial.com,https://developers.orbifinancial.com `
+  -e PAYMENT_GATEWAY_REQUIRE_SIGNED_INTERNAL_INGRESS=true `
+  -e PAYMENT_GATEWAY_REQUEST_AUDIT_ENABLED=true `
   -e PAYMENT_GATEWAY_OBP_SANDBOX_TOOLS_ENABLED=true `
   -e ORBI_CORE_INTERNAL_BASE_URL=$SandboxCoreUrl `
-  -e PAYMENT_GATEWAY_ALLOW_PRIVATE_HTTP_CORE=true `
+  -e PAYMENT_GATEWAY_ALLOW_PRIVATE_HTTP_CORE=$allowPrivateHttpCore `
   -e ORBI_CORE_TRUSTED_GATEWAY_EVENT_PATH=/api/internal/gateway/provider-events `
   -e ORBI_CORE_TRUSTED_SERVICE_PAYMENT_REQUEST_PATH=/api/internal/pay-gateway/service-payment-requests `
   -e ORBI_CORE_TRUSTED_SERVICE_PAYMENT_CHALLENGE_RESPOND_PATH=/api/internal/pay-gateway/service-payment-challenges `
@@ -112,7 +153,8 @@ docker create `
   -e PAYMENT_GATEWAY_WORKER_SCOPES=gateway:events:write,gateway:service-payments:write,gateway:service-payments:result,gateway:identity:read,gateway:paysafe-balances:read,gateway:business-registration:write,gateway:payment-profiles:write,gateway:merchant-payments:read,gateway:merchant-settlements:read `
   -e WORKER_SIGNING_SECRET=$workerSigningSecret `
   -e WORKER_KEY_ID=payment-gateway-sandbox-v1 `
-  -e PAYMENT_GATEWAY_INTERNAL_MTLS_ENABLED=false `
+  -e PAYMENT_GATEWAY_INTERNAL_MTLS_ENABLED=$gatewayMtlsEnabled `
+  @mtlsEnvArgs `
   -e ORBI_SHOP_PAY_API_KEY_TOKEN_REF=env://ORBI_SHOP_SANDBOX_PAY_API_KEY `
   -e ORBI_SHOP_PAY_API_KEY=$(New-OrbiSecret 64) `
   -e ORBI_SHOP_PAY_WEBHOOK_SECRET_TOKEN_REF=env://ORBI_SHOP_SANDBOX_PAY_WEBHOOK_SECRET `
@@ -122,10 +164,12 @@ docker create `
   -e ORBI_SHOP_SANDBOX_MERCHANT_ID=44444444-4444-4444-8444-444444444444 `
   -v "${providersPath}:/app/config/providers.json:ro" `
   -v "${servicesPath}:/app/config/services.json:ro" `
+  @mtlsVolumeArgs `
   -p 127.0.0.1:3101:3101 `
   $GatewayImage | Out-Null
 
 docker network connect --alias pay-gateway-sandbox orbi-edge orbi-pay-gateway-sandbox
 docker start orbi-pay-gateway-sandbox | Out-Null
 
-Write-Output "Sandbox Pay Gateway started on 127.0.0.1:3101 with isolated database '$SandboxDatabase'."
+$mode = if ($EnableDirectMtls) { "direct mTLS" } else { "HMAC over private HTTP" }
+Write-Output "Sandbox Pay Gateway started on 127.0.0.1:3101 with isolated database '$SandboxDatabase' using $mode."

@@ -122,6 +122,25 @@ Do not enable direct mTLS until Gateway readiness passes:
 npm run mtls:readiness -- /path/to/pay-gateway.env
 ```
 
+Sandbox direct mTLS trial:
+
+```powershell
+$env:Path = "C:\Program Files\Git\usr\bin;$env:Path"
+powershell -ExecutionPolicy Bypass -File ops/self-hosted/scripts/generate-mtls-certificates.ps1 -Environment sandbox
+powershell -ExecutionPolicy Bypass -File ops/self-hosted/scripts/start-core-sandbox.ps1 -EnableDirectMtls
+powershell -ExecutionPolicy Bypass -File ops/self-hosted/scripts/start-pay-gateway-sandbox.ps1 -GatewayImage orbi-pay-gateway:local -EnableDirectMtls
+```
+
+If direct mTLS is enabled, sandbox Gateway talks to Core through:
+
+```text
+https://core-sandbox:3000
+```
+
+and uses `/opt/orbi/mtls/pay-gateway-client.crt`,
+`/opt/orbi/mtls/pay-gateway-client.key`, and
+`/opt/orbi/mtls/orbi-internal-ca.crt`.
+
 Stop the full stack without deleting data:
 
 ```bash

@@ -2,9 +2,10 @@ param(
   [ValidateSet('live', 'sandbox')]
   [string]$Environment = 'sandbox',
   [string]$SecretsRoot = 'D:\FYNIX\ORBI\SECREATES',
-  [string[]]$CoreDnsNames = @('core', 'core.internal.orbifinancial.com', 'api.orbifinancial.com', 'localhost'),
+  [string[]]$CoreDnsNames = @('core', 'core-sandbox', 'core.internal.orbifinancial.com', 'api.orbifinancial.com', 'localhost'),
   [string[]]$GatewayDnsNames = @('pay-gateway', 'pay.orbifinancial.com', 'sandbox-pay.orbifinancial.com', 'localhost'),
-  [int]$Days = 825
+  [int]$Days = 825,
+  [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
@@ -72,7 +73,20 @@ $gatewayCert = Join-Path $gatewayDir 'pay-gateway-client.crt'
 $gatewayExt = Join-Path $workDir 'pay-gateway-client.ext'
 
 if (Test-Path -LiteralPath $caKey) {
-  throw "CA key already exists at $caKey. Refusing to overwrite certificate authority material."
+  if (-not $Force) {
+    throw "CA key already exists at $caKey. Refusing to overwrite certificate authority material. Use -Force to archive and rotate this environment bundle."
+  }
+
+  $stamp = Get-Date -Format 'yyyyMMddHHmmss'
+  foreach ($dir in @($coreDir, $gatewayDir, $workDir)) {
+    if (Test-Path -LiteralPath $dir) {
+      $archive = "$dir.archive.$stamp"
+      Move-Item -LiteralPath $dir -Destination $archive
+      Write-Host "Archived existing bundle: $archive"
+    }
+  }
+
+  New-Item -ItemType Directory -Force -Path $coreDir, $gatewayDir, $workDir | Out-Null
 }
 
 Write-Host "Using OpenSSL: $opensslPath"

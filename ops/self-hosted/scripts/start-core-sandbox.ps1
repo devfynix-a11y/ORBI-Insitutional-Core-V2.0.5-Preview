@@ -3,6 +3,8 @@ param(
   [string]$SandboxDatabase = "orbi_core_sandbox",
   [string]$SandboxWorkerSecretPath = ".sandbox\pay-gateway-sandbox-worker-signing-secret.txt",
   [string]$SandboxSecretPrefix = ".sandbox\core-sandbox",
+  [string]$SandboxTlsDirectory = "D:\FYNIX\ORBI\SECREATES\ORBI_CORE_TLS_SANDBOX",
+  [switch]$EnableDirectMtls,
   [switch]$RebuildSchema
 )
 
@@ -124,16 +126,49 @@ foreach ($key in $liveCoreEnv.Keys) {
   $envArgs.Add("$key=$value")
 }
 
+if ($EnableDirectMtls) {
+  if (-not (Test-Path -LiteralPath $SandboxTlsDirectory)) {
+    throw "Sandbox TLS directory not found: $SandboxTlsDirectory. Run generate-mtls-certificates.ps1 -Environment sandbox first."
+  }
+
+  $directMtlsEnv = [ordered]@{
+    "ORBI_TLS_ENABLED" = "true"
+    "ORBI_TLS_CERT_PATH" = "/etc/orbi/tls/fullchain.pem"
+    "ORBI_TLS_KEY_PATH" = "/etc/orbi/tls/privkey.pem"
+    "ORBI_TLS_CA_PATH" = "/etc/orbi/tls/orbi-internal-ca.crt"
+    "ORBI_TLS_REJECT_UNAUTHORIZED" = "true"
+    "ORBI_INTERNAL_MTLS_SOURCE" = "direct"
+    "ORBI_INTERNAL_MTLS_MODE" = "required"
+    "ORBI_INTERNAL_MTLS_CA_PATH" = "/etc/orbi/tls/orbi-internal-ca.crt"
+    "ORBI_ALLOW_HMAC_ONLY_INTERNAL_REQUESTS" = "false"
+    "ORBI_ALLOW_PRIVATE_HTTP_INTERNAL_REQUESTS" = "false"
+    "ORBI_ENFORCE_HTTPS" = "false"
+  }
+
+  foreach ($entry in $directMtlsEnv.GetEnumerator()) {
+    $envArgs.Add("-e")
+    $envArgs.Add("$($entry.Key)=$($entry.Value)")
+  }
+}
+
+$volumeArgs = New-Object System.Collections.Generic.List[string]
+if ($EnableDirectMtls) {
+  $volumeArgs.Add("-v")
+  $volumeArgs.Add("${SandboxTlsDirectory}:/etc/orbi/tls:ro")
+}
+
 docker create `
   --name orbi-core-sandbox `
   --restart unless-stopped `
   --network orbi-private `
   --network-alias core-sandbox `
   @envArgs `
+  @volumeArgs `
   -p 127.0.0.1:3001:3000 `
   $CoreImage | Out-Null
 
 docker network connect --alias core-sandbox orbi-edge orbi-core-sandbox
 docker start orbi-core-sandbox | Out-Null
 
-Write-Output "Sandbox Core started on 127.0.0.1:3001 with isolated database '$SandboxDatabase'."
+$scheme = if ($EnableDirectMtls) { "https" } else { "http" }
+Write-Output "Sandbox Core started on ${scheme}://127.0.0.1:3001 with isolated database '$SandboxDatabase'."
