@@ -103,6 +103,12 @@ Generate a live bundle only when ready to deploy both Core and Gateway together:
 powershell -ExecutionPolicy Bypass -File ops/self-hosted/scripts/generate-mtls-certificates.ps1 -Environment live
 ```
 
+Live dry-run readiness:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ops/self-hosted/scripts/test-live-mtls-readiness.ps1
+```
+
 Default Windows output paths:
 
 ```text
@@ -120,6 +126,18 @@ Do not enable direct mTLS until Gateway readiness passes:
 
 ```bash
 npm run mtls:readiness -- /path/to/pay-gateway.env
+```
+
+Live cutover order:
+
+```text
+1. Generate or rotate live cert bundle.
+2. Apply Core mTLS env patch and ensure Core TLS volume is mounted.
+3. Restart Core only.
+4. Verify https://core:3000/health from inside the Docker private network.
+5. Apply Pay Gateway mTLS env patch.
+6. Restart Pay Gateway.
+7. Run live runtime smoke and inspect request audit logs.
 ```
 
 Sandbox direct mTLS trial:
