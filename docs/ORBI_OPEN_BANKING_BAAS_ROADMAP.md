@@ -760,6 +760,120 @@ Every live partner has passed a documented technical, operational, security,
 and compliance gate.
 ```
 
+## Phase 15: Bank-Grade Enterprise Open Banking Readiness
+
+Status:
+
+```text
+IN_PROGRESS
+```
+
+Goal:
+
+```text
+Make ORBI acceptable for large-bank integration, sponsored participant
+connectivity, regulated partner review, and enterprise BaaS/Open Banking
+operations.
+```
+
+This phase is stricter than developer launch. A feature is not bank-ready just
+because it works in production. It must have controls, evidence, monitoring,
+fail-closed behavior, and recovery procedures.
+
+Workstream 1: Transport And Runtime Trust
+
+- Enforce live mTLS between Gateway and Core during an approved maintenance
+  window.
+- Keep HMAC signed worker callbacks permanently enabled after mTLS cutover.
+- Add certificate expiry monitoring and alerting.
+- Document certificate issuance, storage, rotation, and emergency revocation.
+- Add mTLS smoke tests to live release gates.
+- Add partner/bank mTLS profile support for direct bank or clearing
+  integration.
+
+Workstream 2: OAuth2/OIDC And Consent Authority
+
+- Finalize OAuth2/OIDC authorization-code with PKCE for browser/mobile-safe
+  flows.
+- Finalize client-credentials flow for approved server-to-server services.
+- Add token introspection and revocation endpoints.
+- Add dynamic client registration only through approved developer portal
+  workflows.
+- Bind scopes to consent receipts, service identity, environment, and risk
+  policy.
+- Enforce scope and consent checks consistently in Core and Pay Gateway.
+- Add consent renewal, expiry, and revocation notifications.
+
+Workstream 3: Key Custody And Secrets Governance
+
+- Move live secret custody to a formal encrypted secrets store/KMS-compatible
+  model.
+- Define key ownership for Core, Gateway, Portal, SDK publishing, webhook
+  signing, worker signing, mTLS, and provider credentials.
+- Add key rotation calendar and dual-control rotation approval.
+- Add break-glass access policy with audit evidence.
+- Ensure backups can restore encrypted secrets only with approved recovery
+  keys.
+- Remove every development fallback that can affect live financial flows.
+
+Workstream 4: Reconciliation And Financial Truth
+
+- Build daily Core/Gateway/provider reconciliation exports.
+- Reconcile merchant order, payment intent, PaySafe escrow, Core ledger,
+  provider proof, webhook delivery, and final merchant state.
+- Add exception queues for stuck, mismatched, duplicated, reversed, and
+  disputed movements.
+- Add signed report export hashes.
+- Add immutable idempotency replay/reuse reports.
+- Add balance and settlement statements for merchants and platforms.
+
+Workstream 5: Observability, SIEM, And Incident Response
+
+- Add dashboards for Core, Gateway, Auth, Portal, webhooks, mTLS, provider
+  health, queue depth, reconciliation, and risk decisions.
+- Stream audit/security events to SIEM-compatible sinks.
+- Add alert policy for failed callbacks, webhook spikes, risk blocks, mTLS
+  expiry, auth anomalies, and ledger/reconciliation mismatches.
+- Add SLOs and error budgets for hosted challenge, payment intent creation,
+  Core settlement callback, webhook delivery, and reconciliation.
+- Add incident runbooks with owner, severity, rollback path, and customer
+  communication policy.
+
+Workstream 6: Security Testing And Compliance Evidence
+
+- Complete threat model for Core, Gateway, Portal, SDK, hosted challenge,
+  webhooks, and merchant callbacks.
+- Run penetration tests for hosted challenge, webhook replay, developer portal,
+  service onboarding, and financial commit endpoints.
+- Add SAST/dependency scanning to release gates.
+- Add DAST smoke checks for public Gateway and Developer Portal routes.
+- Add data-retention policy for consent receipts, identity metadata,
+  transaction evidence, webhook payloads, and audit events.
+- Add regulatory export package for AML/risk alerts, large transactions,
+  disputes, refunds, and consent evidence.
+
+Workstream 7: Bank/Provider Certification Pack
+
+- Produce ISO 20022 message samples and validation evidence for `pacs.008`,
+  `pacs.002`, and `pacs.004`.
+- Produce OpenAPI contract package for payment intent, PaySafe escrow,
+  payment profile, consent, webhooks, and developer operations.
+- Produce sandbox test evidence for success, timeout, duplicate idempotency,
+  failed challenge, refund, dispute, expired escrow, webhook replay, and
+  reconciliation.
+- Produce operational architecture diagram and data-flow diagram.
+- Produce partner onboarding checklist and technical questionnaire answers.
+- Produce live pilot checklist and rollback plan.
+
+Definition of done:
+
+```text
+ORBI can enter a large-bank or regulated partner technical review with
+evidence for transport security, OAuth/consent, key custody, reconciliation,
+auditability, incident response, SDK contracts, sandbox/live separation, and
+partner certification readiness.
+```
+
 Definition of done:
 
 ```text
