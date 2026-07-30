@@ -140,6 +140,28 @@ Live cutover order:
 7. Run live runtime smoke and inspect request audit logs.
 ```
 
+Dry-run the env change first:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ops/self-hosted/scripts/set-live-mtls-mode.ps1 -Mode enable
+```
+
+Apply the env patches only inside an approved maintenance window:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ops/self-hosted/scripts/set-live-mtls-mode.ps1 -Mode enable -Apply
+```
+
+Rollback env values if Core HTTPS or Gateway smoke fails:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ops/self-hosted/scripts/set-live-mtls-mode.ps1 -Mode rollback -Apply
+```
+
+The script backs up both env files before writing. It intentionally does not
+restart Core or Gateway automatically; restart must use the approved deployment
+command for the host after each verification step.
+
 Sandbox direct mTLS trial:
 
 ```powershell
