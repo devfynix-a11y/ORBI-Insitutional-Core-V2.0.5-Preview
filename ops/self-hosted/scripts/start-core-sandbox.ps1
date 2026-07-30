@@ -5,6 +5,7 @@ param(
   [string]$SandboxSecretPrefix = ".sandbox\core-sandbox",
   [string]$SandboxTlsDirectory = "D:\FYNIX\ORBI\SECREATES\ORBI_CORE_TLS_SANDBOX",
   [switch]$EnableDirectMtls,
+  [switch]$PrintDockerArgs,
   [switch]$RebuildSchema
 )
 
@@ -153,8 +154,27 @@ if ($EnableDirectMtls) {
 
 $volumeArgs = New-Object System.Collections.Generic.List[string]
 if ($EnableDirectMtls) {
+  $dockerTlsDirectory = $SandboxTlsDirectory -replace '\\', '/'
   $volumeArgs.Add("-v")
-  $volumeArgs.Add("${SandboxTlsDirectory}:/etc/orbi/tls:ro")
+  $volumeArgs.Add("${dockerTlsDirectory}:/etc/orbi/tls:ro")
+}
+
+if ($PrintDockerArgs) {
+  @(
+    "create",
+    "--name", "orbi-core-sandbox",
+    "--restart", "unless-stopped",
+    "--network", "orbi-private",
+    "--network-alias", "core-sandbox",
+    "--no-healthcheck"
+  ) + @($envArgs.ToArray()) + @($volumeArgs.ToArray()) + @("-p", "127.0.0.1:3001:3000", $CoreImage) | ForEach-Object {
+    $arg = [string]$_
+    if ($arg -match '=(.+)$' -and $arg -match '(SECRET|PASSWORD|TOKEN|KEY|DATABASE_URL|VALKEY_URL)') {
+      $arg = ($arg -replace '=(.+)$', '=<redacted>')
+    }
+    Write-Output $arg
+  }
+  exit 0
 }
 
 docker create `
@@ -162,10 +182,14 @@ docker create `
   --restart unless-stopped `
   --network orbi-private `
   --network-alias core-sandbox `
+  --no-healthcheck `
   @envArgs `
   @volumeArgs `
   -p 127.0.0.1:3001:3000 `
   $CoreImage | Out-Null
+if ($LASTEXITCODE -ne 0) {
+  throw "docker create failed for orbi-core-sandbox."
+}
 
 docker network connect --alias core-sandbox orbi-edge orbi-core-sandbox
 docker start orbi-core-sandbox | Out-Null
