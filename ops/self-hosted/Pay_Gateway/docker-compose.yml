@@ -23,6 +23,7 @@ services:
     volumes:
       - D:/FYNIX/ORBI/Orbi Infrastructures/ORBI GATEWAY/Pay Gateway Backend/config/providers.example.json:/app/config/providers.json:ro
       - D:/FYNIX/ORBI/Orbi Infrastructures/ORBI GATEWAY/Pay Gateway Backend/config/services.json:/app/config/services.json:ro
+      - ${ORBI_PAY_GATEWAY_MTLS_CERT_DIRECTORY:-D:/FYNIX/ORBI/SECREATES/ORBI_MTLS}:/opt/orbi/mtls:ro
     ports:
       - "${ORBI_PAY_GATEWAY_BIND_ADDRESS:-127.0.0.1}:3100:3100"
     healthcheck:
@@ -65,6 +66,7 @@ services:
     volumes:
       - D:/FYNIX/ORBI/Orbi Infrastructures/ORBI GATEWAY/Pay Gateway Backend/config/providers.example.json:/app/config/providers.json:ro
       - D:/FYNIX/ORBI/Orbi Infrastructures/ORBI GATEWAY/Pay Gateway Backend/config/services.json:/app/config/services.json:ro
+      - ${ORBI_PAY_GATEWAY_SANDBOX_MTLS_CERT_DIRECTORY:-D:/FYNIX/ORBI/SECREATES/ORBI_MTLS_SANDBOX}:/opt/orbi/mtls:ro
     ports:
       - "${ORBI_PAY_GATEWAY_SANDBOX_BIND_ADDRESS:-127.0.0.1}:3101:3101"
     healthcheck:
