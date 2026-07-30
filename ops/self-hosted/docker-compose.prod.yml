@@ -247,6 +247,7 @@ services:
     tmpfs:
       - /tmp:size=256m,mode=1777
     volumes:
+      - ${ORBI_CORE_TLS_CERT_DIRECTORY:-/srv/orbi/secrets/mtls/core}:/etc/orbi/tls:ro
       - /srv/orbi/backups/database:/srv/orbi/backups/database:ro
       - orbi_public_uploads:/app/public/uploads
     mem_limit: 6g
@@ -261,7 +262,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "fetch('http://127.0.0.1:3000/health',{redirect:'manual'}).then(r=>{if(!r.ok&&r.status!==308)process.exit(1)}).catch(()=>process.exit(1))"
+          "const https=require('https');const http=require('http');const tls=String(process.env.ORBI_TLS_ENABLED||'').toLowerCase()==='true';const mod=tls?https:http;const req=mod.get({host:'127.0.0.1',port:3000,path:'/health',rejectUnauthorized:false},r=>{if(!((r.statusCode>=200&&r.statusCode<300)||r.statusCode===308))process.exit(1);r.resume();});req.on('error',()=>process.exit(1));req.setTimeout(5000,()=>{req.destroy();process.exit(1);});"
         ]
       interval: 10s
       timeout: 5s

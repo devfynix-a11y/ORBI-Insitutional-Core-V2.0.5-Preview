@@ -87,6 +87,41 @@ Before using the complete command, install TLS files, create the Prometheus
 monitor-key secret, set strong service passwords, and confirm that ports 80 and
 443 are intended to be public.
 
+## Internal mTLS Certificates
+
+Direct Core-to-Gateway mTLS uses a private ORBI internal CA, a Core server
+certificate, and a Pay Gateway client certificate. Generate a sandbox bundle
+first:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ops/self-hosted/scripts/generate-mtls-certificates.ps1 -Environment sandbox
+```
+
+Generate a live bundle only when ready to deploy both Core and Gateway together:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ops/self-hosted/scripts/generate-mtls-certificates.ps1 -Environment live
+```
+
+Default Windows output paths:
+
+```text
+D:\FYNIX\ORBI\SECREATES\ORBI_CORE_TLS
+D:\FYNIX\ORBI\SECREATES\ORBI_MTLS
+D:\FYNIX\ORBI\SECREATES\ORBI_CORE_TLS_SANDBOX
+D:\FYNIX\ORBI\SECREATES\ORBI_MTLS_SANDBOX
+```
+
+The Core production compose mounts `ORBI_CORE_TLS_CERT_DIRECTORY` into
+`/etc/orbi/tls`. The Pay Gateway compose mounts
+`ORBI_PAY_GATEWAY_MTLS_CERT_DIRECTORY` into `/opt/orbi/mtls`.
+
+Do not enable direct mTLS until Gateway readiness passes:
+
+```bash
+npm run mtls:readiness -- /path/to/pay-gateway.env
+```
+
 Stop the full stack without deleting data:
 
 ```bash
