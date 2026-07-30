@@ -122,6 +122,55 @@ The Core production compose mounts `ORBI_CORE_TLS_CERT_DIRECTORY` into
 `/etc/orbi/tls`. The Pay Gateway compose mounts
 `ORBI_PAY_GATEWAY_MTLS_CERT_DIRECTORY` into `/opt/orbi/mtls`.
 
+### How To Enable Sandbox Direct mTLS
+
+Sandbox is the safe proving ground. It must pass before live is touched.
+
+1. Generate sandbox certificates:
+
+   ```powershell
+   $env:Path = "C:\Program Files\Git\usr\bin;$env:Path"
+   powershell -ExecutionPolicy Bypass -File ops/self-hosted/scripts/generate-mtls-certificates.ps1 -Environment sandbox
+   ```
+
+2. Start Core sandbox with direct TLS/mTLS support:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File ops/self-hosted/scripts/start-core-sandbox.ps1 -EnableDirectMtls
+   ```
+
+3. Start Pay Gateway sandbox against `https://core-sandbox:3000`:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File ops/self-hosted/scripts/start-pay-gateway-sandbox.ps1 -GatewayImage orbi-pay-gateway:local -EnableDirectMtls
+   ```
+
+4. Verify the public sandbox gateway:
+
+   ```powershell
+   $env:PAYMENT_GATEWAY_SMOKE_BASE_URL='https://sandbox-pay.orbifinancial.com'
+   $env:PAYMENT_GATEWAY_SMOKE_ALLOWED_ORIGIN='https://shop.orbifinancial.com'
+   npm run smoke:runtime-controls
+   ```
+
+5. Verify strict internal mTLS from the gateway container if needed:
+
+   ```bash
+   docker exec orbi-pay-gateway-sandbox node -e "const https=require('https');const fs=require('fs');https.get('https://core-sandbox:3000/health',{cert:fs.readFileSync('/opt/orbi/mtls/pay-gateway-client.crt'),key:fs.readFileSync('/opt/orbi/mtls/pay-gateway-client.key'),ca:fs.readFileSync('/opt/orbi/mtls/orbi-internal-ca.crt'),servername:'core-sandbox'},r=>{console.log(r.statusCode);r.resume();}).on('error',e=>{console.error(e.message);process.exit(1);});"
+   ```
+
+Expected sandbox gateway startup log:
+
+```json
+{"coreTarget":"https://core-sandbox:3000","mtlsEnabled":true}
+```
+
+### How To Enable Live Direct mTLS
+
+Live mTLS is a controlled maintenance-window cutover. HMAC signatures remain
+mandatory after mTLS is enabled; mTLS proves service identity, while HMAC proves
+payload integrity and replay safety.
+
 Do not enable direct mTLS until Gateway readiness passes:
 
 ```bash
@@ -140,7 +189,13 @@ Live cutover order:
 7. Run live runtime smoke and inspect request audit logs.
 ```
 
-Dry-run the env change first:
+Dry-run all live prerequisites first:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ops/self-hosted/scripts/test-live-mtls-readiness.ps1
+```
+
+Dry-run the env change before writing anything:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File ops/self-hosted/scripts/set-live-mtls-mode.ps1 -Mode enable
@@ -162,13 +217,12 @@ The script backs up both env files before writing. It intentionally does not
 restart Core or Gateway automatically; restart must use the approved deployment
 command for the host after each verification step.
 
-Sandbox direct mTLS trial:
+After live enablement, verify:
 
 ```powershell
-$env:Path = "C:\Program Files\Git\usr\bin;$env:Path"
-powershell -ExecutionPolicy Bypass -File ops/self-hosted/scripts/generate-mtls-certificates.ps1 -Environment sandbox
-powershell -ExecutionPolicy Bypass -File ops/self-hosted/scripts/start-core-sandbox.ps1 -EnableDirectMtls
-powershell -ExecutionPolicy Bypass -File ops/self-hosted/scripts/start-pay-gateway-sandbox.ps1 -GatewayImage orbi-pay-gateway:local -EnableDirectMtls
+$env:PAYMENT_GATEWAY_SMOKE_BASE_URL='https://pay.orbifinancial.com'
+$env:PAYMENT_GATEWAY_SMOKE_ALLOWED_ORIGIN='https://shop.orbifinancial.com'
+npm run smoke:runtime-controls
 ```
 
 If direct mTLS is enabled, sandbox Gateway talks to Core through:

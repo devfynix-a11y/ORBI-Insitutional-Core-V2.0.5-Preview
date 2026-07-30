@@ -44,3 +44,56 @@ readiness check from the Pay Gateway Backend repository:
 ```bash
 npm run mtls:readiness -- /path/to/pay-gateway.env
 ```
+
+## Direct mTLS Operating Modes
+
+### Sandbox
+
+Sandbox may be run with direct mTLS while live remains on the current production
+transport. This is the preferred test path before live cutover.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ..\scripts\start-core-sandbox.ps1 -EnableDirectMtls
+powershell -ExecutionPolicy Bypass -File ..\scripts\start-pay-gateway-sandbox.ps1 -GatewayImage orbi-pay-gateway:local -EnableDirectMtls
+```
+
+Expected sandbox gateway log:
+
+```json
+{"coreTarget":"https://core-sandbox:3000","mtlsEnabled":true}
+```
+
+Run sandbox smoke after startup:
+
+```powershell
+$env:PAYMENT_GATEWAY_SMOKE_BASE_URL='https://sandbox-pay.orbifinancial.com'
+$env:PAYMENT_GATEWAY_SMOKE_ALLOWED_ORIGIN='https://shop.orbifinancial.com'
+npm run smoke:runtime-controls
+```
+
+### Live
+
+Live mTLS must be enabled only during an approved maintenance window.
+
+1. Generate or rotate live certificates outside Git.
+2. Run `test-live-mtls-readiness.ps1`.
+3. Dry-run `set-live-mtls-mode.ps1 -Mode enable`.
+4. Apply the env patch with `-Apply`.
+5. Restart Core first and verify Core HTTPS health inside the Docker network.
+6. Restart Pay Gateway and run live smoke.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ..\scripts\test-live-mtls-readiness.ps1
+powershell -ExecutionPolicy Bypass -File ..\scripts\set-live-mtls-mode.ps1 -Mode enable
+powershell -ExecutionPolicy Bypass -File ..\scripts\set-live-mtls-mode.ps1 -Mode enable -Apply
+```
+
+Rollback:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ..\scripts\set-live-mtls-mode.ps1 -Mode rollback -Apply
+```
+
+The live cutover script writes timestamped env backups and never restarts
+containers automatically. Restart must be handled by the approved deployment
+command so Core and Gateway can be verified one step at a time.
