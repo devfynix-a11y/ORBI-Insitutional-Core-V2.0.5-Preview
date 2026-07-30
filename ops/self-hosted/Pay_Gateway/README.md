@@ -38,6 +38,44 @@ ORBI_PAY_GATEWAY_SANDBOX_MTLS_CERT_DIRECTORY=/srv/orbi/secrets/mtls/pay-gateway-
 Do not commit certificates or private keys. Keep private keys root-owned or
 server-admin-owned and mount the directory read-only.
 
+## Portable Gateway Paths
+
+The compose file uses relative defaults so the whole `Orbi Infrastructures`
+folder can move together without editing the compose file.
+
+```env
+ORBI_PAY_GATEWAY_BACKEND_ROOT=../../../../../../ORBI GATEWAY/Pay Gateway Backend
+ORBI_PAY_GATEWAY_RECONCILIATION_REPORTS_ROOT=../../../../../../ORBI GATEWAY/Reconciliation Reports/live
+ORBI_PAY_GATEWAY_RECONCILIATION_SANDBOX_REPORTS_ROOT=../../../../../../ORBI GATEWAY/Reconciliation Reports/sandbox
+```
+
+Override these only when the Pay Gateway backend or report directories live
+outside the infrastructure folder.
+
+## Reconciliation Evidence
+
+Both live and sandbox containers write signed reconciliation evidence reports to:
+
+```text
+/app/reconciliation
+```
+
+This is mounted to host report folders:
+
+```text
+ORBI GATEWAY/Reconciliation Reports/live
+ORBI GATEWAY/Reconciliation Reports/sandbox
+```
+
+The internal export endpoint is:
+
+```text
+GET/POST /v1/internal/reconciliation/evidence/export
+```
+
+It produces report hashes, signatures, payment/webhook summaries, and exception
+queues for operator review.
+
 Before enabling `PAYMENT_GATEWAY_INTERNAL_MTLS_ENABLED=true`, run the gateway
 readiness check from the Pay Gateway Backend repository:
 
