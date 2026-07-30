@@ -22,6 +22,10 @@ services:
       PAYMENT_GATEWAY_SERVICE_REGISTRY_PATH: /app/config/services.json
       PAYMENT_GATEWAY_OBP_SANDBOX_TOOLS_ENABLED: "false"
       PAYMENT_GATEWAY_RECONCILIATION_EXPORT_PATH: /app/reconciliation
+      PAYMENT_GATEWAY_RECONCILIATION_SCHEDULE_ENABLED: "true"
+      PAYMENT_GATEWAY_RECONCILIATION_SCHEDULE_INTERVAL_MINUTES: "1440"
+      PAYMENT_GATEWAY_RECONCILIATION_SCHEDULE_WINDOW_HOURS: "24"
+      PAYMENT_GATEWAY_RECONCILIATION_SCHEDULE_RUN_ON_START: "false"
     volumes:
       - ${ORBI_PAY_GATEWAY_BACKEND_ROOT:-../../../../../../ORBI GATEWAY/Pay Gateway Backend}/config/providers.example.json:/app/config/providers.json:ro
       - ${ORBI_PAY_GATEWAY_BACKEND_ROOT:-../../../../../../ORBI GATEWAY/Pay Gateway Backend}/config/services.json:/app/config/services.json:ro
@@ -68,6 +72,10 @@ services:
       PAYMENT_GATEWAY_SERVICE_REGISTRY_PATH: /app/config/services.json
       PAYMENT_GATEWAY_OBP_SANDBOX_TOOLS_ENABLED: "true"
       PAYMENT_GATEWAY_RECONCILIATION_EXPORT_PATH: /app/reconciliation
+      PAYMENT_GATEWAY_RECONCILIATION_SCHEDULE_ENABLED: "true"
+      PAYMENT_GATEWAY_RECONCILIATION_SCHEDULE_INTERVAL_MINUTES: "1440"
+      PAYMENT_GATEWAY_RECONCILIATION_SCHEDULE_WINDOW_HOURS: "24"
+      PAYMENT_GATEWAY_RECONCILIATION_SCHEDULE_RUN_ON_START: "false"
     volumes:
       - ${ORBI_PAY_GATEWAY_BACKEND_ROOT:-../../../../../../ORBI GATEWAY/Pay Gateway Backend}/config/providers.example.json:/app/config/providers.json:ro
       - ${ORBI_PAY_GATEWAY_BACKEND_ROOT:-../../../../../../ORBI GATEWAY/Pay Gateway Backend}/config/services.json:/app/config/services.json:ro

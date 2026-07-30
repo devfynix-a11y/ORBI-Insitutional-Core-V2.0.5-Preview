@@ -76,6 +76,18 @@ GET/POST /v1/internal/reconciliation/evidence/export
 It produces report hashes, signatures, payment/webhook summaries, and exception
 queues for operator review.
 
+The self-hosted runtime enables scheduled reconciliation every 24 hours:
+
+```env
+PAYMENT_GATEWAY_RECONCILIATION_SCHEDULE_ENABLED=true
+PAYMENT_GATEWAY_RECONCILIATION_SCHEDULE_INTERVAL_MINUTES=1440
+PAYMENT_GATEWAY_RECONCILIATION_SCHEDULE_WINDOW_HOURS=24
+PAYMENT_GATEWAY_RECONCILIATION_SCHEDULE_RUN_ON_START=false
+```
+
+Keep `RUN_ON_START=false` in production unless you intentionally want a report
+created after every container restart.
+
 Before enabling `PAYMENT_GATEWAY_INTERNAL_MTLS_ENABLED=true`, run the gateway
 readiness check from the Pay Gateway Backend repository:
 
