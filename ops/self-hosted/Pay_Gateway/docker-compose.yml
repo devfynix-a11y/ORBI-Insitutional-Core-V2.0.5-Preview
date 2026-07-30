@@ -26,10 +26,12 @@ services:
       PAYMENT_GATEWAY_RECONCILIATION_SCHEDULE_INTERVAL_MINUTES: "1440"
       PAYMENT_GATEWAY_RECONCILIATION_SCHEDULE_WINDOW_HOURS: "24"
       PAYMENT_GATEWAY_RECONCILIATION_SCHEDULE_RUN_ON_START: "false"
+      PAYMENT_GATEWAY_OPERATOR_ALERT_SINK_PATH: /app/alerts/reconciliation-alerts.jsonl
     volumes:
       - ${ORBI_PAY_GATEWAY_BACKEND_ROOT:-../../../../../../ORBI GATEWAY/Pay Gateway Backend}/config/providers.example.json:/app/config/providers.json:ro
       - ${ORBI_PAY_GATEWAY_BACKEND_ROOT:-../../../../../../ORBI GATEWAY/Pay Gateway Backend}/config/services.json:/app/config/services.json:ro
       - ${ORBI_PAY_GATEWAY_RECONCILIATION_REPORTS_ROOT:-../../../../../../ORBI GATEWAY/Reconciliation Reports/live}:/app/reconciliation
+      - ${ORBI_PAY_GATEWAY_ALERTS_ROOT:-../../../../../../ORBI GATEWAY/Operator Alerts/live}:/app/alerts
       - ${ORBI_PAY_GATEWAY_MTLS_CERT_DIRECTORY:-D:/FYNIX/ORBI/SECREATES/ORBI_MTLS}:/opt/orbi/mtls:ro
     ports:
       - "${ORBI_PAY_GATEWAY_BIND_ADDRESS:-127.0.0.1}:3100:3100"
@@ -76,10 +78,12 @@ services:
       PAYMENT_GATEWAY_RECONCILIATION_SCHEDULE_INTERVAL_MINUTES: "1440"
       PAYMENT_GATEWAY_RECONCILIATION_SCHEDULE_WINDOW_HOURS: "24"
       PAYMENT_GATEWAY_RECONCILIATION_SCHEDULE_RUN_ON_START: "false"
+      PAYMENT_GATEWAY_OPERATOR_ALERT_SINK_PATH: /app/alerts/reconciliation-alerts.jsonl
     volumes:
       - ${ORBI_PAY_GATEWAY_BACKEND_ROOT:-../../../../../../ORBI GATEWAY/Pay Gateway Backend}/config/providers.example.json:/app/config/providers.json:ro
       - ${ORBI_PAY_GATEWAY_BACKEND_ROOT:-../../../../../../ORBI GATEWAY/Pay Gateway Backend}/config/services.json:/app/config/services.json:ro
       - ${ORBI_PAY_GATEWAY_RECONCILIATION_SANDBOX_REPORTS_ROOT:-../../../../../../ORBI GATEWAY/Reconciliation Reports/sandbox}:/app/reconciliation
+      - ${ORBI_PAY_GATEWAY_ALERTS_SANDBOX_ROOT:-../../../../../../ORBI GATEWAY/Operator Alerts/sandbox}:/app/alerts
       - ${ORBI_PAY_GATEWAY_SANDBOX_MTLS_CERT_DIRECTORY:-D:/FYNIX/ORBI/SECREATES/ORBI_MTLS_SANDBOX}:/opt/orbi/mtls:ro
     ports:
       - "${ORBI_PAY_GATEWAY_SANDBOX_BIND_ADDRESS:-127.0.0.1}:3101:3101"

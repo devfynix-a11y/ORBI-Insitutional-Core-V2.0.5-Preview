@@ -47,6 +47,8 @@ folder can move together without editing the compose file.
 ORBI_PAY_GATEWAY_BACKEND_ROOT=../../../../../../ORBI GATEWAY/Pay Gateway Backend
 ORBI_PAY_GATEWAY_RECONCILIATION_REPORTS_ROOT=../../../../../../ORBI GATEWAY/Reconciliation Reports/live
 ORBI_PAY_GATEWAY_RECONCILIATION_SANDBOX_REPORTS_ROOT=../../../../../../ORBI GATEWAY/Reconciliation Reports/sandbox
+ORBI_PAY_GATEWAY_ALERTS_ROOT=../../../../../../ORBI GATEWAY/Operator Alerts/live
+ORBI_PAY_GATEWAY_ALERTS_SANDBOX_ROOT=../../../../../../ORBI GATEWAY/Operator Alerts/sandbox
 ```
 
 Override these only when the Pay Gateway backend or report directories live
@@ -75,6 +77,20 @@ GET/POST /v1/internal/reconciliation/evidence/export
 
 It produces report hashes, signatures, payment/webhook summaries, and exception
 queues for operator review.
+
+If the scheduled job finds reconciliation exceptions, the gateway writes operator
+alerts to:
+
+```text
+/app/alerts/reconciliation-alerts.jsonl
+```
+
+Host folders:
+
+```text
+ORBI GATEWAY/Operator Alerts/live
+ORBI GATEWAY/Operator Alerts/sandbox
+```
 
 The self-hosted runtime enables scheduled reconciliation every 24 hours:
 
