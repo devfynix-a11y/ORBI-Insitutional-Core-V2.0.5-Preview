@@ -428,6 +428,7 @@ services:
       - direct-edge
     networks:
       - edge
+      - private
 
   prometheus:
     <<: *service-defaults
