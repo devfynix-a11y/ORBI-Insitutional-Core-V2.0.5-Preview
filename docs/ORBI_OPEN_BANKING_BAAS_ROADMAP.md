@@ -67,39 +67,46 @@ This is the current operator and engineering sequence. Complete it one step at
 a time, verify each step, then commit and deploy before moving forward.
 
 ```text
-1. Live mTLS cutover.
-   Sandbox direct mTLS is verified. Live remains intentionally disabled until an
-   approved maintenance window. HMAC must remain enabled permanently.
+1. Secure internal service link.
+   Gateway and Core must prove they are talking to each other. HMAC remains
+   mandatory. Live mTLS is enabled only after a maintenance window and smoke
+   evidence.
 
-2. Developer Portal backend-only finalization.
-   The portal must be frontend-only. Login, roles, approvals, keys, rotation,
-   sandbox/live access, service grants, and audit activity must be served by
-   gateway/backend APIs. The portal must not connect directly to databases or
-   hold operational secrets.
+2. Developer Portal is backend-driven.
+   The portal is only the screen. Login, roles, service requests, approvals,
+   keys, rotations, sandbox/live access, and activity must come from Gateway
+   APIs. The browser must never connect to a database or hold secrets.
 
-3. Merchant domain and origin governance.
-   Browser origins, redirect URLs, callback URLs, and webhook URLs must be
-   registered, verified, approved, environment-scoped, and enforced per
-   developer application.
+3. Developer domains are verified.
+   A developer must register the website domain, return URL, and payment update
+   URL they will use. ORBI approves them before live payments are accepted.
 
-4. Audit correlation everywhere.
-   SDK, gateway, Core, hosted challenge, webhooks, operator actions, and
-   reconciliation must share trace IDs, correlation IDs, actor identity, and
-   request evidence.
+4. Every request is traceable.
+   SDK, Gateway, Core, hosted challenge, payment updates, operator actions, and
+   reconciliation must share request IDs so support can follow one payment end
+   to end.
 
-5. Webhook replay production layer.
-   Replay must include operator controls, retry policy, signed replay evidence,
-   replay lineage, delivery attempts, and developer/operator visibility.
+5. Payment update retry is safe.
+   Webhook replay must be controlled, signed, logged, and visible. Developers
+   should not manually repeat payment actions and risk duplicate movement.
 
-6. SDK production polish.
-   Node, Python, PHP, and future SDKs must have stable versioning, changelog,
-   examples, sandbox/live parity tests, release checklist, and contract-driven
-   methods such as `orbi.transfers.send(...)`.
+6. SDKs are the main integration path.
+   Node, Python, PHP, and future SDKs must use friendly methods such as
+   `orbi.transfers.send(...)`, `orbi.payments.createIntent(...)`, and
+   `orbi.webhooks.verify(...)` instead of raw HTTP for normal developers.
 
-7. Open Banking/BaaS compliance layer.
-   Consent receipts, scopes, revocation, access grants, rate limits by plan,
-   audit exports, developer certification, and compliance-ready records must be
-   production-grade.
+7. Open Banking/BaaS compliance is complete.
+   Consent receipts, permissions, revocation, access grants, rate limits,
+   audit exports, and certification checks must be ready before ORBI calls the
+   platform complete.
+```
+
+Developer-facing rule:
+
+```text
+Developers should understand the flow without knowing ORBI internals:
+create account -> test in sandbox -> add domains -> request live access ->
+receive keys -> use SDK -> receive payment updates -> reconcile safely.
 ```
 
 ## Phase 1: Platform Contracts Lock
