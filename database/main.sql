@@ -9424,3 +9424,48 @@ COMMENT ON TABLE public.pay_gateway_developer_webhook_secrets IS
 
 NOTIFY pgrst, 'reload schema';
 -- END SYNCED MIGRATION: 20260723_pay_gateway_developer_secret_vault.sql
+
+-- BEGIN SYNCED MIGRATION: 20260731_pay_gateway_portal_usernames.sql
+-- Pay Gateway Developer Portal usernames.
+-- Every developer/operator/admin portal identity must have a unique username.
+
+CREATE TABLE IF NOT EXISTS public.pay_gateway_portal_users (
+  user_id TEXT PRIMARY KEY,
+  username TEXT,
+  email TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('developer', 'operator', 'admin')),
+  permissions TEXT[] NOT NULL DEFAULT '{}',
+  live_access BOOLEAN NOT NULL DEFAULT FALSE,
+  service_codes TEXT[] NOT NULL DEFAULT '{}',
+  password_salt TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  password_iterations INTEGER NOT NULL DEFAULT 210000,
+  totp_secret TEXT,
+  mfa_required BOOLEAN NOT NULL DEFAULT FALSE,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.pay_gateway_portal_users
+  ADD COLUMN IF NOT EXISTS username TEXT;
+
+UPDATE public.pay_gateway_portal_users
+SET username =
+  LOWER(REGEXP_REPLACE(SPLIT_PART(email, '@', 1), '[^a-zA-Z0-9_-]+', '_', 'g'))
+  || '_'
+  || SUBSTR(MD5(email), 1, 8)
+WHERE username IS NULL OR TRIM(username) = '';
+
+ALTER TABLE public.pay_gateway_portal_users
+  ALTER COLUMN username SET NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS pay_gateway_portal_users_username_unique_idx
+  ON public.pay_gateway_portal_users (LOWER(username));
+
+COMMENT ON COLUMN public.pay_gateway_portal_users.username IS
+  'Unique developer portal username used as a stable public-facing handle. Email remains private login identity.';
+
+NOTIFY pgrst, 'reload schema';
+-- END SYNCED MIGRATION: 20260731_pay_gateway_portal_usernames.sql
