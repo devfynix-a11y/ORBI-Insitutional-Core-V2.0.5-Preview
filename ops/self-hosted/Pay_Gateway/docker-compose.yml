@@ -31,11 +31,17 @@ services:
       PAYMENT_GATEWAY_INCIDENT_ESCALATION_INTERVAL_MINUTES: "5"
       PAYMENT_GATEWAY_INCIDENT_CRITICAL_SLA_MINUTES: "15"
       PAYMENT_GATEWAY_INCIDENT_WARNING_SLA_MINUTES: "60"
+      PAYMENT_GATEWAY_ORBI_TALK_ENABLED: ${PAYMENT_GATEWAY_ORBI_TALK_ENABLED:-true}
+      ORBI_TALK_GATEWAY_URL: ${ORBI_TALK_GATEWAY_URL:-https://talk.orbifinancial.com}
+      ORBI_TALK_MESSAGING_INTENT_PATH: ${ORBI_TALK_MESSAGING_INTENT_PATH:-/v1/messaging/intents}
+      ORBI_TALK_GATEWAY_TIMEOUT_MS: ${ORBI_TALK_GATEWAY_TIMEOUT_MS:-2500}
+      PAYMENT_GATEWAY_MESSAGING_DELIVERY_STORE_PATH: /app/messaging/messaging-deliveries.json
     volumes:
       - ${ORBI_PAY_GATEWAY_BACKEND_ROOT:-../../../../../../ORBI GATEWAY/Pay Gateway Backend}/config/providers.example.json:/app/config/providers.json:ro
       - ${ORBI_PAY_GATEWAY_BACKEND_ROOT:-../../../../../../ORBI GATEWAY/Pay Gateway Backend}/config/services.json:/app/config/services.json:ro
       - ${ORBI_PAY_GATEWAY_RECONCILIATION_REPORTS_ROOT:-../../../../../../ORBI GATEWAY/Reconciliation Reports/live}:/app/reconciliation
       - ${ORBI_PAY_GATEWAY_ALERTS_ROOT:-../../../../../../ORBI GATEWAY/Operator Alerts/live}:/app/alerts
+      - ${ORBI_PAY_GATEWAY_MESSAGING_ROOT:-../../../../../../ORBI GATEWAY/Messaging Deliveries/live}:/app/messaging
       - ${ORBI_PAY_GATEWAY_MTLS_CERT_DIRECTORY:-D:/FYNIX/ORBI/SECREATES/ORBI_MTLS}:/opt/orbi/mtls:ro
     ports:
       - "${ORBI_PAY_GATEWAY_BIND_ADDRESS:-127.0.0.1}:3100:3100"
@@ -87,11 +93,17 @@ services:
       PAYMENT_GATEWAY_INCIDENT_ESCALATION_INTERVAL_MINUTES: "5"
       PAYMENT_GATEWAY_INCIDENT_CRITICAL_SLA_MINUTES: "15"
       PAYMENT_GATEWAY_INCIDENT_WARNING_SLA_MINUTES: "60"
+      PAYMENT_GATEWAY_ORBI_TALK_ENABLED: ${PAYMENT_GATEWAY_SANDBOX_ORBI_TALK_ENABLED:-true}
+      ORBI_TALK_GATEWAY_URL: ${ORBI_TALK_GATEWAY_URL:-https://talk.orbifinancial.com}
+      ORBI_TALK_MESSAGING_INTENT_PATH: ${ORBI_TALK_MESSAGING_INTENT_PATH:-/v1/messaging/intents}
+      ORBI_TALK_GATEWAY_TIMEOUT_MS: ${ORBI_TALK_GATEWAY_TIMEOUT_MS:-2500}
+      PAYMENT_GATEWAY_MESSAGING_DELIVERY_STORE_PATH: /app/messaging/messaging-deliveries.json
     volumes:
       - ${ORBI_PAY_GATEWAY_BACKEND_ROOT:-../../../../../../ORBI GATEWAY/Pay Gateway Backend}/config/providers.example.json:/app/config/providers.json:ro
       - ${ORBI_PAY_GATEWAY_BACKEND_ROOT:-../../../../../../ORBI GATEWAY/Pay Gateway Backend}/config/services.json:/app/config/services.json:ro
       - ${ORBI_PAY_GATEWAY_RECONCILIATION_SANDBOX_REPORTS_ROOT:-../../../../../../ORBI GATEWAY/Reconciliation Reports/sandbox}:/app/reconciliation
       - ${ORBI_PAY_GATEWAY_ALERTS_SANDBOX_ROOT:-../../../../../../ORBI GATEWAY/Operator Alerts/sandbox}:/app/alerts
+      - ${ORBI_PAY_GATEWAY_MESSAGING_SANDBOX_ROOT:-../../../../../../ORBI GATEWAY/Messaging Deliveries/sandbox}:/app/messaging
       - ${ORBI_PAY_GATEWAY_SANDBOX_MTLS_CERT_DIRECTORY:-D:/FYNIX/ORBI/SECREATES/ORBI_MTLS_SANDBOX}:/opt/orbi/mtls:ro
     ports:
       - "${ORBI_PAY_GATEWAY_SANDBOX_BIND_ADDRESS:-127.0.0.1}:3101:3101"
