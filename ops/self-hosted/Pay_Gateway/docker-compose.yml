@@ -27,6 +27,10 @@ services:
       PAYMENT_GATEWAY_RECONCILIATION_SCHEDULE_WINDOW_HOURS: "24"
       PAYMENT_GATEWAY_RECONCILIATION_SCHEDULE_RUN_ON_START: "false"
       PAYMENT_GATEWAY_OPERATOR_ALERT_SINK_PATH: /app/alerts/reconciliation-alerts.jsonl
+      PAYMENT_GATEWAY_INCIDENT_ESCALATION_ENABLED: "true"
+      PAYMENT_GATEWAY_INCIDENT_ESCALATION_INTERVAL_MINUTES: "5"
+      PAYMENT_GATEWAY_INCIDENT_CRITICAL_SLA_MINUTES: "15"
+      PAYMENT_GATEWAY_INCIDENT_WARNING_SLA_MINUTES: "60"
     volumes:
       - ${ORBI_PAY_GATEWAY_BACKEND_ROOT:-../../../../../../ORBI GATEWAY/Pay Gateway Backend}/config/providers.example.json:/app/config/providers.json:ro
       - ${ORBI_PAY_GATEWAY_BACKEND_ROOT:-../../../../../../ORBI GATEWAY/Pay Gateway Backend}/config/services.json:/app/config/services.json:ro
@@ -79,6 +83,10 @@ services:
       PAYMENT_GATEWAY_RECONCILIATION_SCHEDULE_WINDOW_HOURS: "24"
       PAYMENT_GATEWAY_RECONCILIATION_SCHEDULE_RUN_ON_START: "false"
       PAYMENT_GATEWAY_OPERATOR_ALERT_SINK_PATH: /app/alerts/reconciliation-alerts.jsonl
+      PAYMENT_GATEWAY_INCIDENT_ESCALATION_ENABLED: "true"
+      PAYMENT_GATEWAY_INCIDENT_ESCALATION_INTERVAL_MINUTES: "5"
+      PAYMENT_GATEWAY_INCIDENT_CRITICAL_SLA_MINUTES: "15"
+      PAYMENT_GATEWAY_INCIDENT_WARNING_SLA_MINUTES: "60"
     volumes:
       - ${ORBI_PAY_GATEWAY_BACKEND_ROOT:-../../../../../../ORBI GATEWAY/Pay Gateway Backend}/config/providers.example.json:/app/config/providers.json:ro
       - ${ORBI_PAY_GATEWAY_BACKEND_ROOT:-../../../../../../ORBI GATEWAY/Pay Gateway Backend}/config/services.json:/app/config/services.json:ro

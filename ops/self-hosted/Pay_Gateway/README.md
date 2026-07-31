@@ -104,6 +104,18 @@ PAYMENT_GATEWAY_RECONCILIATION_SCHEDULE_RUN_ON_START=false
 Keep `RUN_ON_START=false` in production unless you intentionally want a report
 created after every container restart.
 
+Incident SLA escalation is also enabled for unresolved operator incidents:
+
+```env
+PAYMENT_GATEWAY_INCIDENT_ESCALATION_ENABLED=true
+PAYMENT_GATEWAY_INCIDENT_ESCALATION_INTERVAL_MINUTES=5
+PAYMENT_GATEWAY_INCIDENT_CRITICAL_SLA_MINUTES=15
+PAYMENT_GATEWAY_INCIDENT_WARNING_SLA_MINUTES=60
+```
+
+Escalation emits one alert per incident/SLA level and records audit evidence in
+the Gateway audit sink.
+
 Before enabling `PAYMENT_GATEWAY_INTERNAL_MTLS_ENABLED=true`, run the gateway
 readiness check from the Pay Gateway Backend repository:
 
