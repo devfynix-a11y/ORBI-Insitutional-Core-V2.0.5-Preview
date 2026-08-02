@@ -141,12 +141,14 @@ export class BankingEngineService {
             let currentStatus: TransactionStatus = 'created';
 
             // 2. Calculate Regulatory Fees
-            const fees = await RegulatoryService.calculateFees(
-                amount,
-                type,
-                currency || intent.currency,
-                { metadata: intent.metadata, category: intent.category },
-            );
+            const fees = type === 'FX_CONVERSION'
+                ? { vat: 0, fee: 0, gov_fee: 0, total: 0, rate: 0 }
+                : await RegulatoryService.calculateFees(
+                    amount,
+                    type,
+                    currency || intent.currency,
+                    { metadata: intent.metadata, category: intent.category },
+                );
 
             // 3. Resolve Ledger Legs (Only if not held for review)
             const shouldSkipLegs = statusOverride === 'held_for_review';
@@ -501,14 +503,15 @@ export class BankingEngineService {
                     });
 
                     // 4. Credit Fee Collector (FX Fee in Target Currency)
-                    if (this.isPositiveAmount(fxDetails.fee)) {
+                    const fxFeeTargetAmount = fxDetails.feeInTargetCurrency || fxDetails.fee || 0;
+                    if (this.isPositiveAmount(fxFeeTargetAmount)) {
                         const feeCollectorId = await RegulatoryService.resolveSystemNode('FEE_COLLECTOR');
                         legs.push({
                             transactionId: txId,
                             walletId: feeCollectorId,
                             type: 'CREDIT',
-                            amount: fxDetails.fee,
-                            currency: fxDetails.feeCurrency || targetCurrency,
+                            amount: fxFeeTargetAmount,
+                            currency: targetCurrency,
                             description: `FX Fee Collection: ${txId}`,
                             timestamp: new Date().toISOString()
                         });
@@ -597,14 +600,15 @@ export class BankingEngineService {
                 });
 
                 // Credit Fee Collector (FX Fee in Target Currency)
-                if (this.isPositiveAmount(fxDetails.fee)) {
+                const fxFeeTargetAmount = fxDetails.feeInTargetCurrency || fxDetails.fee || 0;
+                if (this.isPositiveAmount(fxFeeTargetAmount)) {
                     const feeCollectorId = await RegulatoryService.resolveSystemNode('FEE_COLLECTOR');
                     legs.push({
                         transactionId: txId,
                         walletId: feeCollectorId,
                         type: 'CREDIT',
-                        amount: fxDetails.fee,
-                        currency: fxDetails.feeCurrency || targetCurrency,
+                        amount: fxFeeTargetAmount,
+                        currency: targetCurrency,
                         description: `FX Fee Collection: ${txId}`,
                         timestamp: new Date().toISOString()
                     });

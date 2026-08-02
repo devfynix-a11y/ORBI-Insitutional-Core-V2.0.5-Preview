@@ -1,3 +1,4 @@
+import { createHash, createHmac, randomUUID } from 'crypto';
 import { type RequestHandler, type Router } from 'express';
 import {
   requireIdempotencyKey,
@@ -5,6 +6,7 @@ import {
 } from '../../middleware/security/idempotency.js';
 import { GlobalTimeResolver } from '../../../backend/utils/GlobalTimeResolver.js';
 import { TransactionMovementClassifier } from '../../../backend/transactions/movement/TransactionMovementClassifier.js';
+import { DataProtection } from '../../../backend/security/DataProtection.js';
 
 type Deps = {
   authenticate: RequestHandler;
@@ -13,6 +15,7 @@ type Deps = {
   requireRole: (session: any, roles: string[]) => boolean;
   LogicCore: any;
   getSupabase: () => any;
+  getAdminSupabase?: () => any;
   PolicyEngine: any;
   FXEngine: any;
   TransactionService: any;
@@ -88,6 +91,108 @@ const enrichTransactionGeoMetadata = (req: any) => {
     },
   };
   return req.body;
+};
+
+const walletCurrencyCode = (value: unknown): string => String(value || '').trim().toUpperCase();
+
+const isIsoCurrencyCode = (value: string): boolean => /^[A-Z]{3}$/.test(value);
+
+const colorForCurrencyWallet = (currency: string): string => {
+  const colors: Record<string, string> = {
+    TZS: '#06D6A0',
+    USD: '#1D4ED8',
+    EUR: '#0F766E',
+    GBP: '#7C3AED',
+    KES: '#F59E0B',
+    UGX: '#DC2626',
+    RWF: '#0891B2',
+  };
+  return colors[currency] || '#118AB2';
+};
+
+const isSupportedFxCurrency = async (sb: any, currency: string): Promise<boolean> => {
+  const [fromRes, toRes] = await Promise.all([
+    sb.from('fx_corridors').select('id').eq('status', 'ACTIVE').eq('from_currency', currency).limit(1),
+    sb.from('fx_corridors').select('id').eq('status', 'ACTIVE').eq('to_currency', currency).limit(1),
+  ]);
+  if (fromRes.error) throw fromRes.error;
+  if (toRes.error) throw toRes.error;
+  return Boolean((fromRes.data || []).length || (toRes.data || []).length);
+};
+
+const normalizeCurrencyCode = (value: unknown) =>
+  String(value || '').trim().toUpperCase();
+
+const fxQuoteErrorStatus = (code: string) => {
+  if (/UNAVAILABLE|DB_OFFLINE/i.test(code)) return 503;
+  if (/NOT_CONFIGURED|CONFIG_REQUIRED/i.test(code)) return 409;
+  return 400;
+};
+
+const fxQuoteErrorPayload = (error: any) => {
+  const message = String(error?.message || error || 'FX_QUOTE_FAILED');
+  const code = message.split(':')[0] || 'FX_QUOTE_FAILED';
+  return {
+    success: false,
+    error: code,
+    message,
+    context: 'fx_quote',
+    retryable: fxQuoteErrorStatus(code) >= 500,
+  };
+};
+
+const hashFxQuotePayload = (payload: Record<string, any>) =>
+  createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+
+const sortDeep = (value: any): any => {
+  if (Array.isArray(value)) return value.map((item) => sortDeep(item));
+  if (!value || typeof value !== 'object') return value;
+  return Object.keys(value)
+    .sort()
+    .reduce((acc: Record<string, any>, key) => {
+      acc[key] = sortDeep(value[key]);
+      return acc;
+    }, {});
+};
+
+const normalizeNullable = (value: any) => {
+  const text = String(value || '').trim();
+  return text || null;
+};
+
+const parseFxAmount = (value: any) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.round(parsed * 100) / 100;
+};
+
+const buildFxCanonicalIntent = (payload: Record<string, any>) => sortDeep({
+  amount: parseFxAmount(payload.amount),
+  currency: normalizeCurrencyCode(payload.currency),
+  type: 'FX_CONVERSION',
+  description: String(payload.description || '').trim(),
+  category: normalizeNullable(payload.category),
+  categoryId: normalizeNullable(payload.categoryId ?? payload.category_id ?? payload.metadata?.categoryId ?? payload.metadata?.category_id),
+  sourceWalletId: normalizeNullable(payload.sourceWalletId || payload.source_wallet_id || payload.walletId || payload.wallet_id || payload.metadata?.sourceWalletId || payload.metadata?.source_wallet_id),
+  targetWalletId: normalizeNullable(payload.targetWalletId || payload.target_wallet_id || payload.metadata?.targetWalletId || payload.metadata?.target_wallet_id),
+  recipientId: null,
+  recipientCustomerId: null,
+  merchantId: null,
+  merchantPayNumber: null,
+  channel: normalizeNullable(payload.channel || payload.metadata?.channel),
+  providerCode: null,
+  feeConfigId: null,
+  flowCode: null,
+  totalDebit: parseFxAmount(payload.amount),
+  totalFee: 0,
+});
+
+const signFxQuote = (quoteId: string, quoteHash: string, expiresAt: string, userId: string) => {
+  const secret = process.env.ORBI_TRANSACTION_QUOTE_SIGNING_SECRET || process.env.JWT_SECRET || process.env.SESSION_SECRET;
+  if (!secret) return '';
+  return createHmac('sha256', secret)
+    .update([quoteId, userId, quoteHash, expiresAt].join('|'))
+    .digest('hex');
 };
 
 const enrichTransactionTimeMetadata = (req: any) => {
@@ -848,6 +953,7 @@ export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
     requireRole,
     LogicCore,
     getSupabase,
+    getAdminSupabase,
     PolicyEngine,
     FXEngine,
     TransactionService,
@@ -1044,6 +1150,97 @@ export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
     }
   });
 
+  v1.post('/wallets/currency', authenticate as any, async (req, res) => {
+    const session = (req as any).session;
+    const currency = walletCurrencyCode(req.body?.currency);
+
+    if (!isIsoCurrencyCode(currency)) {
+      return res.status(400).json({
+        success: false,
+        error: 'FX_CURRENCY_INVALID',
+        message: 'Currency code must be an ISO 4217 three-letter code.',
+      });
+    }
+
+    try {
+      const sb = getAdminSupabase?.() || getSupabase();
+      if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+
+      const supported = await isSupportedFxCurrency(sb, currency);
+      if (!supported) {
+        return res.status(400).json({
+          success: false,
+          error: 'FX_CURRENCY_NOT_SUPPORTED',
+          message: 'This currency is not available for ORBI FX wallets yet.',
+        });
+      }
+
+      const { data: existing, error: existingError } = await sb
+        .from('platform_vaults')
+        .select('*')
+        .eq('user_id', session.sub)
+        .eq('vault_role', 'OPERATING')
+        .eq('currency', currency)
+        .neq('status', 'closed')
+        .maybeSingle();
+      if (existingError) throw existingError;
+
+      if (existing) {
+        return res.json({
+          success: true,
+          data: {
+            wallet: existing,
+            created: false,
+          },
+        });
+      }
+
+      const encryptedBalance = await DataProtection.encryptAmount(0, {
+        userId: session.sub,
+        currency,
+        purpose: 'multi_currency_wallet_opening',
+      });
+      const now = new Date().toISOString();
+      const { data: wallet, error: insertError } = await sb
+        .from('platform_vaults')
+        .insert({
+          id: randomUUID(),
+          user_id: session.sub,
+          vault_role: 'OPERATING',
+          name: `Orbi - ${currency}`,
+          balance: 0,
+          encrypted_balance: encryptedBalance,
+          currency,
+          color: colorForCurrencyWallet(currency),
+          icon: 'currency-exchange',
+          status: 'active',
+          metadata: {
+            multi_currency_wallet: true,
+            wallet_family: 'orbi_multi_currency',
+            opened_via: 'mobile_fx',
+            created_at: now,
+          },
+        })
+        .select('*')
+        .single();
+      if (insertError) throw insertError;
+
+      res.status(201).json({
+        success: true,
+        data: {
+          wallet,
+          created: true,
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({
+        success: false,
+        error: 'FX_CURRENCY_WALLET_OPEN_FAILED',
+        message: e.message,
+      });
+    }
+  });
+
   v1.delete('/wallets/:id', authenticate as any, async (req, res) => {
     const session = (req as any).session;
     try {
@@ -1089,6 +1286,43 @@ export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
       res.json({ success: true, data: result });
     } catch (e: any) {
       res.status(400).json({ success: false, error: e.message });
+    }
+  });
+
+  v1.get('/fx/currencies', authenticate as any, async (_req, res) => {
+    try {
+      const sb = getSupabase();
+      if (!sb) return res.status(503).json({ success: false, error: 'DB_OFFLINE' });
+
+      const { data, error } = await sb
+        .from('fx_corridors')
+        .select('id, from_currency, to_currency, min_amount, max_amount, settlement_mode, status')
+        .eq('status', 'ACTIVE')
+        .order('from_currency', { ascending: true })
+        .order('to_currency', { ascending: true });
+      if (error) throw error;
+
+      const currencies = Array.from(
+        new Set(
+          (data || [])
+            .flatMap((row: any) => [walletCurrencyCode(row.from_currency), walletCurrencyCode(row.to_currency)])
+            .filter(isIsoCurrencyCode),
+        ),
+      ).sort();
+
+      res.json({
+        success: true,
+        data: {
+          currencies,
+          corridors: data || [],
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({
+        success: false,
+        error: 'FX_CURRENCY_CATALOG_FAILED',
+        message: e.message,
+      });
     }
   });
 
@@ -1240,16 +1474,168 @@ export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
   });
 
   v1.get('/fx/quote', authenticate as any, async (req, res) => {
-    const { from, to, amount } = req.query;
-    if (!from || !to || !amount) {
-      return res.status(400).json({ success: false, error: 'Missing required parameters: from, to, amount' });
+    const session = (req as any).session;
+    const from = normalizeCurrencyCode(req.query.from);
+    const to = normalizeCurrencyCode(req.query.to);
+    const amount = Number(req.query.amount);
+
+    if (!from || !to) {
+      return res.status(400).json({
+        success: false,
+        error: 'FX_PAIR_REQUIRED',
+        message: 'from and to currency codes are required.',
+        context: 'fx_quote',
+        retryable: false,
+      });
+    }
+
+    if (!/^[A-Z]{3}$/.test(from) || !/^[A-Z]{3}$/.test(to)) {
+      return res.status(400).json({
+        success: false,
+        error: 'FX_PAIR_INVALID',
+        message: 'Currency codes must be ISO 4217 three-letter codes.',
+        context: 'fx_quote',
+        retryable: false,
+      });
+    }
+
+    if (from === to) {
+      return res.status(400).json({
+        success: false,
+        error: 'FX_PAIR_SAME_CURRENCY',
+        message: 'from and to currencies must be different.',
+        context: 'fx_quote',
+        retryable: false,
+      });
+    }
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'FX_AMOUNT_INVALID',
+        message: 'amount must be a positive number.',
+        context: 'fx_quote',
+        retryable: false,
+      });
     }
 
     try {
-      const result = await FXEngine.processConversion(Number(amount), String(from), String(to));
-      res.json({ success: true, data: result });
+      const sourceWalletId = normalizeNullable(req.query.sourceWalletId || req.query.source_wallet_id);
+      const targetWalletId = normalizeNullable(req.query.targetWalletId || req.query.target_wallet_id);
+      const shouldLockQuote = String(req.query.lock || req.query.locked || '').trim().toLowerCase() === 'true';
+      const result = await FXEngine.processConversion(amount, from, to);
+
+      if (!shouldLockQuote) {
+        return res.json({
+          success: true,
+          data: {
+            ...result,
+            quoteId: null,
+            quoteContext: {
+              type: 'FX_CONVERSION',
+              quoteId: null,
+              fromCurrency: from,
+              toCurrency: to,
+              quotedAt: result.quotedAt,
+              expiresAt: result.expiresAt,
+              expiresInSeconds: result.expiresInSeconds,
+              lockedRate: false,
+            },
+          },
+        });
+      }
+
+      const sb = getSupabase();
+      if (!sb) {
+        return res.status(503).json({
+          success: false,
+          error: 'DB_OFFLINE',
+          message: 'FX quote lock storage is unavailable.',
+          context: 'fx_quote',
+          retryable: true,
+        });
+      }
+      if (!sourceWalletId || !targetWalletId) {
+        return res.status(400).json({
+          success: false,
+          error: 'FX_WALLET_PAIR_REQUIRED',
+          message: 'sourceWalletId and targetWalletId are required for a locked FX quote.',
+          context: 'fx_quote',
+          retryable: false,
+        });
+      }
+
+      const quoteId = `fx_${randomUUID()}`;
+      const description = String(req.query.description || `FX conversion ${from} to ${to}`).trim();
+      const requestPayload = {
+        type: 'FX_CONVERSION',
+        amount,
+        currency: from,
+        fromCurrency: from,
+        toCurrency: to,
+        sourceWalletId,
+        targetWalletId,
+        description,
+        metadata: {
+          category: 'FX',
+          fx_quote: true,
+          source_currency: from,
+          target_currency: to,
+        },
+      };
+      const quoteHash = hashFxQuotePayload(buildFxCanonicalIntent(requestPayload));
+      const quoteSignature = signFxQuote(quoteId, quoteHash, result.expiresAt, session.sub);
+      const quoteSnapshot = {
+        ...result,
+        quoteId,
+        type: 'FX_CONVERSION',
+        amount,
+        currency: from,
+        sourceWallet: { id: sourceWalletId, currency: from },
+        targetWallet: { id: targetWalletId, currency: to },
+        debit: { sourceWalletId, total: amount },
+        fees: { totalFee: 0, flowCode: null, configId: null },
+        status: 'QUOTED',
+      };
+      const { error: insertError } = await sb.from('transaction_quotes').insert({
+        id: quoteId,
+        user_id: session.sub,
+        payload_hash: quoteHash,
+        quote_signature: quoteSignature,
+        request_payload: requestPayload,
+        quote_snapshot: quoteSnapshot,
+        amount,
+        currency: from,
+        transaction_type: 'FX_CONVERSION',
+        source_wallet_id: sourceWalletId,
+        target_wallet_id: targetWalletId,
+        total_debit: amount,
+        total_fee: Number(result.fee || 0),
+        can_submit: true,
+        status: 'QUOTED',
+        expires_at: result.expiresAt,
+      });
+      if (insertError) throw insertError;
+      res.json({
+        success: true,
+        data: {
+          ...result,
+          quoteId,
+          quoteContext: {
+            type: 'FX_CONVERSION',
+            quoteId,
+            fromCurrency: from,
+            toCurrency: to,
+            quotedAt: result.quotedAt,
+            expiresAt: result.expiresAt,
+            expiresInSeconds: result.expiresInSeconds,
+            lockedRate: true,
+          },
+        },
+      });
     } catch (e: any) {
-      res.status(500).json({ success: false, error: e.message });
+      const payload = fxQuoteErrorPayload(e);
+      res.status(fxQuoteErrorStatus(payload.error)).json(payload);
     }
   });
 

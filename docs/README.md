@@ -34,7 +34,7 @@ This is the **Sovereign Financial Operating System** powering the ORBI ecosystem
 - **Transaction State Machine**: Strict lifecycle management (Created -> Authorized -> Settled -> Completed) with forensic auditability.
 - **Reconciliation Engine**: Continuous multi-layer verification (Internal, System, External) to ensure absolute ledger integrity.
 - **Atomic Multi-Leg Ledger**: Ensures fiscal integrity for every asset migration (Principal + Tax + Fee + Yield). Includes `append_ledger_entries_v1` for high-performance, atomic ledger updates.
-- **Multi-Currency & FX Engine**: Real-time currency conversion with live exchange rates, 0.5% conversion fees, and USD normalization.
+- **Multi-Currency & FX Engine**: Real-time currency conversion with liquidity-provider rates, spread-based pricing, locked quotes, and USD normalization.
 - **Risk & Compliance Engine (AML)**: Advanced transaction monitoring, velocity checks, structuring detection, and high-risk jurisdiction flagging.
 - **Continuous Session Monitoring**: Real-time invalidation of compromised sessions based on IP or device fingerprint changes.
 - **Transaction Guard (Policy Engine)**: Financial rule enforcement and limit management (`/backend/ledger/PolicyEngine.ts`).

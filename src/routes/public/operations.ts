@@ -841,32 +841,20 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
   });
 
   v1.get('/admin/config/fx-rates', authenticate as any, requireSessionPermission(['config.fx.read', 'config.fx.write'], [...CONFIG_FX_VIEW_ROLES]), async (_req, res) => {
-    try {
-      const config = await ConfigClient.getRuleConfig(true);
-      res.json({ success: true, data: config.exchange_rates });
-    } catch (e: any) {
-      res.status(500).json({ success: false, error: e.message });
-    }
+    res.status(410).json({
+      success: false,
+      error: 'FX_MANUAL_RATES_DEPRECATED',
+      message: 'FX market rates are supplied by LiquidityProviderAdapter. Configure spread, risk buffer, and quote lock policies instead.',
+    });
   });
 
   v1.post('/admin/config/fx-rates', authenticate as any, requireSessionPermission(['config.fx.write'], [...CONFIG_LEDGER_ADMIN_ROLES]), async (req, res) => {
-    try {
-      const currentConfig = await ConfigClient.getRuleConfig();
-      const newRates = req.body;
-
-      const updatedConfig = {
-        ...currentConfig,
-        exchange_rates: {
-          ...currentConfig.exchange_rates,
-          ...newRates,
-        },
-      };
-
-      await ConfigClient.saveConfig(updatedConfig);
-      res.json({ success: true, message: 'Exchange rates updated successfully.' });
-    } catch (e: any) {
-      res.status(500).json({ success: false, error: e.message });
-    }
+    void req;
+    res.status(410).json({
+      success: false,
+      error: 'FX_MANUAL_RATES_DEPRECATED',
+      message: 'Manual FX rates are not accepted. Use LiquidityProviderAdapter for market rates and fx_margin_policies for ORBI spread policy.',
+    });
   });
 
   v1.post('/admin/kms/rewrap', authenticate as any, adminOnly as any, async (req, res) => {

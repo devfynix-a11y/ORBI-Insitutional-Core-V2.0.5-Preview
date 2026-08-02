@@ -306,8 +306,8 @@ export class AdminConfigBootstrapService {
   private static validateConfiguration(payload: ReturnType<typeof AdminConfigBootstrapService.normalize>) {
     const warnings: string[] = [];
     const rates = payload.fx?.rates;
-    if (rates && rates.USD !== 1) {
-      warnings.push('FX_RATES_USD_BASE_SHOULD_BE_1');
+    if (rates) {
+      warnings.push('FX_MANUAL_RATES_DEPRECATED_USE_LIQUIDITY_PROVIDER_ADAPTER');
     }
     for (const provider of payload.providers) {
       if (provider.status === 'ACTIVE' && !provider.apiBaseUrl) {
@@ -324,8 +324,8 @@ export class AdminConfigBootstrapService {
     const plan: BootstrapPlanItem[] = [];
     if (payload.fx?.rates) {
       plan.push({
-        action: 'UPSERT',
-        target: 'infra_system_matrix.FX_RATES',
+        action: 'SKIP',
+        target: 'LiquidityProviderAdapter',
         detail: { currencies: Object.keys(payload.fx.rates).sort() },
       });
     }
@@ -366,15 +366,11 @@ export class AdminConfigBootstrapService {
     const results: Record<string, unknown> = {};
 
     if (payload.fx?.rates) {
-      const { error } = await sb.from('infra_system_matrix').upsert({
-        config_key: 'FX_RATES',
-        config_data: payload.fx.rates,
-        updated_at: new Date().toISOString(),
-        updated_by: actorId,
-      });
-      if (error) throw new Error(error.message);
-      RulesConfigClient.getInstance().invalidateCache();
-      results.fxRates = { saved: true, currencies: Object.keys(payload.fx.rates).length };
+      results.fxRates = {
+        saved: false,
+        deprecated: true,
+        message: 'Manual FX market rates are ignored. Configure a liquidity provider and fx_margin_policies instead.',
+      };
     }
 
     if (payload.fx?.fee) {

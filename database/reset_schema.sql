@@ -79,6 +79,7 @@ DROP TABLE IF EXISTS public.categories CASCADE;
 DROP TABLE IF EXISTS public.goals CASCADE;
 DROP TABLE IF EXISTS public.financial_ledger CASCADE;
 DROP TABLE IF EXISTS public.transaction_quotes CASCADE;
+DROP TABLE IF EXISTS public.fx_corridors CASCADE;
 DROP TABLE IF EXISTS public.transaction_events CASCADE;
 DROP TABLE IF EXISTS public.financial_events CASCADE;
 DROP TABLE IF EXISTS public.payment_orders CASCADE;
@@ -511,6 +512,9 @@ CREATE INDEX IF NOT EXISTS idx_platform_vaults_metadata_provider_id
 CREATE INDEX IF NOT EXISTS idx_platform_vaults_metadata_provider_code
   ON public.platform_vaults ((metadata->>'provider_code'));
 
+CREATE INDEX IF NOT EXISTS idx_platform_vaults_user_role_currency_status
+  ON public.platform_vaults(user_id, vault_role, currency, status);
+
 CREATE OR REPLACE FUNCTION public.set_platform_vault_partner_mapping(
   p_vault_id UUID,
   p_provider_id UUID DEFAULT NULL,
@@ -857,6 +861,83 @@ CREATE INDEX IF NOT EXISTS idx_transaction_quotes_expires
 CREATE UNIQUE INDEX IF NOT EXISTS idx_transaction_quotes_idempotency
     ON public.transaction_quotes(user_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS public.fx_margin_policies (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    from_currency TEXT NOT NULL,
+    to_currency TEXT NOT NULL,
+    base_rate_source TEXT NOT NULL DEFAULT 'ORBI_RATE_ENGINE',
+    spread_mode TEXT NOT NULL DEFAULT 'BPS' CHECK (spread_mode IN ('BPS', 'PIPS', 'FIXED_UNIT')),
+    fixed_pips NUMERIC(20, 8) NOT NULL DEFAULT 0 CHECK (fixed_pips >= 0),
+    margin_bps INTEGER NOT NULL DEFAULT 75 CHECK (margin_bps >= 0 AND margin_bps <= 2500),
+    risk_buffer_bps INTEGER NOT NULL DEFAULT 25 CHECK (risk_buffer_bps >= 0 AND risk_buffer_bps <= 2500),
+    quote_lock_seconds INTEGER NOT NULL DEFAULT 45 CHECK (quote_lock_seconds >= 15 AND quote_lock_seconds <= 900),
+    min_amount NUMERIC(20, 6),
+    max_amount NUMERIC(20, 6),
+    status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'PAUSED', 'DISABLED')),
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT fx_margin_policies_pair_check CHECK (from_currency <> to_currency),
+    CONSTRAINT fx_margin_policies_currency_check CHECK (
+        from_currency ~ '^[A-Z]{3}$' AND to_currency ~ '^[A-Z]{3}$'
+    )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fx_margin_policies_pair
+    ON public.fx_margin_policies(from_currency, to_currency);
+CREATE INDEX IF NOT EXISTS idx_fx_margin_policies_status
+    ON public.fx_margin_policies(status, from_currency, to_currency);
+
+CREATE TABLE IF NOT EXISTS public.fx_corridors (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    from_currency TEXT NOT NULL,
+    to_currency TEXT NOT NULL,
+    corridor_code TEXT GENERATED ALWAYS AS (from_currency || '_' || to_currency) STORED,
+    rate_provider_code TEXT NOT NULL DEFAULT 'OPEN_ER_API',
+    settlement_provider_id UUID,
+    settlement_mode TEXT NOT NULL DEFAULT 'INTERNAL_LEDGER' CHECK (settlement_mode IN ('INTERNAL_LEDGER', 'EXTERNAL_LP', 'HYBRID')),
+    priority INTEGER NOT NULL DEFAULT 100,
+    min_amount NUMERIC(20, 6),
+    max_amount NUMERIC(20, 6),
+    supported_countries TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+    status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'PAUSED', 'DISABLED')),
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT fx_corridors_pair_check CHECK (from_currency <> to_currency),
+    CONSTRAINT fx_corridors_currency_check CHECK (
+        from_currency ~ '^[A-Z]{3}$' AND to_currency ~ '^[A-Z]{3}$'
+    )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fx_corridors_pair_provider
+    ON public.fx_corridors(from_currency, to_currency, rate_provider_code);
+CREATE INDEX IF NOT EXISTS idx_fx_corridors_lookup
+    ON public.fx_corridors(from_currency, to_currency, status, priority);
+CREATE INDEX IF NOT EXISTS idx_fx_corridors_provider
+    ON public.fx_corridors(rate_provider_code, status);
+
+INSERT INTO public.fx_corridors (
+    from_currency, to_currency, rate_provider_code, settlement_mode, priority, min_amount, max_amount, supported_countries, metadata
+) VALUES
+    ('TZS', 'USD', 'OPEN_ER_API', 'INTERNAL_LEDGER', 10, 1000, 500000000, ARRAY['TZ'], '{"class":"international_fx","note":"Starter international corridor; switch settlement_provider_id when bank/LP contract is live."}'::jsonb),
+    ('USD', 'TZS', 'OPEN_ER_API', 'INTERNAL_LEDGER', 10, 1, 250000, ARRAY['TZ'], '{"class":"international_fx","note":"Starter international corridor; switch settlement_provider_id when bank/LP contract is live."}'::jsonb),
+    ('TZS', 'KES', 'OPEN_ER_API', 'INTERNAL_LEDGER', 20, 1000, 500000000, ARRAY['TZ','KE'], '{"class":"regional_fx"}'::jsonb),
+    ('KES', 'TZS', 'OPEN_ER_API', 'INTERNAL_LEDGER', 20, 100, 25000000, ARRAY['KE','TZ'], '{"class":"regional_fx"}'::jsonb),
+    ('USD', 'EUR', 'OPEN_ER_API', 'INTERNAL_LEDGER', 30, 1, 250000, ARRAY[]::TEXT[], '{"class":"global_fx"}'::jsonb),
+    ('EUR', 'USD', 'OPEN_ER_API', 'INTERNAL_LEDGER', 30, 1, 250000, ARRAY[]::TEXT[], '{"class":"global_fx"}'::jsonb),
+    ('USD', 'GBP', 'OPEN_ER_API', 'INTERNAL_LEDGER', 30, 1, 250000, ARRAY[]::TEXT[], '{"class":"global_fx"}'::jsonb),
+    ('GBP', 'USD', 'OPEN_ER_API', 'INTERNAL_LEDGER', 30, 1, 250000, ARRAY[]::TEXT[], '{"class":"global_fx"}'::jsonb)
+ON CONFLICT (from_currency, to_currency, rate_provider_code) DO UPDATE SET
+    settlement_mode = EXCLUDED.settlement_mode,
+    priority = EXCLUDED.priority,
+    min_amount = EXCLUDED.min_amount,
+    max_amount = EXCLUDED.max_amount,
+    supported_countries = EXCLUDED.supported_countries,
+    status = 'ACTIVE',
+    metadata = public.fx_corridors.metadata || EXCLUDED.metadata,
+    updated_at = NOW();
 
 CREATE TABLE IF NOT EXISTS public.financial_ledger (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -5311,6 +5392,7 @@ BEGIN
     ALTER TABLE public.financial_partners ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.provider_config_versions ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.provider_performance_metrics ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.fx_corridors ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.payment_rail_capabilities ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.institutional_payment_accounts ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.external_fund_movements ENABLE ROW LEVEL SECURITY;
@@ -5521,6 +5603,19 @@ CREATE POLICY "Admin manage provider routing rules" ON public.provider_routing_r
 
 DROP POLICY IF EXISTS "Service role provider routing bypass" ON public.provider_routing_rules;
 CREATE POLICY "Service role provider routing bypass" ON public.provider_routing_rules
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Authenticated read active fx corridors" ON public.fx_corridors;
+CREATE POLICY "Authenticated read active fx corridors" ON public.fx_corridors
+    FOR SELECT USING (status = 'ACTIVE');
+
+DROP POLICY IF EXISTS "Admin manage fx corridors" ON public.fx_corridors;
+CREATE POLICY "Admin manage fx corridors" ON public.fx_corridors
+    FOR ALL USING ((SELECT public.get_auth_role()) IN ('SUPER_ADMIN', 'ADMIN', 'IT', 'FINANCE'))
+    WITH CHECK ((SELECT public.get_auth_role()) IN ('SUPER_ADMIN', 'ADMIN', 'IT', 'FINANCE'));
+
+DROP POLICY IF EXISTS "Service role fx corridors bypass" ON public.fx_corridors;
+CREATE POLICY "Service role fx corridors bypass" ON public.fx_corridors
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Authenticated read active payment rail capabilities" ON public.payment_rail_capabilities;
@@ -5912,6 +6007,10 @@ BEGIN
     VALUES ('00000000-0000-0000-0000-000000000004', NULL, 'TAX_RESERVE', 'System Tax Reserve', 0, enc_zero, 'USD', '#EF4444', 'landmark')
     ON CONFLICT (id) DO NOTHING;
 
+    INSERT INTO public.platform_vaults (id, user_id, vault_role, name, balance, encrypted_balance, currency, color, icon)
+    VALUES ('00000000-0000-0000-0000-000000000005', NULL, 'FX_CLEARING', 'System FX Clearing', 0, enc_zero, 'USD', '#0EA5E9', 'currency-exchange')
+    ON CONFLICT (id) DO NOTHING;
+
     -- Provision Fee Collector Wallets
     INSERT INTO public.fee_collector_wallets (fee_type, vault_id, currency)
     VALUES ('GOV_TAX', '00000000-0000-0000-0000-000000000004', 'TZS')
@@ -5925,6 +6024,7 @@ BEGIN
     INSERT INTO public.system_nodes (node_type, vault_id) VALUES ('FEE_COLLECTOR', '00000000-0000-0000-0000-000000000003') ON CONFLICT (node_type) DO UPDATE SET vault_id = EXCLUDED.vault_id;
     INSERT INTO public.system_nodes (node_type, vault_id) VALUES ('ESCROW_VAULT', '00000000-0000-0000-0000-000000000001') ON CONFLICT (node_type) DO UPDATE SET vault_id = EXCLUDED.vault_id;
     INSERT INTO public.system_nodes (node_type, vault_id) VALUES ('TAX_RESERVE', '00000000-0000-0000-0000-000000000004') ON CONFLICT (node_type) DO UPDATE SET vault_id = EXCLUDED.vault_id;
+    INSERT INTO public.system_nodes (node_type, vault_id) VALUES ('FX_CLEARING', '00000000-0000-0000-0000-000000000005') ON CONFLICT (node_type) DO UPDATE SET vault_id = EXCLUDED.vault_id;
     INSERT INTO public.system_nodes (node_type, vault_id) VALUES ('PLATFORM_FEE', '00000000-0000-0000-0000-000000000003') ON CONFLICT (node_type) DO UPDATE SET vault_id = EXCLUDED.vault_id;
     INSERT INTO public.system_nodes (node_type, vault_id) VALUES ('GOV_TAX', '00000000-0000-0000-0000-000000000004') ON CONFLICT (node_type) DO UPDATE SET vault_id = EXCLUDED.vault_id;
 END $$;

@@ -78,8 +78,8 @@ Send a POST request to `/v1/transactions/settle`.
     *   `recipientId`: The internal User UUID (if known)
     *   **Note**: The system automatically resolves the target wallet.
 *   **Cross-Currency Support**: If the recipient's wallet uses a different currency than the source, the system automatically performs a conversion using the **FX Engine**.
-    *   **FX Fee**: A platform fee (0.5%) is applied to the converted amount.
-    *   **Transparency**: The `breakdown` in the response will include `fx_fee`, `exchange_rate`, and `converted_amount`.
+    *   **FX Pricing**: ORBI uses spread-based pricing from a locked quote. There is no separate FX fee.
+    *   **Transparency**: The `breakdown` in the response will include `exchange_rate`, `converted_amount`, and quote expiry metadata.
 *   **Source Defaulting**: If `sourceWalletId` is omitted, funds are drawn from your **OPERATING** vault.
 *   **Sub-Wallets**: To pay from a specific container (e.g., a Goal), set `walletType: "GOAL"` and provide the goal's UUID in `sourceWalletId`.
 

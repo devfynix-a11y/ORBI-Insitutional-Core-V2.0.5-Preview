@@ -265,9 +265,26 @@ The **FX Engine** enables seamless cross-border payments by automatically conver
 
 ### 12.1 Currency Conversion Logic
 1.  **Detection**: The `EnterprisePaymentProcessor` identifies if the source and target wallets use different currencies.
-2.  **Rate Fetching**: The `FXEngine` retrieves the exchange rate, prioritizing admin-configured rates over live API fallbacks.
-3.  **Fee Calculation**: A platform **FX Fee (0.5%)** is applied to the converted amount.
-4.  **Metadata Enrichment**: Conversion details (rate, fee, target amount) are stored in the transaction metadata for ledger processing.
+2.  **Corridor Check**: ORBI checks `fx_corridors` to confirm the currency pair is active, amount limits are valid, and the configured rate provider is allowed for that corridor.
+3.  **Rate Fetching**: The `FXEngine` requests a market rate from the formal `LiquidityProviderAdapter`. Manual/admin-entered market rates are not used in the transaction path.
+4.  **Spread Policy**: ORBI applies spread, pips, risk buffer, and quote-lock rules from `fx_margin_policies`. There is no separate FX fee.
+5.  **Fail-Closed Protection**: If the corridor or liquidity provider cannot supply a valid rate, the quote fails instead of silently using stale or manual fallback rates.
+6.  **Metadata Enrichment**: Conversion details (corridor, provider snapshot, protected customer rate, target amount, quote expiry) are stored in the transaction metadata for ledger processing.
+
+### 12.1.1 International FX Corridors
+International FX is controlled by `fx_corridors`:
+- **Currency Pair**: `from_currency` and `to_currency` define the permitted exchange direction.
+- **Rate Provider**: `rate_provider_code` selects the adapter such as `OPEN_ER_API`, future `OANDA`, `XE`, `WISE`, `CURRENCYCLOUD`, or a bank treasury adapter.
+- **Settlement Mode**: `INTERNAL_LEDGER` supports internal multi-currency wallet conversions. `EXTERNAL_LP` and `HYBRID` are reserved for contracted liquidity-provider settlement.
+- **Limits**: `min_amount` and `max_amount` protect each corridor from invalid transaction sizes.
+- **Status**: Only `ACTIVE` corridors can produce quotes.
+
+### 12.1.2 User Multi-Currency Wallets
+Users can hold multiple ORBI operating wallets under the same identity, one per supported currency:
+- **Opening Rule**: A currency wallet can be opened only when that currency appears in at least one `ACTIVE` FX corridor.
+- **Wallet Source**: Currency wallets are stored in `platform_vaults` with `vault_role = 'OPERATING'`, encrypted zero balance, and `metadata.wallet_family = 'orbi_multi_currency'`.
+- **No Linked-Wallet Fallback**: FX target wallets must be real ORBI vaults. If a target currency wallet does not exist, the client must call `POST /v1/wallets/currency` before locking a conversion quote.
+- **Ledger Rule**: Conversions between currency wallets always use a locked FX quote and double-entry ledger movement through `FX_CLEARING`.
 
 ### 12.2 Multi-Currency Ledger (FX Clearing)
 To maintain ledger integrity across different currencies, the system utilizes an **`FX_CLEARING`** system node:
@@ -275,7 +292,7 @@ To maintain ledger integrity across different currencies, the system utilizes an
 - **Credit FX Clearing**: The source amount is credited to the `FX_CLEARING` node.
 - **Debit FX Clearing**: The converted amount (in the target currency) is debited from the `FX_CLEARING` node.
 - **Credit Target**: The final amount is credited to the recipient's wallet in their local currency.
-- **Fee Collection**: FX fees are collected in the target currency and credited to the `FEE_COLLECTOR`.
+- **Spread Accounting**: FX spread is captured through the protected conversion rate. No separate FX fee leg is produced.
 
 ### 12.3 Global Policy Enforcement
 All transaction limits and risk assessments are normalized to **USD** using the `FXEngine` before being evaluated by the `PolicyEngine`. This ensures consistent enforcement of institutional rules regardless of the transaction currency.

@@ -67,6 +67,7 @@ export const PaymentIntentSchema = z.object({
         'DEPOSIT',
         'WITHDRAWAL',
         'MERCHANT_PAYMENT',
+        'FX_CONVERSION',
     ]),
     metadata: z.record(z.string(), z.any()).optional(),
     categoryId: z.union([z.string(), z.number()]).optional(),

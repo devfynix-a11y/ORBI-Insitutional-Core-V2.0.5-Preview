@@ -50,7 +50,7 @@ ORBI uses a **Double-Entry Bookkeeping** model. Every transaction is composed of
 The Banking Engine natively supports cross-currency transactions through the integrated **FXEngine**.
 - **Live Rates**: Exchange rates are fetched in real-time from trusted global APIs (cached for 1 hour).
 - **Normalized Compliance**: All transaction amounts are converted to USD in real-time before being evaluated by the **Risk & Compliance Engine (AML)** to ensure consistent global rule enforcement (e.g., $10,000 reporting thresholds).
-- **Conversion Fees**: A standard 0.5% conversion fee is applied to all cross-currency transactions, calculated transparently during the preview phase.
+- **Spread-Based Pricing**: ORBI does not apply a separate FX fee. Customer pricing is produced from the provider market rate plus the configured spread/risk policy.
 
 ### 3.2 P2P Transfer (Strict Escrow Flow)
 The engine enforces a **Strict Escrow Flow** for all internal and peer transfers. This ensures that funds are never moved directly between operating vaults, mitigating risks from network failures or security challenges.

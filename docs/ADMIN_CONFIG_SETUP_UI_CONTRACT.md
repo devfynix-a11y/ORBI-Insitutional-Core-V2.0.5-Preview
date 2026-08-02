@@ -375,7 +375,7 @@ The backend handler should perform this sequence:
 3. Validate FX rates are positive numbers.
 4. Validate `USD = 1`.
 5. Validate fee rates are decimals, not whole percent values.
-6. Upsert `infra_system_matrix` row where `config_key = 'FX_RATES'`.
+6. FX market rates are not manually edited. The transaction path uses `LiquidityProviderAdapter`; admin UI should manage `fx_margin_policies` only.
 7. Upsert `platform_fee_configs` row where `flow_code = 'FX_CONVERSION'` and name matches the submitted fee name.
 8. For each provider, normalize into `financial_partners`.
 9. Encrypt or wrap provider secrets using existing provider secret handling.
@@ -452,8 +452,9 @@ admin.post(
 Save to:
 
 ```text
-infra_system_matrix.config_key = FX_RATES
-infra_system_matrix.config_data = payload.fx.rates
+fx_margin_policies
+Do not write market rates to infra_system_matrix.FX_RATES.
+Admins configure spread_mode, margin_bps, risk_buffer_bps, quote_lock_seconds, and optional min/max amount windows.
 ```
 
 ### FX fee
