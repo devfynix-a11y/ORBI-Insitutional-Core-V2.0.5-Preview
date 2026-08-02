@@ -14,6 +14,14 @@ class AdvancedServicesService {
     return _extractList(response.data);
   }
 
+  Future<Map<String, dynamic>> openCurrencyWallet(String currency) async {
+    final response = await _dio.post(
+      '/wallets/currency',
+      data: {'currency': currency.trim().toUpperCase()},
+    );
+    return _extractItem(response.data);
+  }
+
   Future<List<Map<String, dynamic>>> listDocuments() async {
     final response = await _dio.get(
       AppConfig.endpoints['userDocuments'] ?? '/user/documents',
