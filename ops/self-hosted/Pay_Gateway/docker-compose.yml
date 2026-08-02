@@ -35,6 +35,9 @@ services:
       PAYMENT_GATEWAY_INCIDENT_ESCALATION_INTERVAL_MINUTES: "5"
       PAYMENT_GATEWAY_INCIDENT_CRITICAL_SLA_MINUTES: "15"
       PAYMENT_GATEWAY_INCIDENT_WARNING_SLA_MINUTES: "60"
+      PAYMENT_GATEWAY_AUDIT_EVENT_SINK_PATH: /app/audit/audit-events.jsonl
+      PAYMENT_GATEWAY_OAUTH_ISSUER_URL: https://pay.orbifinancial.com
+      PAYMENT_GATEWAY_OAUTH_INTROSPECTION_URL: https://pay.orbifinancial.com/oauth/introspect
       PAYMENT_GATEWAY_ORBI_TALK_ENABLED: ${PAYMENT_GATEWAY_ORBI_TALK_ENABLED:-true}
       ORBI_TALK_GATEWAY_URL: ${ORBI_TALK_GATEWAY_URL:-https://talk.orbifinancial.com}
       ORBI_TALK_MESSAGING_INTENT_PATH: /api/send-email
@@ -45,6 +48,7 @@ services:
       - ${ORBI_PAY_GATEWAY_BACKEND_ROOT:-../../../../../../ORBI GATEWAY/Pay Gateway Backend}/config/services.json:/app/config/services.json:ro
       - ${ORBI_PAY_GATEWAY_RECONCILIATION_REPORTS_ROOT:-../../../../../../ORBI GATEWAY/Reconciliation Reports/live}:/app/reconciliation
       - ${ORBI_PAY_GATEWAY_ALERTS_ROOT:-../../../../../../ORBI GATEWAY/Operator Alerts/live}:/app/alerts
+      - ${ORBI_PAY_GATEWAY_AUDIT_EVENTS_ROOT:-../../../../../../ORBI GATEWAY/Audit Events/live}:/app/audit
       - ${ORBI_PAY_GATEWAY_MESSAGING_ROOT:-../../../../../../ORBI GATEWAY/Messaging Deliveries/live}:/app/messaging
       - ${ORBI_PAY_GATEWAY_MTLS_CERT_DIRECTORY:-D:/FYNIX/ORBI/SECREATES/ORBI_MTLS}:/opt/orbi/mtls:ro
     ports:
@@ -101,6 +105,9 @@ services:
       PAYMENT_GATEWAY_INCIDENT_ESCALATION_INTERVAL_MINUTES: "5"
       PAYMENT_GATEWAY_INCIDENT_CRITICAL_SLA_MINUTES: "15"
       PAYMENT_GATEWAY_INCIDENT_WARNING_SLA_MINUTES: "60"
+      PAYMENT_GATEWAY_AUDIT_EVENT_SINK_PATH: /app/audit/audit-events.jsonl
+      PAYMENT_GATEWAY_OAUTH_ISSUER_URL: https://sandbox-pay.orbifinancial.com
+      PAYMENT_GATEWAY_OAUTH_INTROSPECTION_URL: https://sandbox-pay.orbifinancial.com/oauth/introspect
       PAYMENT_GATEWAY_ORBI_TALK_ENABLED: ${PAYMENT_GATEWAY_SANDBOX_ORBI_TALK_ENABLED:-true}
       ORBI_TALK_GATEWAY_URL: ${ORBI_TALK_GATEWAY_URL:-https://talk.orbifinancial.com}
       ORBI_TALK_MESSAGING_INTENT_PATH: /api/send-email
@@ -111,6 +118,7 @@ services:
       - ${ORBI_PAY_GATEWAY_BACKEND_ROOT:-../../../../../../ORBI GATEWAY/Pay Gateway Backend}/config/services.json:/app/config/services.json:ro
       - ${ORBI_PAY_GATEWAY_RECONCILIATION_SANDBOX_REPORTS_ROOT:-../../../../../../ORBI GATEWAY/Reconciliation Reports/sandbox}:/app/reconciliation
       - ${ORBI_PAY_GATEWAY_ALERTS_SANDBOX_ROOT:-../../../../../../ORBI GATEWAY/Operator Alerts/sandbox}:/app/alerts
+      - ${ORBI_PAY_GATEWAY_AUDIT_EVENTS_SANDBOX_ROOT:-../../../../../../ORBI GATEWAY/Audit Events/sandbox}:/app/audit
       - ${ORBI_PAY_GATEWAY_MESSAGING_SANDBOX_ROOT:-../../../../../../ORBI GATEWAY/Messaging Deliveries/sandbox}:/app/messaging
       - ${ORBI_PAY_GATEWAY_SANDBOX_MTLS_CERT_DIRECTORY:-D:/FYNIX/ORBI/SECREATES/ORBI_MTLS_SANDBOX}:/opt/orbi/mtls:ro
     ports:
