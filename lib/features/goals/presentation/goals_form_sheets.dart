@@ -3,6 +3,7 @@ import 'package:intl/intl.dart' show DateFormat;
 import 'package:orbi_mobileapp/l10n/app_localizations.dart';
 
 import '../../../core/utils/amount_input_formatter.dart';
+import '../../../core/utils/backend_status_message.dart';
 import '../../../core/utils/money_format.dart';
 import '../../../core/widgets/orbi_amount_field.dart';
 import 'goals_composer_widgets.dart';
@@ -297,7 +298,13 @@ class _GoalComposerSheetState extends State<GoalComposerSheet> {
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        _formError = error.toString();
+        _formError = mapBackendStatusMessage(
+          error.toString(),
+          sw: widget.isSwahili,
+          fallback: widget.isSwahili
+              ? 'Lengo halikuweza kuhifadhiwa. Tafadhali jaribu tena.'
+              : 'Goal could not be saved. Please try again.',
+        );
         _submitting = false;
       });
     }
@@ -468,7 +475,13 @@ class _BudgetComposerSheetState extends State<BudgetComposerSheet> {
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        _formError = error.toString();
+        _formError = mapBackendStatusMessage(
+          error.toString(),
+          sw: widget.isSwahili,
+          fallback: widget.isSwahili
+              ? 'Budget haikuweza kuhifadhiwa. Tafadhali jaribu tena.'
+              : 'Budget could not be saved. Please try again.',
+        );
         _submitting = false;
       });
     }
@@ -652,7 +665,13 @@ class _TaskComposerSheetState extends State<TaskComposerSheet> {
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        _formError = error.toString();
+        _formError = mapBackendStatusMessage(
+          error.toString(),
+          sw: widget.isSwahili,
+          fallback: widget.isSwahili
+              ? 'Task haikuweza kuhifadhiwa. Tafadhali jaribu tena.'
+              : 'Task could not be saved. Please try again.',
+        );
         _submitting = false;
       });
     }

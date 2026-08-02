@@ -48,3 +48,4 @@ app.*.map.json
 
 # Android signing secrets
 /android/key.properties
+keystore-base64.txt

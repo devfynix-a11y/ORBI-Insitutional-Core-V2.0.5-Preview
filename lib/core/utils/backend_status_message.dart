@@ -62,6 +62,20 @@ String mapBackendStatusMessage(
       'Majaribio ni mengi. Tafadhali subiri takriban sekunde 60, kisha jaribu tena.',
     );
   }
+  if (upper.contains('STATUS CODE OF 502') ||
+      upper.contains('STATUS CODE OF 503') ||
+      upper.contains('STATUS CODE OF 504') ||
+      upper.contains(' 502') ||
+      upper.contains(' 503') ||
+      upper.contains(' 504') ||
+      upper.contains('BAD GATEWAY') ||
+      upper.contains('SERVICE UNAVAILABLE') ||
+      upper.contains('GATEWAY TIMEOUT')) {
+    return pick(
+      'Service is taking longer than expected. Please refresh and try again shortly.',
+      'Huduma inachukua muda kuliko kawaida. Tafadhali pakia upya kisha jaribu tena baada ya muda mfupi.',
+    );
+  }
   if (upper.contains('INVALID_OTP') ||
       upper.contains('OTP INVALID') ||
       upper.contains('OTP EXPIRED') ||

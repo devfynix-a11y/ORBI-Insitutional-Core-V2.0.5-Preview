@@ -185,7 +185,25 @@ class SessionManager {
     _inactivityTimer = null;
     await _storage.setReauthLockRequired(true);
 
-    debugPrint('🔒 Session soft-locked due to inactivity (token retained)');
+    // Enforce stricter behaviours based on AppConfig flags:
+    try {
+      // Avoid importing AppConfig at top-level to keep session_manager lightweight.
+      final enforceStrict = const bool.fromEnvironment('ENFORCE_STRICT_SESSION_LOCK', defaultValue: false);
+      final clearAccessOnly = const bool.fromEnvironment('CLEAR_ACCESS_TOKEN_ON_TIMEOUT', defaultValue: false);
+
+      if (enforceStrict) {
+        // Clear access + refresh tokens and profile to force full login.
+        debugPrint('🔐 enforceStrictSessionLock enabled: clearing full session');
+        await _storage.clearSessionOnly();
+      } else if (clearAccessOnly) {
+        debugPrint('🔐 clearAccessTokenOnTimeout enabled: clearing access token only');
+        await _storage.clearAccessTokenAndProfile();
+      } else {
+        debugPrint('🔒 Session soft-locked due to inactivity (token retained)');
+      }
+    } catch (e) {
+      debugPrint('⚠️ session_manager: error applying strict session policy: $e');
+    }
 
     // Trigger the callback (usually navigates to login)
     if (_onSessionExpired != null) {

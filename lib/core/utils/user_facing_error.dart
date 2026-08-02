@@ -1,8 +1,18 @@
+import 'backend_status_message.dart';
+
 class UserFacingError {
   static String from(
     Object error, {
     String fallback = 'Something went wrong. Please try again.',
+    bool sw = false,
   }) {
+    final mapped = mapBackendStatusMessage(
+      error.toString(),
+      sw: sw,
+      fallback: fallback,
+    );
+    if (mapped != error.toString().trim()) return mapped;
+
     final raw = error.toString().replaceFirst('Exception: ', '').trim();
     if (raw.isEmpty) return fallback;
     final lower = raw.toLowerCase();

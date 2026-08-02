@@ -1,0 +1,28 @@
+@echo off
+rem This helper creates missing Gradle project configuration (.settings) and basic files
+rem Run this script from the android directory (Windows)
+
+if not exist ".settings" (
+    echo Creating .settings folder...
+    mkdir ".settings"
+    echo # Placeholder for IDE project settings > ".settings\README.txt"
+) else (
+    echo .settings already exists
+)
+
+if not exist "settings.gradle" (
+    echo Creating minimal settings.gradle...
+    echo // Minimal settings.gradle for sample app > "settings.gradle"
+    echo rootProject.name = 'sample_app' >> "settings.gradle"
+) else (
+    echo settings.gradle already exists
+)
+
+if not exist "gradle.properties" (
+    echo Creating minimal gradle.properties...
+    echo org.gradle.jvmargs=-Xmx1536M > "gradle.properties"
+) else (
+    echo gradle.properties already exists
+)
+
+echo Done.

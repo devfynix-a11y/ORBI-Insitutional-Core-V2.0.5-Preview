@@ -958,7 +958,7 @@ class _FinancialJourneyLayerState extends State<_FinancialJourneyLayer> {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          '${snapshot.activeGoals} Active Goals  •  ${snapshot.sharedPots} Fungu  •  ${snapshot.activeBudgets} Mezani',
+                          '${snapshot.activeGoals} Active Goals - ${snapshot.sharedPots} Fungu - ${snapshot.activeBudgets} Mezani',
                           style: TextStyle(color: ui.textMuted, fontSize: 12.5),
                         ),
                       ],
@@ -1011,7 +1011,7 @@ class _RecentActivityLayer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final resolved = items;
+    final resolved = items.take(3).toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1978,7 +1978,7 @@ class _RecentActivityCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '${item.provider} • ${item.channel}',
+                  '${item.provider} - ${item.channel}',
                   style: TextStyle(color: ui.textMuted, fontSize: 12.5),
                 ),
               ],
@@ -1998,7 +1998,7 @@ class _RecentActivityCard extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                '${item.status} • ${_timeAgo(item.time)}',
+                '${item.status} - ${_timeAgo(item.time)}',
                 style: TextStyle(color: ui.textMuted, fontSize: 11.5),
               ),
             ],
@@ -4274,49 +4274,6 @@ class _SkeletonBlock extends StatelessWidget {
         color: ui.card,
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: ui.border),
-      ),
-    );
-  }
-}
-
-class _OfflineBanner extends StatelessWidget {
-  const _OfflineBanner();
-
-  @override
-  Widget build(BuildContext context) {
-    return Positioned(
-      top: 12,
-      left: 16,
-      right: 16,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: const Color(0xFFE06C2F),
-          borderRadius: BorderRadius.circular(14),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x1A000000),
-              blurRadius: 12,
-              offset: Offset(0, 6),
-            ),
-          ],
-        ),
-        child: const Row(
-          children: [
-            Icon(Icons.wifi_off_rounded, color: Colors.white, size: 18),
-            SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'You are viewing the last synced dashboard state.',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

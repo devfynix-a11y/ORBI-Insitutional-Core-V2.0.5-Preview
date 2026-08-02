@@ -1,1 +1,5 @@
 #include "Generated.xcconfig"
+
+# Production release overrides
+TRACK_WIDGET_CREATION=false
+TREE_SHAKE_ICONS=true

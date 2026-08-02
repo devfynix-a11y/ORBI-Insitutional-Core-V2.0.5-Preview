@@ -6,6 +6,7 @@ import 'package:flutter/rendering.dart';
 import 'package:printing/printing.dart';
 
 import '../theme/orbi_theme.dart';
+import '../utils/backend_status_message.dart';
 import '../widgets/orbi_logo.dart';
 import 'report_image_pdf_builder.dart';
 import 'report_models.dart';
@@ -44,6 +45,17 @@ class _ReportSheetState extends State<ReportSheet> {
 
   String _t(String en, String sw) => _sw ? sw : en;
 
+  String _friendlyError(Object error) {
+    return mapBackendStatusMessage(
+      error.toString(),
+      sw: _sw,
+      fallback: _t(
+        'The report could not be prepared right now. Please refresh and try again.',
+        'Ripoti haikuweza kuandaliwa kwa sasa. Tafadhali pakia upya kisha jaribu tena.',
+      ),
+    );
+  }
+
   Future<void> _loadReport() async {
     setState(() {
       _busy = true;
@@ -61,7 +73,8 @@ class _ReportSheetState extends State<ReportSheet> {
       setState(() => _report = report);
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = error.toString());
+      debugPrint('ReportSheet.loadReport failed: $error');
+      setState(() => _error = _friendlyError(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -111,7 +124,8 @@ class _ReportSheetState extends State<ReportSheet> {
       }
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = error.toString());
+      debugPrint('ReportSheet.pdfAction failed: $error');
+      setState(() => _error = _friendlyError(error));
     } finally {
       if (mounted) {
         setState(() {

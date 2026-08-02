@@ -23,7 +23,8 @@ class OrbiBackground extends StatelessWidget {
         final shortestSide = min(screenWidth, screenHeight);
         final density = (shortestSide / 390).clamp(0.82, 1.28);
         final reduceMotion = MediaQuery.disableAnimationsOf(context);
-        final richBackground = shortestSide >= 420 && !reduceMotion && isDark;
+        final devicePixelRatio = MediaQuery.of(context).devicePixelRatio;
+        final canRenderRichBackground = shortestSide >= 420 && !reduceMotion && isDark && devicePixelRatio <= 2.5;
 
         return SizedBox.expand(
           child: Container(
@@ -105,7 +106,7 @@ class OrbiBackground extends StatelessWidget {
                   ),
                 ],
 
-                if (richBackground) ...[
+                if (canRenderRichBackground) ...[
                   // --- 3. 60° diagonal gradient lines (thick & thin) ---
                   ..._buildGradientLines(
                     screenWidth,
@@ -117,7 +118,7 @@ class OrbiBackground extends StatelessWidget {
                 ],
 
                 // --- 4. Network flow lines for visual motion depth ---
-                if (richBackground)
+                if (canRenderRichBackground)
                   Positioned.fill(
                     child: IgnorePointer(
                       child: RepaintBoundary(
@@ -179,7 +180,7 @@ class OrbiBackground extends StatelessWidget {
                 ],
 
                 // --- 6. Geometric shapes (subtle, low-luminance) ---
-                if (richBackground) ...[
+                if (canRenderRichBackground) ...[
                   Positioned(
                     left: screenWidth * 0.06,
                     bottom: screenHeight * 0.02,
@@ -223,7 +224,7 @@ class OrbiBackground extends StatelessWidget {
                 ],
 
                 // --- 7. Faint dotted grid texture ---
-                if (richBackground)
+                if (canRenderRichBackground)
                   Positioned.fill(
                     child: RepaintBoundary(
                       child: CustomPaint(

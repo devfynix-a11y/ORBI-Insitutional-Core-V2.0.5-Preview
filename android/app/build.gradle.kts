@@ -6,6 +6,8 @@ plugins {
 
     // Add the Google services Gradle plugin
     id("com.google.gms.google-services")
+    // Firebase Crashlytics Gradle plugin
+    id("com.google.firebase.crashlytics")
 }
 
 import java.io.FileInputStream
@@ -73,14 +75,20 @@ android {
             }
         }
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with debug if no release keystore is configured.
             val hasReleaseKeystore = keystorePropertiesFile.exists()
-            signingConfig = if (hasReleaseKeystore) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
+            if (!hasReleaseKeystore) {
+                error(
+                    "Release signing is required for production builds. " +
+                        "Provide android/key.properties and the matching keystore."
+                )
             }
+            signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 }
@@ -97,7 +105,11 @@ dependencies {
     implementation(platform("com.google.firebase:firebase-bom:34.10.0"))
 
     // Firebase SDKs
-    implementation("com.google.firebase:firebase-analytics")
+    implementation("com.google.firebase:firebase-analytics:21.3.0")
+    implementation("com.google.firebase:firebase-crashlytics-ktx:18.4.0")
+
+    // Flutter Play Store split compatibility (required for deferred component support and R8 minification)
+    implementation("com.google.android.play:core:1.10.3")
 
     // Existing app dependencies
     implementation("androidx.credentials:credentials:1.3.0")

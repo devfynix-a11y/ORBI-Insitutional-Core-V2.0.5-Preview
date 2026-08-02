@@ -82,7 +82,10 @@ class AppConfig {
   static String get passkeyOrigin {
     if (_passkeyOriginEnv.isNotEmpty) return _passkeyOriginEnv;
     if (!kIsWeb && Platform.isAndroid) {
-      return 'android:apk-key-hash:$androidAppHashUrlSafe';
+      final androidHash = androidAppHashUrlSafe;
+      if (androidHash.isNotEmpty) {
+        return 'android:apk-key-hash:$androidHash';
+      }
     }
     return 'https://$_primaryApiHost';
   }
@@ -159,6 +162,22 @@ class AppConfig {
 
   static String get appVersion => _appVersionEnv;
   static bool get enforceDeviceIntegrity => _enforceDeviceIntegrity;
+
+  // Enforce a stricter session lock policy on inactivity. Default off; enable
+  // via --dart-define=ENFORCE_STRICT_SESSION_LOCK=true for releases that need
+  // forced full re-authentication after inactivity.
+  static const bool enforceStrictSessionLock = bool.fromEnvironment(
+    'ENFORCE_STRICT_SESSION_LOCK',
+    defaultValue: false,
+  );
+
+  // When true, clear only the access token (preserve refresh token) on
+  // inactivity. Useful for soft-lock UX while still allowing silent refresh.
+  // Default false.
+  static const bool clearAccessTokenOnTimeout = bool.fromEnvironment(
+    'CLEAR_ACCESS_TOKEN_ON_TIMEOUT',
+    defaultValue: false,
+  );
 
   /// Comma-separated list of SHA-256 cert fingerprints.
   static List<String> get tlsCertPins {

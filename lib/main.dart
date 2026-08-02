@@ -39,6 +39,10 @@ import 'core/services/app_permission_service.dart';
 import 'core/utils/otp_autofill.dart';
 import 'globals.dart';
 
+// Crash reporting
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
+
 /// lib/main.dart
 /// Application entry point.
 /// Initializes ORBI Mobile and routes to Login screen.
@@ -70,23 +74,49 @@ Future<void> main() async {
       systemNavigationBarContrastEnforced: false,
     ),
   );
+  // Initialize Firebase & Crashlytics early so crashes are reported in prod.
+  try {
+    await Firebase.initializeApp();
+    // Enable collection only in non-debug builds.
+    await FirebaseCrashlytics.instance
+        .setCrashlyticsCollectionEnabled(!kDebugMode);
+  } catch (e, st) {
+    // If Firebase isn't available in this environment, continue and let
+    // FirebaseService.initialize try later. Do not throw here.
+    debugPrint('❌ [CRASHLYTICS] Firebase init failed: $e\n$st');
+  }
+
+  // Route Flutter framework errors to Crashlytics in production, otherwise
+  // fall back to console logging for dev.
   FlutterError.onError = (details) {
     FlutterError.presentError(details);
-    debugPrint('[FLUTTER_ERROR] ${details.exceptionAsString()}');
-    if (details.stack != null) {
-      debugPrint(details.stack.toString());
+    if (kDebugMode) {
+      debugPrint('[FLUTTER_ERROR] ${details.exceptionAsString()}');
+      if (details.stack != null) debugPrint(details.stack.toString());
+    } else {
+      FirebaseCrashlytics.instance.recordFlutterFatalError(details);
     }
   };
+
   ErrorWidget.builder = (details) {
-    debugPrint('[WIDGET_BUILD_ERROR] ${details.exceptionAsString()}');
-    if (details.stack != null) {
-      debugPrint(details.stack.toString());
+    if (kDebugMode) {
+      debugPrint('[WIDGET_BUILD_ERROR] ${details.exceptionAsString()}');
+      if (details.stack != null) debugPrint(details.stack.toString());
+    } else {
+      // Capture a non-fatal message so we can triage widget build issues in prod
+      FirebaseCrashlytics.instance
+          .log('WIDGET_BUILD_ERROR: ${details.exceptionAsString()}');
     }
     return const _SafeFlutterErrorView();
   };
+
   binding.platformDispatcher.onError = (error, stack) {
-    debugPrint('[UNHANDLED] $error');
-    debugPrint(stack.toString());
+    if (kDebugMode) {
+      debugPrint('[UNHANDLED] $error');
+      debugPrint(stack.toString());
+    } else {
+      FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+    }
     return true;
   };
   await _safeStartupStep(
@@ -146,8 +176,19 @@ Future<void> main() async {
     'origin=${AppConfig.passkeyOrigin} '
     'assetLinksSha256=${AppConfig.androidAssetLinksSha256Fingerprint}',
   );
-  runApp(const OrbiApp());
+
+  // Protect async unhandled errors in zones so Crashlytics catches them.
+  runZonedGuarded(() {
+    runApp(const OrbiApp());
+  }, (error, stack) {
+    if (kDebugMode) {
+      debugPrint('🧨 Unhandled async error: $error\n$stack');
+    } else {
+      FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+    }
+  });
 }
+
 
 class _SafeFlutterErrorView extends StatelessWidget {
   const _SafeFlutterErrorView();

@@ -102,7 +102,12 @@ class _AdvancedServicesScreenState extends State<AdvancedServicesScreen> {
       _statusMessage = mapBackendStatusMessage(
         message,
         sw: _isSw,
-        fallback: message,
+        fallback: isError
+            ? _t(
+                'This request could not be completed. Please try again.',
+                'Ombi hili halikuweza kukamilika. Tafadhali jaribu tena.',
+              )
+            : message,
       );
       _statusTone = isError ? OrbiStatusTone.error : OrbiStatusTone.success;
     });
@@ -481,7 +486,14 @@ class _AdvancedServicesScreenState extends State<AdvancedServicesScreen> {
         _merchantAccounts = const [];
         _documents = const [];
         _serviceAccessRequests = const [];
-        _error = error.toString();
+        _error = mapBackendStatusMessage(
+          error.toString(),
+          sw: _isSw,
+          fallback: _t(
+            'Services could not be loaded. Please refresh and try again.',
+            'Huduma hazikuweza kupakiwa. Tafadhali pakia upya kisha jaribu tena.',
+          ),
+        );
       });
     }
   }

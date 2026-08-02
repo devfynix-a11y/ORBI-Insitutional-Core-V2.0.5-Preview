@@ -98,7 +98,6 @@ class _PaymentScreenState extends State<PaymentScreen>
   ReceiptScanResult? _scanResult;
   ScanPayIntent? _receiptIntent;
   bool _scanLoading = false;
-  String? _scanError;
   String? _scannerError;
   String? _statusMessage;
   OrbiStatusTone _statusTone = OrbiStatusTone.info;
@@ -508,7 +507,6 @@ class _PaymentScreenState extends State<PaymentScreen>
       _selectedFile = File(picked.path);
       _scanResult = null;
       _receiptIntent = null;
-      _scanError = null;
     });
   }
 
@@ -517,7 +515,6 @@ class _PaymentScreenState extends State<PaymentScreen>
     if (file == null) return;
     setState(() {
       _scanLoading = true;
-      _scanError = null;
     });
     try {
       final result = await _receiptScanService.scan(file);
@@ -527,9 +524,6 @@ class _PaymentScreenState extends State<PaymentScreen>
         _receiptIntent = result == null
             ? null
             : _scanPayService.fromReceipt(result);
-        _scanError = result == null
-            ? 'Unable to read this receipt. Try a clearer photo.'
-            : null;
         _statusMessage = result == null
             ? _mapStatus('Unable to read this receipt. Try a clearer photo.')
             : _mapStatus('Receipt analyzed successfully.');
@@ -539,9 +533,15 @@ class _PaymentScreenState extends State<PaymentScreen>
       });
     } catch (e) {
       if (!mounted) return;
+      final friendly = mapBackendStatusMessage(
+        e.toString(),
+        sw: _isSwahili,
+        fallback: _isSwahili
+            ? 'Risiti haikuweza kusomwa kwa sasa. Tafadhali jaribu tena.'
+            : 'The receipt could not be read right now. Please try again.',
+      );
       setState(() {
-        _scanError = e.toString().replaceFirst('Exception: ', '').trim();
-        _statusMessage = _mapStatus(_scanError!);
+        _statusMessage = friendly;
         _statusTone = OrbiStatusTone.error;
       });
     } finally {

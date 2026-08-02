@@ -1,0 +1,155 @@
+name: Release build (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      enable_android:
+        description: 'Run Android release build'
+        required: false
+        type: boolean
+        default: true
+      enable_ios:
+        description: 'Run iOS release build'
+        required: false
+        type: boolean
+        default: false
+      android_keystore_base64:
+        description: 'Base64 encoded Android keystore'
+        required: false
+        type: string
+      android_keystore_password:
+        description: 'Android keystore store password'
+        required: false
+        type: string
+      android_key_alias:
+        description: 'Android keystore alias'
+        required: false
+        type: string
+      android_key_password:
+        description: 'Android key password'
+        required: false
+        type: string
+      firebase_token:
+        description: 'Firebase token for Crashlytics upload'
+        required: false
+        type: string
+      firebase_android_app_id:
+        description: 'Firebase Android App ID for Crashlytics upload'
+        required: false
+        type: string
+      firebase_ios_app_id:
+        description: 'Firebase iOS App ID for Crashlytics upload'
+        required: false
+        type: string
+
+jobs:
+  android-release:
+    if: ${{ github.event.inputs.enable_android == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ github.event.inputs.android_keystore_base64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ github.event.inputs.android_keystore_password }}
+      ANDROID_KEY_ALIAS: ${{ github.event.inputs.android_key_alias }}
+      ANDROID_KEY_PASSWORD: ${{ github.event.inputs.android_key_password }}
+      FIREBASE_TOKEN: ${{ github.event.inputs.firebase_token }}
+      FIREBASE_ANDROID_APP_ID: ${{ github.event.inputs.firebase_android_app_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 'stable'
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Prepare Android keystore (from local inputs)
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ] && [ -n "$ANDROID_KEY_PASSWORD" ]; then
+            mkdir -p android
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/release.keystore
+            echo "storeFile=release.keystore" > android/key.properties
+            echo "storePassword=$ANDROID_KEYSTORE_PASSWORD" >> android/key.properties
+            echo "keyAlias=$ANDROID_KEY_ALIAS" >> android/key.properties
+            echo "keyPassword=$ANDROID_KEY_PASSWORD" >> android/key.properties
+          else
+            echo "ANDROID keystore inputs not provided; skipping keystore setup"
+          fi
+
+      - name: Build Android release (obfuscated)
+        run: |
+          flutter build apk --release --obfuscate --split-debug-info=build/symbols
+
+      - name: Upload artifacts (APK + split-debug-info)
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release-artifacts
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/symbols
+
+      - name: Upload Android mapping to Crashlytics (optional)
+        run: |
+          if [ -n "$FIREBASE_TOKEN" ] && [ -n "$FIREBASE_ANDROID_APP_ID" ]; then
+            npm install -g firebase-tools
+            echo "Uploading Android mapping files to Crashlytics for app id: $FIREBASE_ANDROID_APP_ID"
+            # Placeholder: replace with exact firebase CLI command based on your Firebase CLI version
+            # Example (may require firebase-tools with crashlytics support):
+            # firebase crashlytics:upload --app $FIREBASE_ANDROID_APP_ID build/symbols --token "$FIREBASE_TOKEN"
+            echo "Please replace the placeholder upload command with the appropriate firebase CLI or Gradle uploader command in your environment."
+          else
+            echo "FIREBASE_TOKEN or FIREBASE_ANDROID_APP_ID not provided; skipping Crashlytics upload"
+          fi
+
+  ios-release:
+    if: ${{ github.event.inputs.enable_ios == 'true' }}
+    runs-on: macos-latest
+    env:
+      FIREBASE_TOKEN: ${{ github.event.inputs.firebase_token }}
+      FIREBASE_IOS_APP_ID: ${{ github.event.inputs.firebase_ios_app_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 'stable'
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build iOS release
+        run: |
+          flutter build ipa --export-method app-store --obfuscate --split-debug-info=build/symbols
+
+      - name: Upload artifacts (IPA + dSYMs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-release-artifacts
+          path: |
+            build/ios/ipa
+            build/symbols
+
+      - name: Upload iOS dSYMs to Crashlytics (optional)
+        run: |
+          if [ -n "$FIREBASE_TOKEN" ] && [ -n "$FIREBASE_IOS_APP_ID" ]; then
+            npm install -g firebase-tools
+            echo "Uploading iOS dSYM files to Crashlytics for app id: $FIREBASE_IOS_APP_ID"
+            # Placeholder: replace with exact firebase CLI command or use upload-symbols tool
+            # Example placeholder:
+            # firebase crashlytics:upload --app $FIREBASE_IOS_APP_ID build/symbols --token "$FIREBASE_TOKEN"
+            echo "Please replace the placeholder upload command with the appropriate firebase CLI or upload-symbols command in your environment."
+          else
+            echo "FIREBASE_TOKEN or FIREBASE_IOS_APP_ID not provided; skipping iOS Crashlytics upload"
+          fi
+
+# NOTE: To fully automate symbol uploads to Crashlytics you must provide
+# API keys / service accounts and follow Firebase docs. This workflow builds
+# obfuscated artifacts and preserves split-debug-info for symbol upload.

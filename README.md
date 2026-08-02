@@ -16,7 +16,15 @@ For help getting started with Flutter development, view the
 [online documentation](https://docs.flutter.dev/), which offers tutorials,
 samples, guidance on mobile development, and a full API reference.
 
- ------------SECULE BIOMETRIC AUTH FLOW
+---
+
+Enterprise additions in this branch:
+
+- Crash reporting: Firebase Crashlytics is integrated (non-debug builds). Make sure to add the native Firebase config files (GoogleService-Info.plist and google-services.json) to the iOS and Android projects respectively for crash reporting to work.
+- CI: A GitHub Actions workflow has been added at `.github/workflows/flutter-ci.yml` to run `flutter analyze` and `flutter test` on push and PRs to main/master.
+- Docs: See `docs/CI-CD.md` for recommended next steps (release signing, obfuscation, e2e testing).
+
+------------SECURE BIOMETRIC AUTH FLOW
 User taps Fingerprint
   ↓ (Biometric succeeds)
   ├─ Has session token? → Auto-login ✅

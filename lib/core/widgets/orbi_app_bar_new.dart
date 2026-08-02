@@ -311,31 +311,62 @@ class OrbiAppBar extends StatelessWidget implements PreferredSizeWidget {
                     Stack(
                       clipBehavior: Clip.none,
                       children: [
-                        Container(
-                          height: compact ? 42 : 44,
-                          width: compact ? 42 : 44,
-                          decoration: BoxDecoration(
-                            color: isDark
-                                ? ui.card.withValues(alpha: 0.82)
-                                : const Color(0xFFE6F3F7),
-                            shape: BoxShape.circle,
-                            border: isDark
-                                ? Border.all(
-                                    color: ui.border.withValues(alpha: 0.92),
-                                  )
-                                : null,
-                          ),
-                          child: IconButton(
-                            padding: EdgeInsets.zero,
-                            icon: Icon(
-                              Icons.notifications_none,
+                        Tooltip(
+
+                          message: l10n.notificationsTitle,
+
+                          child: Container(
+
+                            height: compact ? 42 : 44,
+
+                            width: compact ? 42 : 44,
+
+                            decoration: BoxDecoration(
+
                               color: isDark
-                                  ? ui.iconMuted
-                                  : const Color(0xFF07566B),
-                              size: compact ? 22 : 24,
+
+                                  ? ui.card.withValues(alpha: 0.82)
+
+                                  : const Color(0xFFE6F3F7),
+
+                              shape: BoxShape.circle,
+
+                              border: isDark
+
+                                  ? Border.all(
+
+                                      color: ui.border.withValues(alpha: 0.92),
+
+                                    )
+
+                                  : null,
+
                             ),
-                            onPressed: onNotificationPressed,
+
+                            child: IconButton(
+
+                              padding: EdgeInsets.zero,
+
+                              icon: Icon(
+
+                                Icons.notifications_none,
+
+                                color: isDark
+
+                                    ? ui.iconMuted
+
+                                    : const Color(0xFF07566B),
+
+                                size: compact ? 22 : 24,
+
+                              ),
+
+                              onPressed: onNotificationPressed,
+
+                            ),
+
                           ),
+
                         ),
                         if (notificationCount > 0)
                           Positioned(
@@ -368,81 +399,88 @@ class OrbiAppBar extends StatelessWidget implements PreferredSizeWidget {
                       ],
                     ),
                     SizedBox(width: compact ? 7 : 9),
-                    GestureDetector(
-                      onTap: onProfilePressed,
-                      child: Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          _AnimatedProfileRingAvatar(
-                            size: compact ? 48 : 52,
-                            initial: displayName.isNotEmpty
-                                ? displayName[0].toUpperCase()
-                                : 'U',
-                            avatarUrl: avatarUrl,
-                            verified: isVerified,
-                          ),
-                          if (isVerified)
-                            Positioned(
-                              right: -2,
-                              bottom: -1,
-                              child: Container(
-                                width: isDark ? null : 16,
-                                height: isDark ? null : 16,
-                                padding: isDark
-                                    ? const EdgeInsets.symmetric(
-                                        horizontal: 4,
-                                        vertical: 2,
-                                      )
-                                    : EdgeInsets.zero,
-                                decoration: BoxDecoration(
-                                  color: isDark
-                                      ? const Color(0xFF57B26F)
-                                      : const Color(0xFF0B6174),
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(
-                                    color: isDark
-                                        ? ui.card
-                                        : const Color(0xFFF3F9FB),
-                                    width: isDark ? 0.8 : 2,
-                                  ),
-                                  boxShadow: isDark
-                                      ? const [
-                                          BoxShadow(
-                                            color: Color(0x55000000),
-                                            blurRadius: 8,
-                                            offset: Offset(0, 2),
-                                          ),
-                                        ]
-                                      : null,
-                                ),
-                                child: isDark
-                                    ? const Row(
-                                        children: [
-                                          Icon(
-                                            Icons.verified,
-                                            size: 9,
+                    Tooltip(
+                      message: l10n.settingsTitle,
+                      child: Semantics(
+                        button: true,
+                        label: l10n.settingsTitle,
+                        child: GestureDetector(
+                          onTap: onProfilePressed,
+                          child: Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              _AnimatedProfileRingAvatar(
+                                size: compact ? 48 : 52,
+                                initial: displayName.isNotEmpty
+                                    ? displayName[0].toUpperCase()
+                                    : 'U',
+                                avatarUrl: avatarUrl,
+                                verified: isVerified,
+                              ),
+                              if (isVerified)
+                                Positioned(
+                                  right: -2,
+                                  bottom: -1,
+                                  child: Container(
+                                    width: isDark ? null : 16,
+                                    height: isDark ? null : 16,
+                                    padding: isDark
+                                        ? const EdgeInsets.symmetric(
+                                            horizontal: 4,
+                                            vertical: 2,
+                                          )
+                                        : EdgeInsets.zero,
+                                    decoration: BoxDecoration(
+                                      color: isDark
+                                          ? const Color(0xFF57B26F)
+                                          : const Color(0xFF0B6174),
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: isDark
+                                            ? ui.card
+                                            : const Color(0xFFF3F9FB),
+                                        width: isDark ? 0.8 : 2,
+                                      ),
+                                      boxShadow: isDark
+                                          ? const [
+                                              BoxShadow(
+                                                color: Color(0x55000000),
+                                                blurRadius: 8,
+                                                offset: Offset(0, 2),
+                                              ),
+                                            ]
+                                          : null,
+                                    ),
+                                    child: isDark
+                                        ? const Row(
+                                            children: [
+                                              Icon(
+                                                Icons.verified,
+                                                size: 9,
+                                                color: Colors.white,
+                                              ),
+                                              SizedBox(width: 2),
+                                              Text(
+                                                'KYC',
+                                                style: TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 8,
+                                                  fontWeight: FontWeight.w700,
+                                                  letterSpacing: 0.2,
+                                                ),
+                                              ),
+                                            ],
+                                          )
+                                        : const Icon(
+                                            Icons.check_rounded,
+                                            size: 10,
                                             color: Colors.white,
                                           ),
-                                          SizedBox(width: 2),
-                                          Text(
-                                            'KYC',
-                                            style: TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 8,
-                                              fontWeight: FontWeight.w700,
-                                              letterSpacing: 0.2,
-                                            ),
-                                          ),
-                                        ],
-                                      )
-                                    : const Icon(
-                                        Icons.check_rounded,
-                                        size: 10,
-                                        color: Colors.white,
-                                      ),
-                              ),
-                            ),
-                        ],
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
                   ],

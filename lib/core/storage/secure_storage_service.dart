@@ -66,7 +66,6 @@ class SecureStorageService {
       debugPrint('✅ User profile saved successfully');
     } catch (e) {
       debugPrint('❌ Error saving user profile: $e');
-      debugPrint('📋 Attempted to save profile: $profile');
       rethrow;
     }
   }

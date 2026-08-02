@@ -281,7 +281,11 @@ class _GoalsScreenState extends State<GoalsScreen> {
       _statusMessage = mapBackendStatusMessage(
         message,
         sw: _isSwahili,
-        fallback: message,
+        fallback: isError
+            ? (_isSwahili
+                  ? 'Ombi hili halikuweza kukamilika. Tafadhali jaribu tena.'
+                  : 'This request could not be completed. Please try again.')
+            : message,
       );
       _statusIsError = isError;
     });

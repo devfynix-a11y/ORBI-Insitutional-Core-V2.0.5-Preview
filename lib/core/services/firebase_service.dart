@@ -4,6 +4,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 
 import '../config/app_config.dart';
 import '../network/api_client.dart';
@@ -49,6 +50,14 @@ class FirebaseService {
     try {
       // Initialize Firebase (loads iOS config from ios/Runner/GoogleService-Info.plist).
       await Firebase.initializeApp();
+
+      // Configure Crashlytics collection mode (keep in sync with main).
+      try {
+        await FirebaseCrashlytics.instance
+            .setCrashlyticsCollectionEnabled(!kDebugMode);
+      } catch (e) {
+        debugPrint('⚠️ [CRASHLYTICS] Failed to set collection mode: $e');
+      }
 
       // Important: only access FirebaseMessaging after Firebase.initializeApp().
       _firebaseMessaging ??= FirebaseMessaging.instance;
@@ -208,7 +217,7 @@ class FirebaseService {
       iOS: iosSettings,
     );
 
-    await _localNotifications.initialize(settings);
+    await _localNotifications.initialize(settings: settings);
 
     final androidPlugin = _localNotifications
         .resolvePlatformSpecificImplementation<
@@ -252,10 +261,10 @@ class FirebaseService {
 
     try {
       await _localNotifications.show(
-        message.messageId?.hashCode ?? DateTime.now().millisecondsSinceEpoch,
-        title ?? 'ORBI',
-        body ?? '',
-        NotificationDetails(
+        id: message.messageId?.hashCode ?? DateTime.now().millisecondsSinceEpoch,
+        title: title ?? 'ORBI',
+        body: body ?? '',
+        notificationDetails: NotificationDetails(
           android: AndroidNotificationDetails(
             _foregroundChannel.id,
             _foregroundChannel.name,
@@ -306,10 +315,10 @@ class FirebaseService {
 
     try {
       await _localNotifications.show(
-        id.hashCode,
-        title.trim().isEmpty ? 'ORBI' : title.trim(),
-        body.trim(),
-        NotificationDetails(
+        id: id.hashCode,
+        title: title.trim().isEmpty ? 'ORBI' : title.trim(),
+        body: body.trim(),
+        notificationDetails: NotificationDetails(
           android: AndroidNotificationDetails(
             _foregroundChannel.id,
             _foregroundChannel.name,
@@ -375,9 +384,20 @@ class FirebaseService {
 // Background message handler
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp();
-  debugPrint('🔥 [FCM] Background message: ${message.messageId}');
-  await _showBackgroundLocalNotification(message);
+  try {
+    await Firebase.initializeApp();
+    debugPrint('🔥 [FCM] Background message: ${message.messageId}');
+    await _showBackgroundLocalNotification(message);
+  } catch (e, st) {
+    debugPrint('❌ [FCM] Background handler failed: $e');
+    if (!kDebugMode) {
+      try {
+        await FirebaseCrashlytics.instance.recordError(e, st, reason: 'FCM background handler');
+      } catch (_) {
+        // Swallow to avoid crashing background isolate
+      }
+    }
+  }
 }
 
 // Foreground message handler
@@ -431,17 +451,17 @@ Future<void> _showBackgroundLocalNotification(RemoteMessage message) async {
     FirebaseService._androidNotificationIcon,
   );
   const settings = InitializationSettings(android: androidSettings);
-  await localNotifications.initialize(settings);
+  await localNotifications.initialize(settings: settings);
   final androidPlugin = localNotifications
       .resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin
       >();
   await androidPlugin?.createNotificationChannel(channel);
   await localNotifications.show(
-    message.messageId?.hashCode ?? DateTime.now().millisecondsSinceEpoch,
-    title ?? 'ORBI',
-    body ?? '',
-    const NotificationDetails(
+    id: message.messageId?.hashCode ?? DateTime.now().millisecondsSinceEpoch,
+    title: title ?? 'ORBI',
+    body: body ?? '',
+    notificationDetails: NotificationDetails(
       android: AndroidNotificationDetails(
         FirebaseService._androidAlertChannelId,
         'ORBI Alerts',
@@ -453,6 +473,12 @@ Future<void> _showBackgroundLocalNotification(RemoteMessage message) async {
         ticker: 'ORBI alert',
         visibility: NotificationVisibility.public,
         icon: FirebaseService._androidNotificationIcon,
+      ),
+      iOS: const DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+        interruptionLevel: InterruptionLevel.timeSensitive,
       ),
     ),
     payload: message.data.isEmpty ? null : message.data.toString(),

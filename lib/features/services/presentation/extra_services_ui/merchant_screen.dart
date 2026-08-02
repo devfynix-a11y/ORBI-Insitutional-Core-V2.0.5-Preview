@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/theme/orbi_theme.dart';
 import '../../../../core/utils/amount_input_formatter.dart';
+import '../../../../core/utils/backend_status_message.dart';
 import '../../../../core/utils/money_format.dart';
 import '../../../../core/widgets/orbi_amount_field.dart';
 import '../../../../core/widgets/orbi_background.dart';
@@ -39,6 +40,17 @@ class _MerchantScreenState extends State<MerchantScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _load());
   }
 
+  bool get _isSw =>
+      Localizations.localeOf(context).languageCode.toLowerCase() == 'sw';
+
+  String _friendlyError(Object error) => mapBackendStatusMessage(
+    error.toString(),
+    sw: _isSw,
+    fallback: _isSw
+        ? 'Huduma ya mfanyabiashara haikuweza kupakiwa. Tafadhali jaribu tena.'
+        : 'Merchant service could not be loaded. Please try again.',
+  );
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -69,7 +81,7 @@ class _MerchantScreenState extends State<MerchantScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = e.toString();
+        _error = _friendlyError(e);
         _loading = false;
       });
     }
