@@ -63,6 +63,10 @@ required variables, and avoids printing secrets. This prevents the common
 mistake where `.env` exists but DB tests still skip because the Node test
 process did not load it.
 
+For local runtime parity, the runner also loads `.env` first when it exists,
+then applies `.env.test.local` on top. This keeps KMS, Valkey, and non-secret
+runtime settings available while allowing test DB values to stay isolated.
+
 Write-enabled tests must remain isolated:
 
 ```powershell

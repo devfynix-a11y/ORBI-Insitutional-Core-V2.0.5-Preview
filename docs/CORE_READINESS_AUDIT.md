@@ -57,6 +57,9 @@ node scripts/core-certification.mjs --db-env .env.test.local --include-db-write
 The certification runner writes evidence under `artifacts/certification/`
 without storing secrets.
 
+Local DB certification loads `.env` first for runtime dependencies such as KMS
+and Valkey, then overlays `.env.test.local` for disposable fixture targeting.
+
 ## Readiness Matrix
 
 | Area | Status | Notes |

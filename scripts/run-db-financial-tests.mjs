@@ -59,12 +59,29 @@ if (!existsSync(envPath)) {
   process.exit(1);
 }
 
+const baseEnvPath = resolve(process.cwd(), '.env');
+const baseEnv = existsSync(baseEnvPath) ? parse(readFileSync(baseEnvPath)) : {};
 const loadedEnv = parse(readFileSync(envPath));
 const childEnv = {
   ...process.env,
+  ...baseEnv,
   ...loadedEnv,
   ORBI_RUN_DB_INTEGRATION: 'true',
 };
+
+const provider = String(
+  childEnv.ORBI_DB_INTEGRATION_PROVIDER || childEnv.ORBI_DATA_PROVIDER || 'supabase',
+).trim().toLowerCase();
+
+if (provider === 'local' && childEnv.ORBI_DB_INTEGRATION_DATABASE_URL) {
+  childEnv.DATABASE_URL = childEnv.ORBI_DB_INTEGRATION_DATABASE_URL;
+}
+
+for (const key of ['VALKEY_URL', 'REDIS_URL']) {
+  if (provider === 'local' && typeof childEnv[key] === 'string') {
+    childEnv[key] = childEnv[key].replace('@valkey:', '@127.0.0.1:');
+  }
+}
 
 if (mode === 'write') {
   childEnv.ORBI_DB_INTEGRATION_ALLOW_WRITES = 'true';
@@ -77,6 +94,7 @@ const testFile = mode === 'write'
 
 console.info(`[db-financial-runner] Starting ${mode} financial DB tests.`);
 console.info(`[db-financial-runner] Env file: ${envPath}`);
+console.info(`[db-financial-runner] Base runtime env loaded: ${existsSync(baseEnvPath) ? 'yes' : 'no'}`);
 console.info('[db-financial-runner] Secrets are masked and not printed.');
 
 const commands = [

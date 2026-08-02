@@ -9,6 +9,39 @@ DROP FUNCTION IF EXISTS public.bill_reserve_adjust_v1(UUID, UUID, UUID, NUMERIC,
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
+-- Supabase-compatible auth namespace for self-hosted/fresh Postgres installs.
+-- Existing managed auth schemas are left untouched.
+CREATE SCHEMA IF NOT EXISTS auth;
+CREATE TABLE IF NOT EXISTS auth.users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email TEXT UNIQUE,
+    phone TEXT UNIQUE,
+    raw_user_meta_data JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE OR REPLACE FUNCTION auth.uid()
+RETURNS UUID
+LANGUAGE SQL
+STABLE
+AS $$
+  SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid
+$$;
+CREATE OR REPLACE FUNCTION auth.role()
+RETURNS TEXT
+LANGUAGE SQL
+STABLE
+AS $$
+  SELECT COALESCE(NULLIF(current_setting('request.jwt.claim.role', true), ''), 'service_role')
+$$;
+CREATE OR REPLACE FUNCTION auth.jwt()
+RETURNS JSONB
+LANGUAGE SQL
+STABLE
+AS $$
+  SELECT COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb, '{}'::jsonb)
+$$;
+
 -- 2. TABLES DEFINITION (IDEMPOTENT)
                                                                                                                                                                                                                                                                                                                                        
 CREATE TABLE IF NOT EXISTS public.secrets (
@@ -965,6 +998,25 @@ CREATE TABLE IF NOT EXISTS public.allocation_rules (
     percentage NUMERIC,
     priority INTEGER DEFAULT 1,
     is_active BOOLEAN DEFAULT TRUE,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Organizations are referenced by shared wealth services below, so the
+-- canonical table must exist before those foreign keys are declared.
+CREATE TABLE IF NOT EXISTS public.organizations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    creator_user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    primary_admin_user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    owner_type TEXT NOT NULL DEFAULT 'ORGANIZATION' CHECK (owner_type IN ('ORGANIZATION', 'GROUP', 'COMPANY')),
+    owner_label TEXT,
+    registration_number TEXT,
+    tax_id TEXT,
+    country TEXT,
+    base_currency TEXT DEFAULT 'USD',
+    status TEXT DEFAULT 'ACTIVE',
     metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
