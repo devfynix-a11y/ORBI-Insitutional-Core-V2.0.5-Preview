@@ -509,11 +509,9 @@ Every schema-affecting change must keep these aligned:
 
 - `database/main.sql`
 - `database/reset_schema.sql`
-- `database/migrations/*`
 
 Rules:
 
-- migrations describe the forward change;
 - `main.sql` is the full current schema source;
 - `reset_schema.sql` must rebuild the same effective schema;
 - do not patch live DB only and forget source SQL;
@@ -566,4 +564,3 @@ Use these rules when uncertain:
 - If it is a timestamp, store UTC and display resolved local time.
 - If it is registry, treat it as identity context, not a shortcut permission.
 - If it is unclear, fail closed and write audit evidence.
-

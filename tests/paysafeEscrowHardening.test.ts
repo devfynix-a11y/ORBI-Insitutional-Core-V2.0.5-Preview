@@ -4,7 +4,7 @@ import test from 'node:test';
 
 const service = readFileSync(new URL('../ledger/escrowService.ts', import.meta.url), 'utf8');
 const migration = readFileSync(
-    new URL('../database/migrations/20260618_paysafe_escrow_hardening.sql', import.meta.url),
+    new URL('../database/main.sql', import.meta.url),
     'utf8',
 );
 const operations = readFileSync(new URL('../src/routes/public/operations.ts', import.meta.url), 'utf8');

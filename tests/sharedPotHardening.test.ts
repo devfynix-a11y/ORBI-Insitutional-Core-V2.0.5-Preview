@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const migration = readFileSync(
-  new URL('../database/migrations/20260618_shared_pot_hardening.sql', import.meta.url),
+  new URL('../database/main.sql', import.meta.url),
   'utf8',
 );
 const finance = readFileSync(

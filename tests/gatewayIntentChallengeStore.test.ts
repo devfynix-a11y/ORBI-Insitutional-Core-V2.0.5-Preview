@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const migration = readFileSync(
-  new URL('../database/migrations/20260618_gateway_intent_challenge_store.sql', import.meta.url),
+  new URL('../database/main.sql', import.meta.url),
   'utf8',
 );
 const service = readFileSync(

@@ -63,7 +63,7 @@ tests are complete.
 - Notification delivery must use an outbox and must not determine whether a
   committed financial or invitation operation is reported as failed.
 - Production idempotency must remain durable when Redis is unavailable.
-- Database schema parity between `main.sql`, `reset_schema.sql`, and migrations
+- Database schema parity between `main.sql`, `reset_schema.sql`, and runtime RPC callers
   must be verified automatically.
 - Financial mutation, concurrency, authorization, restart recovery, and replay
   tests are required before production activation.
@@ -87,7 +87,7 @@ tests are complete.
 ## Delivery Gates Per Service
 
 - Threat model and state machine documented.
-- Main schema, reset schema, and migration are equivalent.
+- Main schema and reset schema are equivalent.
 - Service-role-only RPC permissions are explicit.
 - Unit tests cover validation and authorization.
 - Database tests cover concurrency, replay, insufficient funds, locked wallets,
@@ -112,10 +112,9 @@ tests are complete.
 
 ## Next Tasks Discovered During Remediation
 
-- **P1 - Schema parity automation:** PaySafe capability migrations are not yet
-  automatically compared in CI against `database/main.sql` and
-  `database/reset_schema.sql`. The current hardening SQL is synchronized, but
-  add a CI parity check to prevent future drift.
+- **P1 - Schema parity automation:** PaySafe capability SQL is consolidated in
+  `database/main.sql`. Keep CI parity checks focused on `database/main.sql`,
+  `database/reset_schema.sql`, and runtime RPC usage to prevent future drift.
 - **P1 - Merchant settlement reversal:** The merchant PaySafe settlement record
   supports a reversed state, but an atomic reversal/chargeback RPC with balanced
   ledger legs and dual-control authorization is still required.

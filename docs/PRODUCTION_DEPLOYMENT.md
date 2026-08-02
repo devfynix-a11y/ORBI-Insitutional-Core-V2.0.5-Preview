@@ -151,9 +151,9 @@ ORBI_ALLOW_STUB_PROVIDER_RECONCILIATION=false
 ## Database Migration Order
 1. Apply core schema: `database/reset_schema.sql`
 2. Apply main schema updates: `database/main.sql`
-3. Apply capability migrations in timestamp order. PaySafe escrow hardening requires
-   `database/migrations/20260618_paysafe_escrow_hardening.sql` before deploying
-   the matching backend build.
+3. Apply consolidated schema updates from `database/main.sql` before deploying
+   the matching backend build. SQL migrations are no longer maintained as a
+   separate source of truth.
 4. Validate critical RPCs exist:
    - `post_transaction_v2`
    - `append_ledger_entries_v1`

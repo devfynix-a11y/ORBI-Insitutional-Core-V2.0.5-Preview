@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const migration = readFileSync(
-  new URL('../database/migrations/20260618_merchant_paysafe_settlement.sql', import.meta.url),
+  new URL('../database/main.sql', import.meta.url),
   'utf8',
 );
 const escrowService = readFileSync(new URL('../ledger/escrowService.ts', import.meta.url), 'utf8');
