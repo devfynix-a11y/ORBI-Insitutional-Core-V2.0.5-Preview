@@ -5909,6 +5909,61 @@ CREATE INDEX IF NOT EXISTS idx_shared_pots_owner_status_updated_mobile ON public
 CREATE INDEX IF NOT EXISTS idx_shared_pot_members_user_status_created_mobile ON public.shared_pot_members(user_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_shared_budgets_owner_status_updated_mobile ON public.shared_budgets(owner_user_id, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_shared_budget_members_user_status_updated_mobile ON public.shared_budget_members(user_id, status, updated_at DESC);
+-- Enterprise critical read indexes.
+-- These cover high-traffic identity, session, realtime, messaging, risk,
+-- provider, settlement, merchant, BaaS, and operator-control reads.
+CREATE INDEX IF NOT EXISTS idx_users_customer_status_mobile ON public.users(customer_id, account_status);
+CREATE INDEX IF NOT EXISTS idx_users_email_status_mobile ON public.users(email, account_status) WHERE email IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_registry_status_active_mobile ON public.users(registry_type, account_status, last_active DESC);
+CREATE INDEX IF NOT EXISTS idx_users_phone_status_mobile ON public.users(phone, account_status) WHERE phone IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_kyc_status_level_mobile ON public.users(kyc_status, kyc_level, last_active DESC);
+CREATE INDEX IF NOT EXISTS idx_staff_role_status_active_mobile ON public.staff(role, account_status, last_active DESC);
+CREATE INDEX IF NOT EXISTS idx_tenants_status_updated_mobile ON public.tenants(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_api_keys_public_status_mobile ON public.api_keys(public_key, status);
+CREATE INDEX IF NOT EXISTS idx_payment_orders_status_updated_mobile ON public.payment_orders(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_payment_orders_authorization_mobile ON public.payment_orders(authorization_id) WHERE authorization_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_provider_webhook_events_status_created_mobile ON public.provider_webhook_events(application_status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_provider_webhook_events_replay_mobile ON public.provider_webhook_events(replay_key, application_status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_provider_webhook_events_status_reference_mobile ON public.provider_webhook_events(normalized_status, reference, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_settlement_lifecycle_user_phase_mobile ON public.settlement_lifecycle(user_id, current_phase, phase_started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_settlement_lifecycle_phase_retry_mobile ON public.settlement_lifecycle(current_phase, retry_count, phase_started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_settlement_lifecycle_auto_settle_mobile ON public.settlement_lifecycle(current_phase, auto_settle_at DESC)
+    WHERE auto_settle_executed_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_settlement_lifecycle_provider_status_mobile ON public.settlement_lifecycle(provider_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_aml_alerts_user_status_created_mobile ON public.aml_alerts(user_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_aml_alerts_status_score_created_mobile ON public.aml_alerts(status, risk_score DESC, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_user_messages_user_category_created_mobile ON public.user_messages(user_id, category, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_user_messages_unread_created_mobile ON public.user_messages(user_id, created_at DESC) WHERE is_read = FALSE;
+CREATE INDEX IF NOT EXISTS idx_staff_messages_recipient_created_mobile ON public.staff_messages(recipient_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_staff_messages_sender_created_mobile ON public.staff_messages(sender_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_operator_alerts_severity_status_mobile ON public.operator_alerts(severity, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_operator_alerts_resource_mobile ON public.operator_alerts(resource_type, resource_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_api_gateway_security_events_trace_mobile ON public.api_gateway_security_events(trace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_api_gateway_security_events_ip_created_mobile ON public.api_gateway_security_events(ip_hash, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_api_gateway_quarantines_scope_status_mobile ON public.api_gateway_quarantines(route_group, scope_key, status, expires_at DESC);
+CREATE INDEX IF NOT EXISTS idx_provider_anomalies_user_status_created_mobile ON public.provider_anomalies(user_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_financial_partners_name_status_mobile ON public.financial_partners(LOWER(name), status, type);
+CREATE INDEX IF NOT EXISTS idx_institutional_payment_accounts_provider_role_mobile ON public.institutional_payment_accounts(provider_id, role, status);
+CREATE INDEX IF NOT EXISTS idx_inbound_sms_phone_status_created_mobile ON public.inbound_sms_messages(phone_number, parse_status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_outbound_sms_phone_status_created_mobile ON public.outbound_sms_messages(phone_number, send_status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_offline_transaction_sessions_user_status_mobile ON public.offline_transaction_sessions(user_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_merchants_owner_status_mobile ON public.merchants(owner_user_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_merchant_wallets_status_balance_mobile ON public.merchant_wallets(merchant_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_merchant_transactions_merchant_status_mobile ON public.merchant_transactions(merchant_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_merchant_transactions_customer_status_mobile ON public.merchant_transactions(customer_user_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agents_user_status_mobile ON public.agents(user_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_wallets_status_balance_mobile ON public.agent_wallets(agent_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_transactions_agent_status_mobile ON public.agent_transactions(agent_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_service_actor_links_customer_status_mobile ON public.service_actor_customer_links(customer_user_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_service_actor_links_actor_status_mobile ON public.service_actor_customer_links(actor_user_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_service_commissions_customer_status_mobile ON public.service_commissions(customer_user_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_service_access_requests_user_status_mobile ON public.service_access_requests(user_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_service_access_requests_role_status_mobile ON public.service_access_requests(requested_role, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_kyc_requests_status_submitted_mobile ON public.kyc_requests(status, submitted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user_expiry_mobile ON public.user_sessions(user_id, is_revoked, expires_at DESC);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_token_hash_mobile ON public.user_sessions(refresh_token_hash);
+CREATE INDEX IF NOT EXISTS idx_user_devices_status_active_mobile ON public.user_devices(user_id, status, last_active_at DESC);
+CREATE INDEX IF NOT EXISTS idx_user_documents_user_status_mobile ON public.user_documents(user_id, status, uploaded_at DESC);
 CREATE INDEX IF NOT EXISTS idx_treasury_org ON public.treasury_policies(organization_id);
 
 -- 7. SYSTEM PROVISIONING (IDEMPOTENT)
@@ -9536,6 +9591,28 @@ CREATE UNIQUE INDEX IF NOT EXISTS pay_gateway_portal_users_username_unique_idx
 
 COMMENT ON COLUMN public.pay_gateway_portal_users.username IS
   'Unique developer portal username used as a stable public-facing handle. Email remains private login identity.';
+
+-- Enterprise late-table read indexes.
+-- These tables are introduced after the main index section, so keep their
+-- critical read indexes here after all late sync tables exist.
+CREATE INDEX IF NOT EXISTS idx_passkeys_user_created_mobile ON public.passkeys(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_risk_logs_user_created_mobile ON public.ai_risk_logs(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_financial_events_stream_mobile ON public.financial_events(aggregate_id, event_type, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ent_idempotency_keys_client_status_mobile ON public.ent_idempotency_keys(client_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_outbox_events_type_status_mobile ON public.outbox_events(event_type, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_fraud_checks_user_score_mobile ON public.fraud_checks(user_id, risk_score DESC, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_card_transactions_user_status_created_mobile ON public.card_transactions(user_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_card_tokens_user_status_mobile ON public.card_tokens(user_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_merchant_paysafe_settlements_owner_status_mobile ON public.merchant_paysafe_settlements(owner_user_id, status, settled_at DESC);
+CREATE INDEX IF NOT EXISTS idx_gateway_payment_intents_merchant_status_mobile ON public.gateway_payment_intents(merchant_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_gateway_payment_intents_reference_mobile ON public.gateway_payment_intents(reference);
+CREATE INDEX IF NOT EXISTS idx_gateway_payment_challenges_intent_status_mobile ON public.gateway_payment_challenges(intent_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_gateway_payment_event_outbox_intent_status_mobile ON public.gateway_payment_event_outbox(intent_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_payment_profiles_service_user_status_mobile ON public.payment_profiles(service_code, user_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pay_gateway_dev_services_status_mobile ON public.pay_gateway_developer_services(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pay_gateway_dev_api_keys_status_mobile ON public.pay_gateway_developer_api_keys(service_code, status, issued_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pay_gateway_dev_webhook_secrets_status_mobile ON public.pay_gateway_developer_webhook_secrets(service_code, status, issued_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pay_gateway_portal_users_role_enabled_mobile ON public.pay_gateway_portal_users(role, enabled, updated_at DESC);
 
 NOTIFY pgrst, 'reload schema';
 -- END SYNCED MIGRATION: 20260731_pay_gateway_portal_usernames.sql
