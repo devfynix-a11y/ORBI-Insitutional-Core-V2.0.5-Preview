@@ -10,6 +10,7 @@ This index defines the canonical ORBI Institutional Core documentation set. Olde
 | Area | Canonical Document | Purpose |
 | :--- | :--- | :--- |
 | Engineering architecture | [ORBI Core Engineering Architecture](./ORBI_CORE_ENGINEERING_ARCHITECTURE.md) | Highest-level engineering contract for Core, ledger, registry, PaySafe, gateway, shared finance, realtime, idempotency, RLS, reporting, and safe-change rules. |
+| Core readiness audit | [ORBI Core Readiness Audit](./CORE_READINESS_AUDIT.md) | Current evidence-based readiness status, protected services, remaining certification gates, and next execution order before calling Core 100%. |
 | Open Banking and BaaS roadmap | [ORBI Open Digital Banking And BaaS Roadmap](./ORBI_OPEN_BANKING_BAAS_ROADMAP.md) | Phased TODO checklist for turning ORBI into a mature Open Digital Banking, BaaS, developer, merchant, sandbox, webhook, compliance, and control-room platform. |
 | Infrastructure platform blueprint | [ORBI Infrastructure Platform Blueprint](./ORBI_INFRASTRUCTURE_PLATFORM_BLUEPRINT.md) | ORBI as financial infrastructure for merchants and third parties: hosted secure UI, payment profiles, consent scopes, PaySafe lifecycle, webhooks, and authority boundaries. |
 | Business and operating model | [ORBI Business Operational Playbook](./ORBI_BUSINESS_OPERATIONAL_PLAYBOOK.md) | Business model, B2C/B2B/B2B2C operations, merchant/agent/customer flows, operational controls, revenue model, and control-room playbook. |

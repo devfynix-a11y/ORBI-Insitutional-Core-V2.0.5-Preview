@@ -49,11 +49,12 @@ test('PaySafe reads and disputes require escrow-party authorization', () => {
     assert.match(service, /agreement\.sender_id,\s*agreement\.receiver_id/);
 });
 
-test('PaySafe creation requires active consumer accounts and strict vault roles', () => {
+test('PaySafe creation requires active accounts, merchant linkage, and strict vault roles', () => {
     assert.match(service, /PAYSAFE_SENDER_ACCOUNT_NOT_ACTIVE/);
     assert.match(service, /PAYSAFE_RECIPIENT_ACCOUNT_NOT_ACTIVE/);
-    assert.match(service, /PAYSAFE_SENDER_REGISTRY_INVALID/);
-    assert.match(service, /PAYSAFE_RECIPIENT_REGISTRY_INVALID/);
+    assert.match(service, /PAYSAFE_MERCHANT_NOT_FOUND/);
+    assert.match(service, /PAYSAFE_MERCHANT_NOT_ACTIVE/);
+    assert.match(service, /PAYSAFE_MERCHANT_RECIPIENT_MISMATCH/);
     assert.match(service, /\.in\('vault_role', \['OPERATING', 'INTERNAL_TRANSFER'\]\)/);
 });
 
