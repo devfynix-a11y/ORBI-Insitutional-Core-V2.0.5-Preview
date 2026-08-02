@@ -40,10 +40,37 @@ Implemented now:
 Optional DB-backed runners:
 - `npm run test:db:financial`
 - `npm run test:db:financial:write`
+- `npm run test:db:financial:env`
+- `npm run test:db:financial:write:env`
 
 Helper assets:
 - `.env.test.example`
 - `tests/helpers/validateDbIntegrationEnv.ts`
+- `scripts/run-db-financial-tests.mjs`
+
+## Recommended Local Runner
+
+For certification work, prefer a dedicated env file that is not committed:
+
+```powershell
+Copy-Item .env.test.example .env.test.local
+notepad .env.test.local
+npm run test:db:financial:env
+```
+
+The env runner loads `.env.test.local` into the test child process, validates
+required variables, and avoids printing secrets. This prevents the common
+mistake where `.env` exists but DB tests still skip because the Node test
+process did not load it.
+
+Write-enabled tests must remain isolated:
+
+```powershell
+npm run test:db:financial:write:env
+```
+
+Only run write mode against disposable fixtures. Never point write mode at a
+production-connected database or shared customer data.
 
 ## Read-Only DB Integration Mode
 Enable with:

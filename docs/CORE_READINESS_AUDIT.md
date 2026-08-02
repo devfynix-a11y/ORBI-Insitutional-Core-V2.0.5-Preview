@@ -36,6 +36,16 @@ Observed result:
   They did not fail the suite, but production readiness requires those envs to
   be configured and verified.
 
+DB-backed certification should use a dedicated uncommitted env file:
+
+```powershell
+Copy-Item .env.test.example .env.test.local
+npm run test:db:financial:env
+npm run test:db:financial:write:env
+```
+
+Write mode is valid only for isolated disposable fixtures.
+
 ## Readiness Matrix
 
 | Area | Status | Notes |
