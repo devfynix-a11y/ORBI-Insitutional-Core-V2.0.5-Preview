@@ -34,6 +34,7 @@ This index defines the canonical ORBI Institutional Core documentation set. Olde
 | Financial core | [Core Banking Architecture](./CORE_BANKING_ARCHITECTURE.md) | Core ledger, tenants, security, escrow, treasury, messaging, and FX model. |
 | Banking engine | [Banking Engine V2](./BANKING_ENGINE_V2.md) | Atomic ledger and TrustBridge architecture details. |
 | Transaction movement classification | [Transaction Movement Classification](./TRANSACTION_MOVEMENT_CLASSIFICATION.md) | Canonical movement families/codes for history, reports, receipts, and audit read models without mutating ledger truth. |
+| Mobile GraphQL read model | [Mobile GraphQL Read Model](./MOBILE_GRAPHQL_READ_MODEL.md) | Read-only GraphQL snapshot contract and indexes for fast mobile boot, dashboard, history, wealth, and PaySafe reads. |
 | Reconciliation | [Reconciliation Engine](./RECONCILIATION_ENGINE.md) | Financial integrity, reports, admin controls, and reconciliation layers. |
 | Disaster recovery | [Disaster Recovery Runbook](./DISASTER_RECOVERY_RUNBOOK.md) | Incident response, severe failure scenarios, recovery objectives, and evidence. |
 | Identity and secret backup | [ORBI Identity And Secret Storage Backup](./IDENTITY_AND_SECRET_STORAGE_BACKUP.md) | Official storage and encrypted backup rules for auth password hashes, developer key fingerprints, webhook secret fingerprints, and restore evidence. |

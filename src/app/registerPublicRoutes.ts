@@ -8,6 +8,7 @@ import { registerBusinessRoutes } from '../routes/public/business.js';
 import { registerCommerceRoutes } from '../routes/public/commerce.js';
 import { registerCoreFinanceRoutes } from '../routes/public/coreFinance.js';
 import { registerEngagementRoutes } from '../routes/public/engagement.js';
+import { registerMobileGraphqlRoutes } from '../routes/public/mobileGraphql.js';
 import { registerStrategyRoutes } from '../routes/public/strategy.js';
 import { registerOperationsRoutes } from '../routes/public/operations.js';
 import { registerWealthRoutes } from '../routes/public/wealth.js';
@@ -229,6 +230,13 @@ export const registerAppPublicRoutes = (deps: Deps) => {
     WalletUnlockSchema,
     PaymentIntentSchema,
     TransactionIssueSchema,
+  });
+
+  registerMobileGraphqlRoutes(v1, {
+    authenticate: authenticate as any,
+    LogicCore,
+    getSupabase,
+    getAdminSupabase,
   });
 
   registerEngagementRoutes(v1, {

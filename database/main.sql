@@ -5891,6 +5891,24 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user_active ON public.user_sessions(user
 CREATE INDEX IF NOT EXISTS idx_escrow_tx_id ON public.escrow_agreements(transaction_id);
 CREATE INDEX IF NOT EXISTS idx_escrow_sender ON public.escrow_agreements(sender_id);
 CREATE INDEX IF NOT EXISTS idx_escrow_receiver ON public.escrow_agreements(receiver_id);
+-- Mobile read model / GraphQL snapshot indexes.
+-- These keep app boot, dashboard refresh, transaction history, wealth, and PaySafe reads fast
+-- without changing the audited write paths.
+CREATE INDEX IF NOT EXISTS idx_transactions_user_created_mobile ON public.transactions(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_transactions_user_status_created_mobile ON public.transactions(user_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_transaction_quotes_user_status_updated_mobile ON public.transaction_quotes(user_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_financial_ledger_user_created_mobile ON public.financial_ledger(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_platform_vaults_user_role_updated_mobile ON public.platform_vaults(user_id, vault_role, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_wallets_user_tier_updated_mobile ON public.wallets(user_id, management_tier, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_escrow_agreements_sender_status_created_mobile ON public.escrow_agreements(sender_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_escrow_agreements_receiver_status_created_mobile ON public.escrow_agreements(receiver_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_goals_user_updated_mobile ON public.goals(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_categories_user_period_created_mobile ON public.categories(user_id, budget_period, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bill_reserves_user_status_updated_mobile ON public.bill_reserves(user_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_shared_pots_owner_status_updated_mobile ON public.shared_pots(owner_user_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_shared_pot_members_user_status_created_mobile ON public.shared_pot_members(user_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_shared_budgets_owner_status_updated_mobile ON public.shared_budgets(owner_user_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_shared_budget_members_user_status_updated_mobile ON public.shared_budget_members(user_id, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_treasury_org ON public.treasury_policies(organization_id);
 
 -- 7. SYSTEM PROVISIONING (IDEMPOTENT)
