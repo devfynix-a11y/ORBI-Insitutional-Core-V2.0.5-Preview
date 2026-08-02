@@ -15,6 +15,7 @@
     "test": "tsx --test --test-force-exit tests/**/*.test.ts",
     "drill:report": "node scripts/drill-report.mjs",
     "smoke:release": "node scripts/release-smoke.mjs",
+    "certify:core": "node scripts/core-certification.mjs",
     "test:db:financial:env": "node scripts/run-db-financial-tests.mjs --mode read --env .env.test.local",
     "test:db:financial:write:env": "node scripts/run-db-financial-tests.mjs --mode write --env .env.test.local --allow-write-fixture",
     "test:db:financial": "tsx tests/helpers/validateDbIntegrationEnv.ts read && tsx --test --test-force-exit tests/financialCoreDbIntegration.test.ts",

@@ -12,3 +12,4 @@ ops/self-hosted/Gateway/certs/*
 backups/local/
 .sandbox/
 ops/self-hosted/.release-gate/
+artifacts/

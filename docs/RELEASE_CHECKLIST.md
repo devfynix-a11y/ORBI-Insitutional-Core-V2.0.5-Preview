@@ -10,6 +10,7 @@ Use this checklist before every staging or production release of ORBI Institutio
 - [ ] `npm run lint`
 - [ ] `npm test`
 - [ ] `npm run build`
+- [ ] `npm run certify:core`
 - [ ] review schema changes in `database/`
 - [ ] confirm API and worker release compatibility
 - [ ] confirm required environment variables exist in the target environment
@@ -26,6 +27,24 @@ Use this checklist before every staging or production release of ORBI Institutio
 - [ ] if workers are required, `GET /api/broker/health` is healthy
 
 ## Automated Smoke Test
+
+For local release evidence, run:
+
+```bash
+npm run certify:core
+```
+
+With DB read certification:
+
+```bash
+node scripts/core-certification.mjs --db-env .env.test.local
+```
+
+With disposable write fixtures:
+
+```bash
+node scripts/core-certification.mjs --db-env .env.test.local --include-db-write
+```
 
 Run:
 

@@ -46,6 +46,17 @@ npm run test:db:financial:write:env
 
 Write mode is valid only for isolated disposable fixtures.
 
+For release evidence, use:
+
+```powershell
+npm run certify:core
+node scripts/core-certification.mjs --db-env .env.test.local
+node scripts/core-certification.mjs --db-env .env.test.local --include-db-write
+```
+
+The certification runner writes evidence under `artifacts/certification/`
+without storing secrets.
+
 ## Readiness Matrix
 
 | Area | Status | Notes |
