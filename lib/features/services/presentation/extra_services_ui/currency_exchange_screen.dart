@@ -47,6 +47,7 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
   String? _selectedWalletId;
   String? _targetWalletId;
   FxQuote? _quote;
+  String? _settlementIdempotencyKey;
   DateTime? _boardUpdatedAt;
 
   // Live estimate + countdown
@@ -123,7 +124,7 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
     if (_quote != null) {
       _stopCountdown();
       setState(() {
-        _quote = null;
+        _clearLockedQuote();
       });
     }
     _debounceTimer = Timer(const Duration(milliseconds: 700), () {
@@ -179,7 +180,7 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
         timer.cancel();
         setState(() {
           _quoteSecondsLeft = 0;
-          _quote = null;
+          _clearLockedQuote();
         });
         _showSnack(
           _t(
@@ -196,6 +197,11 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
   void _stopCountdown() {
     _countdownTimer?.cancel();
     _quoteSecondsLeft = 0;
+  }
+
+  void _clearLockedQuote() {
+    _quote = null;
+    _settlementIdempotencyKey = null;
   }
 
   void _startRatesAutoScroll() {
@@ -311,7 +317,7 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
       final nextFrom = _toCurrency;
       _toCurrency = _fromCurrency;
       _fromCurrency = nextFrom;
-      _quote = null;
+      _clearLockedQuote();
     });
     // Re-estimate after swap
     _debounceTimer?.cancel();
@@ -422,7 +428,7 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
     setState(() {
       _fromCurrency = corridor['from']!;
       _toCurrency = corridor['to']!;
-      _quote = null;
+      _clearLockedQuote();
     });
     _requestLiveEstimate();
   }
@@ -461,6 +467,7 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
         sourceWalletId: sourceWalletId,
         targetWalletId: targetWalletId,
         description: description,
+        idempotencyKey: _settlementIdempotencyKey ??= _fxIdempotencyKey(quote),
       );
       if (!mounted) return;
       final success = response['success'] == true || response['data'] != null;
@@ -473,7 +480,9 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
           'Sarafu imebadilishwa kikamilifu.',
         ),
       );
-      setState(() => _quote = null);
+      setState(() {
+        _clearLockedQuote();
+      });
       await _loadWallets();
     } catch (error) {
       if (!mounted) return;
@@ -525,6 +534,7 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
       }
       setState(() {
         _quote = quote;
+        _settlementIdempotencyKey = _fxIdempotencyKey(quote);
       });
       _startCountdown(quote);
       HapticFeedback.mediumImpact();
@@ -770,6 +780,14 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
         ],
       ),
     );
+  }
+
+  String _fxIdempotencyKey(FxQuote quote) {
+    final quoteId = quote.quoteId?.trim();
+    if (quoteId != null && quoteId.isNotEmpty) {
+      return 'fx-conversion-$quoteId';
+    }
+    return 'fx-conversion-${quote.fromCurrency}-${quote.toCurrency}-${quote.originalAmount}';
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -1140,7 +1158,7 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
                                   _currencyCode(_fromCurrency)) {
                             _selectedWalletId = null;
                           }
-                          _quote = null;
+                          _clearLockedQuote();
                         });
                         _requestLiveEstimate();
                       },
@@ -1198,7 +1216,7 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
                                   _currencyCode(_toCurrency)) {
                             _targetWalletId = null;
                           }
-                          _quote = null;
+                          _clearLockedQuote();
                         });
                         _requestLiveEstimate();
                       },
@@ -1541,7 +1559,7 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
                   if (_fromCurrency == _toCurrency) {
                     _toCurrency = _fromCurrency == 'USD' ? 'TZS' : 'USD';
                   }
-                  _quote = null;
+                  _clearLockedQuote();
                 });
                 _requestLiveEstimate();
               },
@@ -1678,7 +1696,7 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
                       _stopCountdown();
                       setState(() {
                         _targetWalletId = value;
-                        _quote = null;
+                        _clearLockedQuote();
                       });
                       _requestLiveEstimate();
                     },
