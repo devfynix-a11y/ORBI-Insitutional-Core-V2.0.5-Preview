@@ -53,14 +53,14 @@ export class OTPService {
         if (userId && userId !== 'system') {
             const { data: userProfile } = await sb
                 .from('users')
-                .select('full_name, name, email')
+                .select('full_name, email')
                 .eq('id', userId)
                 .maybeSingle();
             profile = userProfile;
             if (!profile) {
                 const { data: staffProfile } = await sb
                     .from('staff')
-                    .select('full_name, name, email')
+                    .select('full_name, email')
                     .eq('id', userId)
                     .maybeSingle();
                 profile = staffProfile;
@@ -70,7 +70,7 @@ export class OTPService {
         if (profile) {
             resolvedName =
                 resolvedName ||
-                String(profile.full_name || profile.name || '').trim();
+                String(profile.full_name || '').trim();
             resolvedEmail = resolvedEmail || String(profile.email || '').trim();
         }
 
@@ -117,7 +117,6 @@ export class OTPService {
                         authMetadata?.name ||
                         authMetadata?.display_name ||
                         profile?.full_name ||
-                        profile?.name ||
                         '',
                 ).trim() ||
                 (resolvedEmail ? resolvedEmail.split('@')[0] : '') ||
@@ -219,26 +218,26 @@ export class OTPService {
                 let profile: any = null;
                 
                 if (userId && userId !== 'system') {
-                    const { data: userProfile } = await sb.from('users').select('full_name, name, language, fcm_token, nationality, phone, email, id_type').eq('id', userId).maybeSingle();
+                    const { data: userProfile } = await sb.from('users').select('full_name, language, fcm_token, nationality, phone, email, id_type').eq('id', userId).maybeSingle();
                     profile = userProfile;
                     
                     if (!profile) {
-                        const { data: staffProfile } = await sb.from('staff').select('full_name, name, language, fcm_token, nationality, phone, email, id_type').eq('id', userId).maybeSingle();
+                        const { data: staffProfile } = await sb.from('staff').select('full_name, language, fcm_token, nationality, phone, email, id_type').eq('id', userId).maybeSingle();
                         profile = staffProfile;
                     }
                 } else if (contact) {
                     if (contact.includes('@')) {
-                        const { data: userProfile } = await sb.from('users').select('full_name, name, language, fcm_token, nationality, phone, email, id_type').eq('email', contact).maybeSingle();
+                        const { data: userProfile } = await sb.from('users').select('full_name, language, fcm_token, nationality, phone, email, id_type').eq('email', contact).maybeSingle();
                         profile = userProfile;
                         if (!profile) {
-                            const { data: staffProfile } = await sb.from('staff').select('full_name, name, language, fcm_token, nationality, phone, email, id_type').eq('email', contact).maybeSingle();
+                            const { data: staffProfile } = await sb.from('staff').select('full_name, language, fcm_token, nationality, phone, email, id_type').eq('email', contact).maybeSingle();
                             profile = staffProfile;
                         }
                     } else {
-                        const { data: userProfile } = await sb.from('users').select('full_name, name, language, fcm_token, nationality, phone, email, id_type').eq('phone', contact).maybeSingle();
+                        const { data: userProfile } = await sb.from('users').select('full_name, language, fcm_token, nationality, phone, email, id_type').eq('phone', contact).maybeSingle();
                         profile = userProfile;
                         if (!profile) {
-                            const { data: staffProfile } = await sb.from('staff').select('full_name, name, language, fcm_token, nationality, phone, email, id_type').eq('phone', contact).maybeSingle();
+                            const { data: staffProfile } = await sb.from('staff').select('full_name, language, fcm_token, nationality, phone, email, id_type').eq('phone', contact).maybeSingle();
                             profile = staffProfile;
                         }
                     }
@@ -250,7 +249,7 @@ export class OTPService {
                     country = profile.nationality || 'Tanzania';
                     phone = profile.phone || '';
                     email = profile.email || '';
-                    name = profile.full_name || profile.name || name || '';
+                    name = profile.full_name || name || '';
                 }
 
                 let authMetadata: any = null;
