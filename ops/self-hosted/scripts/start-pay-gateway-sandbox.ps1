@@ -134,6 +134,10 @@ docker create `
   -e PAYMENT_GATEWAY_OPERATOR_DISCOVERY_API_KEY=$(New-OrbiSecret 64) `
   -e PAYMENT_GATEWAY_PORTAL_AUTH_SECRET=$portalAuthSecret `
   -e PAYMENT_GATEWAY_SERVICE_ACCESS_TOKEN_SECRET=$serviceAccessTokenSecret `
+  -e PAYMENT_GATEWAY_OIDC_IDENTITY_ISSUER=https://sandbox-pay.orbifinancial.com `
+  -e PAYMENT_GATEWAY_OIDC_IDENTITY_AUDIENCE=orbi-pay-sandbox-identity `
+  -e PAYMENT_GATEWAY_OIDC_AUTHORIZATION_CLIENT_ID=orbi-pay-sandbox-developers `
+  -e PAYMENT_GATEWAY_FINANCIAL_TOKEN_AUDIENCE=orbi-pay-sandbox-api `
   -e PAYMENT_GATEWAY_ALLOWED_BROWSER_ORIGINS=https://sandbox-pay.orbifinancial.com,https://shop.orbifinancial.com,https://developers.orbifinancial.com `
   -e PAYMENT_GATEWAY_REQUIRE_SIGNED_INTERNAL_INGRESS=true `
   -e PAYMENT_GATEWAY_REQUEST_AUDIT_ENABLED=true `
