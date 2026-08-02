@@ -357,6 +357,17 @@ class DashboardController extends ChangeNotifier {
       if (cached != null && cached.isNotEmpty) return cached;
     }
 
+    try {
+      final graphqlPayload = await _fetchGraphqlDashboardPayload(
+        token,
+        requestTimeout: requestTimeout,
+      );
+      AppRuntimeCache.rememberDashboardPayload(graphqlPayload);
+      return graphqlPayload;
+    } catch (error) {
+      debugPrint('⚠️ Dashboard GraphQL snapshot failed: $error');
+    }
+
     final endpoints = [
       Uri.parse('$baseUrl/v1/dashboard'),
       Uri.parse('$baseUrl/api/v1/dashboard'),
@@ -390,6 +401,103 @@ class DashboardController extends ChangeNotifier {
           ? 'No dashboard endpoint responded.'
           : 'Dashboard endpoints failed. ${failures.join(' | ')}',
     );
+  }
+
+  Future<Map<String, dynamic>> _fetchGraphqlDashboardPayload(
+    String token, {
+    required Duration requestTimeout,
+  }) async {
+    final response = await http
+        .post(
+          Uri.parse('$baseUrl/v1/graphql'),
+          headers: {
+            ..._headers(token),
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({
+            'query': '''
+query MobileDashboard(\$transactionLimit: Int!, \$escrowLimit: Int!) {
+  mobileSnapshot(transactionLimit: \$transactionLimit, escrowLimit: \$escrowLimit) {
+    dashboard
+    transactions
+    wealthSummary
+    paySafeEscrows
+  }
+}
+''',
+            'variables': {
+              'transactionLimit': 50,
+              'escrowLimit': 20,
+            },
+          }),
+        )
+        .timeout(requestTimeout);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+        '/v1/graphql: ${response.statusCode} ${response.body}',
+      );
+    }
+    final body = jsonDecode(response.body);
+    if (body is! Map) throw Exception('GraphQL response is not a map');
+    final data = body['data'];
+    if (data is! Map) throw Exception('GraphQL data is missing');
+    final snapshot = data['mobileSnapshot'];
+    if (snapshot is! Map) throw Exception('GraphQL mobileSnapshot is missing');
+    return _normalizeGraphqlSnapshot(Map<dynamic, dynamic>.from(snapshot));
+  }
+
+  Map<String, dynamic> _normalizeGraphqlSnapshot(Map<dynamic, dynamic> raw) {
+    final dashboard = raw['dashboard'];
+    final normalized = dashboard is Map
+        ? _normalizeMap(Map<dynamic, dynamic>.from(dashboard))
+        : <String, dynamic>{};
+
+    final transactions = _unwrapGraphqlList(raw['transactions']);
+    if (transactions.isNotEmpty) {
+      normalized['transactions'] = transactions;
+      normalized['recentTransactions'] = transactions;
+    }
+
+    final wealthSummary = raw['wealthSummary'];
+    if (wealthSummary is Map) {
+      final wealth = _normalizeMap(Map<dynamic, dynamic>.from(wealthSummary));
+      normalized['wealth_summary'] = wealth;
+      normalized['wealthSummary'] = wealth;
+      normalized['net_worth'] ??= wealth['net_position'] ?? wealth['netWorth'];
+      normalized['assets'] ??= wealth['total_inside_orbi'];
+    }
+
+    final escrows = _unwrapGraphqlList(raw['paySafeEscrows']);
+    if (escrows.isNotEmpty) {
+      normalized['paysafe_escrows'] = escrows;
+      normalized['paySafeEscrows'] = escrows;
+    }
+
+    return normalized;
+  }
+
+  List<Map<String, dynamic>> _unwrapGraphqlList(dynamic value) {
+    if (value is List) {
+      return value
+          .whereType<Map>()
+          .map((item) => _normalizeMap(Map<dynamic, dynamic>.from(item)))
+          .toList(growable: false);
+    }
+    if (value is Map) {
+      for (final key in const [
+        'items',
+        'transactions',
+        'data',
+        'results',
+        'rows',
+        'history',
+      ]) {
+        final nested = value[key];
+        if (nested is List) return _unwrapGraphqlList(nested);
+      }
+    }
+    return const <Map<String, dynamic>>[];
   }
 
   Future<T> _guardedDashboardFetch<T>(
