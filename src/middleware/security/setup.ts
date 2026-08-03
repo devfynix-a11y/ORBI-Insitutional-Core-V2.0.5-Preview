@@ -35,6 +35,21 @@ const devOrigins = [
   'http://127.0.0.1:5173',
 ];
 
+const HTTPS_REDIRECT_EXEMPT_PATHS = new Set([
+  '/health',
+  '/heath',
+  '/live',
+  '/ready',
+  '/health/deep',
+  '/v1/health/live',
+  '/v1/health/ready',
+  '/v1/health/deep',
+  '/api/v1/health/live',
+  '/api/v1/health/ready',
+  '/api/v1/health/deep',
+  '/api/broker/health',
+]);
+
 export const ALLOWED_ORIGINS = Array.from(
   new Set([...(isProd ? configuredOrigins : [...configuredOrigins, ...devOrigins])]),
 );
@@ -51,6 +66,10 @@ export const configureCoreSecurityMiddleware = (app: Express, options: SecurityS
 
   if (enforceHttps) {
     app.use((req, res, next) => {
+      if (HTTPS_REDIRECT_EXEMPT_PATHS.has(req.path)) {
+        return next();
+      }
+
       const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
       const isHttps = req.secure || forwardedProto === 'https';
       const isSignedInternalRequest = req.path.startsWith('/api/internal/') &&

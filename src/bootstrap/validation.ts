@@ -1,6 +1,7 @@
 import { logger } from '../../backend/infrastructure/logger.js';
 import { getAdminSupabase, getSupabase } from '../../services/supabaseClient.js';
 import fs from 'fs';
+import { getOrbiDatabase } from '../../services/orbiDatabase.js';
 
 const REQUIRED_ENV_PROD = [
   'JWT_SECRET',
@@ -394,6 +395,33 @@ const validateDbDependencies = async (isProd: boolean) => {
 
   const shouldValidateRpc = isProd || process.env.ORBI_VALIDATE_RPC_ON_STARTUP === 'true';
   if (!shouldValidateRpc) return;
+
+  if (String(process.env.ORBI_DATA_PROVIDER || '').trim().toLowerCase() === 'local') {
+    try {
+      const db = getOrbiDatabase();
+      const result = await db.query(
+        `
+          SELECT p.proname
+          FROM pg_proc p
+          JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = 'public'
+            AND p.proname = ANY($1::text[])
+        `,
+        [REQUIRED_RPC_DEPENDENCIES],
+      );
+      const found = new Set(result.rows.map((row: any) => String(row.proname || '')));
+      const missing = REQUIRED_RPC_DEPENDENCIES.filter((name) => !found.has(name));
+      if (missing.length > 0) {
+        logger.fatal('startup.rpc_missing', { missing_rpc: missing });
+        process.exit(1);
+      }
+      logger.info('startup.rpc_catalog_validated', { rpc_count: found.size });
+      return;
+    } catch (error: any) {
+      logger.fatal('startup.rpc_catalog_validation_failed', { message: error?.message || String(error) });
+      process.exit(1);
+    }
+  }
 
   const isParameterizedRpcProbeMiss = (message: string) =>
     /without parameters in the schema cache/i.test(message) ||
