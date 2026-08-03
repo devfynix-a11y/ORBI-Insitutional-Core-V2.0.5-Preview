@@ -1037,27 +1037,8 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
   // ─────────────────────────────────────────────────────────────
 
   Widget _exchangeTicket(OrbiUiTokens ui, List<String> currencies) {
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            ui.card,
-            ui.cardMuted.withValues(alpha: 0.35),
-          ],
-        ),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: ui.border.withValues(alpha: 0.6)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 24,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.all(18),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(2, 6, 2, 4),
       child: Form(
         key: _quoteFormKey,
         child: Column(
@@ -1111,12 +1092,12 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
               _errorBanner(ui, _error!),
             ],
 
-            const SizedBox(height: 18),
+            const SizedBox(height: 14),
             _exchangeRouteCard(ui),
 
             // Wallet selector + balance
             if (_wallets.isNotEmpty) ...[
-              const SizedBox(height: 16),
+              const SizedBox(height: 14),
               Text(
                 _t('Pay from', 'Lipa kutoka'),
                 style: TextStyle(color: ui.textMuted, fontSize: 12, fontWeight: FontWeight.w700),
@@ -1124,7 +1105,7 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
               const SizedBox(height: 8),
               _walletSelector(ui),
             ] else ...[
-              const SizedBox(height: 18),
+              const SizedBox(height: 14),
               _infoNotice(
                 ui,
                 _t(
@@ -1134,7 +1115,7 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
               ),
             ],
 
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
 
             // From / To legs with swap
             Stack(
@@ -1199,7 +1180,7 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 10),
                     _currencyLeg(
                       ui,
                       title: _t('You receive', 'Unapokea'),
@@ -1237,8 +1218,8 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
                     onTap: _swapCurrencies,
                     borderRadius: BorderRadius.circular(16),
                     child: SizedBox(
-                      width: 48,
-                      height: 48,
+                      width: 44,
+                      height: 44,
                       child: Icon(Icons.swap_vert_rounded, color: ui.textPrimary, size: 24),
                     ),
                   ),
@@ -1246,7 +1227,7 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
               ],
             ),
 
-            const SizedBox(height: 16),
+            const SizedBox(height: 14),
             Text(
               _t('Save to', 'Hifadhi kwenye'),
               style: TextStyle(color: ui.textMuted, fontSize: 12, fontWeight: FontWeight.w700),
@@ -1254,12 +1235,12 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
             const SizedBox(height: 8),
             _targetWalletSelector(ui),
 
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
 
             // Quote status + countdown
             _quoteStatusStrip(ui),
 
-            const SizedBox(height: 18),
+            const SizedBox(height: 14),
 
             // Actions
             Row(
@@ -1269,7 +1250,7 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
                   child: FilledButton(
                     onPressed: (_busy || _liveEstimating) ? null : _requestQuote,
                     style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                     ),
                     child: (_busy || _liveEstimating)
@@ -1290,7 +1271,7 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
                   child: FilledButton.tonal(
                     onPressed: (_busy || !_canProceedToPayment) ? null : _settleConversion,
                     style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                     ),
                     child: Text(
@@ -1397,18 +1378,9 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
     final toName = targetWallet == null ? _t('Choose destination', 'Chagua pa kuhifadhi') : _walletName(targetWallet);
 
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            ui.accentSoft.withValues(alpha: 0.22),
-            ui.successSoft.withValues(alpha: 0.18),
-          ],
-        ),
-        border: Border.all(color: ui.border.withValues(alpha: 0.48)),
+        borderRadius: BorderRadius.circular(18),
       ),
       child: Row(
         children: [
@@ -1423,13 +1395,12 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
             ),
           ),
           Container(
-            width: 38,
-            height: 38,
+            width: 32,
+            height: 32,
             margin: const EdgeInsets.symmetric(horizontal: 10),
             decoration: BoxDecoration(
-              color: ui.card,
+              color: ui.accentSoft.withValues(alpha: 0.22),
               shape: BoxShape.circle,
-              border: Border.all(color: ui.border.withValues(alpha: 0.5)),
             ),
             child: Icon(Icons.arrow_forward_rounded, color: ui.textPrimary, size: 18),
           ),
@@ -1726,7 +1697,7 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
       decoration: BoxDecoration(
         color: ui.cardMuted.withValues(alpha: 0.35),
         borderRadius: BorderRadius.circular(20),
