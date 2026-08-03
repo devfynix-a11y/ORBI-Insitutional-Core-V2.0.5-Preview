@@ -357,7 +357,10 @@ export class EnterprisePaymentProcessor {
                         dev_otp_code: code 
                     };
 
-                    await IdempotencyLayer.saveResponse(intent.idempotencyKey, user.id, '/v2/transactions/process', 200, challengeResponse);
+                    // A security challenge is not a terminal financial response. Keeping the
+                    // key as COMPLETED would replay the challenge after OTP verification and
+                    // prevent the real settlement from continuing.
+                    await IdempotencyLayer.clearKey(intent.idempotencyKey, user.id, '/v2/transactions/process');
                     return challengeResponse;
                 }
             }
