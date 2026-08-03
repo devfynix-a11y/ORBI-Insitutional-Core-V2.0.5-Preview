@@ -41,6 +41,42 @@ const assertCurrencyPair = (fromCurrency: string, toCurrency: string) => {
   return { from, to };
 };
 
+const recordProviderHealth = async (
+  providerCode: string,
+  status: 'ACTIVE' | 'DEGRADED',
+  latencyMs: number,
+  message?: string,
+) => {
+  const sb = getAdminSupabase() || getSupabase();
+  if (!sb) return;
+
+  const now = new Date().toISOString();
+  const normalizedProviderCode = String(providerCode || '').trim().toUpperCase();
+  if (!normalizedProviderCode) return;
+
+  let failureCount = 0;
+  if (status === 'DEGRADED') {
+    const { data } = await sb
+      .from('fx_provider_health')
+      .select('failure_count')
+      .eq('provider_code', normalizedProviderCode)
+      .maybeSingle();
+    failureCount = Number(data?.failure_count || 0) + 1;
+  }
+
+  await sb.from('fx_provider_health').upsert({
+    provider_code: normalizedProviderCode,
+    status,
+    last_checked_at: now,
+    last_success_at: status === 'ACTIVE' ? now : undefined,
+    last_failure_at: status === 'DEGRADED' ? now : undefined,
+    failure_count: status === 'ACTIVE' ? 0 : failureCount,
+    latency_ms: Math.max(Math.round(latencyMs), 0),
+    message: message || null,
+    updated_at: now,
+  });
+};
+
 class OpenExchangeRateProviderAdapter implements LiquidityProviderAdapter {
   private ratesCache: Record<string, number> = {};
   private lastFetch = 0;
@@ -167,8 +203,15 @@ class LiquidityProviderRegistry {
 
     const provider = this.providers[providerCode];
     if (!provider) throw new Error(`FX_LIQUIDITY_PROVIDER_NOT_SUPPORTED:${providerCode}`);
-    const snapshot = await provider.getRate(request);
-    return this.attachCorridor(snapshot, corridor);
+    const startedAt = Date.now();
+    try {
+      const snapshot = await provider.getRate(request);
+      await recordProviderHealth(providerCode, 'ACTIVE', Date.now() - startedAt);
+      return this.attachCorridor(snapshot, corridor);
+    } catch (error: any) {
+      await recordProviderHealth(providerCode, 'DEGRADED', Date.now() - startedAt, error?.message || 'UNKNOWN');
+      throw error;
+    }
   }
 
   private attachCorridor(snapshot: LiquidityRateSnapshot, corridor: FxCorridor | null): LiquidityRateSnapshot {

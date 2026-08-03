@@ -858,6 +858,64 @@ CREATE INDEX IF NOT EXISTS idx_fx_corridors_lookup
 CREATE INDEX IF NOT EXISTS idx_fx_corridors_provider
     ON public.fx_corridors(rate_provider_code, status);
 
+CREATE TABLE IF NOT EXISTS public.fx_provider_health (
+    provider_code TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'DEGRADED', 'PAUSED', 'DISABLED')),
+    last_checked_at TIMESTAMP WITH TIME ZONE,
+    last_success_at TIMESTAMP WITH TIME ZONE,
+    last_failure_at TIMESTAMP WITH TIME ZONE,
+    failure_count INTEGER NOT NULL DEFAULT 0 CHECK (failure_count >= 0),
+    latency_ms INTEGER,
+    message TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_fx_provider_health_status
+    ON public.fx_provider_health(status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS public.fx_treasury_exposure_limits (
+    currency TEXT PRIMARY KEY,
+    max_net_exposure_usd NUMERIC(20, 6) NOT NULL DEFAULT 0 CHECK (max_net_exposure_usd >= 0),
+    max_daily_volume_usd NUMERIC(20, 6) NOT NULL DEFAULT 0 CHECK (max_daily_volume_usd >= 0),
+    status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'PAUSED', 'DISABLED')),
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT fx_treasury_exposure_limits_currency_check CHECK (currency ~ '^[A-Z]{3}$')
+);
+
+CREATE INDEX IF NOT EXISTS idx_fx_treasury_exposure_limits_status
+    ON public.fx_treasury_exposure_limits(status, currency);
+
+CREATE TABLE IF NOT EXISTS public.fx_reconciliation_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    quote_id TEXT,
+    transaction_id UUID,
+    user_id UUID,
+    from_currency TEXT NOT NULL,
+    to_currency TEXT NOT NULL,
+    source_amount NUMERIC(20, 6) NOT NULL DEFAULT 0,
+    target_amount NUMERIC(20, 6) NOT NULL DEFAULT 0,
+    customer_rate NUMERIC(20, 8),
+    market_rate NUMERIC(20, 8),
+    spread_amount NUMERIC(20, 6) NOT NULL DEFAULT 0,
+    spread_currency TEXT,
+    provider_code TEXT,
+    settlement_mode TEXT,
+    status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'MATCHED', 'MISMATCHED', 'FAILED', 'REVERSED')),
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_fx_reconciliation_events_status_created
+    ON public.fx_reconciliation_events(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_fx_reconciliation_events_quote
+    ON public.fx_reconciliation_events(quote_id);
+CREATE INDEX IF NOT EXISTS idx_fx_reconciliation_events_user_created
+    ON public.fx_reconciliation_events(user_id, created_at DESC);
+
 INSERT INTO public.fx_corridors (
     from_currency, to_currency, rate_provider_code, settlement_mode, priority, min_amount, max_amount, supported_countries, metadata
 ) VALUES
@@ -5366,6 +5424,9 @@ BEGIN
     ALTER TABLE public.provider_config_versions ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.provider_performance_metrics ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.fx_corridors ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.fx_provider_health ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.fx_treasury_exposure_limits ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.fx_reconciliation_events ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.payment_rail_capabilities ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.institutional_payment_accounts ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.external_fund_movements ENABLE ROW LEVEL SECURITY;
@@ -5599,6 +5660,31 @@ CREATE POLICY "Admin manage fx corridors" ON public.fx_corridors
 
 DROP POLICY IF EXISTS "Service role fx corridors bypass" ON public.fx_corridors;
 CREATE POLICY "Service role fx corridors bypass" ON public.fx_corridors
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Admin view fx provider health" ON public.fx_provider_health;
+CREATE POLICY "Admin view fx provider health" ON public.fx_provider_health
+    FOR SELECT USING ((SELECT public.get_auth_role()) IN ('SUPER_ADMIN', 'ADMIN', 'IT', 'FINANCE', 'AUDIT', 'RISK_OFFICER'));
+
+DROP POLICY IF EXISTS "Service role fx provider health bypass" ON public.fx_provider_health;
+CREATE POLICY "Service role fx provider health bypass" ON public.fx_provider_health
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Admin manage fx exposure limits" ON public.fx_treasury_exposure_limits;
+CREATE POLICY "Admin manage fx exposure limits" ON public.fx_treasury_exposure_limits
+    FOR ALL USING ((SELECT public.get_auth_role()) IN ('SUPER_ADMIN', 'ADMIN', 'IT', 'FINANCE', 'RISK_OFFICER'))
+    WITH CHECK ((SELECT public.get_auth_role()) IN ('SUPER_ADMIN', 'ADMIN', 'IT', 'FINANCE', 'RISK_OFFICER'));
+
+DROP POLICY IF EXISTS "Service role fx exposure limits bypass" ON public.fx_treasury_exposure_limits;
+CREATE POLICY "Service role fx exposure limits bypass" ON public.fx_treasury_exposure_limits
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Admin view fx reconciliation events" ON public.fx_reconciliation_events;
+CREATE POLICY "Admin view fx reconciliation events" ON public.fx_reconciliation_events
+    FOR SELECT USING ((SELECT public.get_auth_role()) IN ('SUPER_ADMIN', 'ADMIN', 'AUDIT', 'FINANCE', 'RISK_OFFICER'));
+
+DROP POLICY IF EXISTS "Service role fx reconciliation events bypass" ON public.fx_reconciliation_events;
+CREATE POLICY "Service role fx reconciliation events bypass" ON public.fx_reconciliation_events
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Authenticated read active payment rail capabilities" ON public.payment_rail_capabilities;

@@ -46,6 +46,50 @@ const ApiGatewayLockReleaseSchema = z.object({
   reason: z.string().trim().min(5).max(500),
 });
 
+const CurrencyCodeSchema = z.string().trim().toUpperCase().regex(/^[A-Z]{3}$/);
+
+const FxCorridorConfigSchema = z.object({
+  fromCurrency: CurrencyCodeSchema,
+  toCurrency: CurrencyCodeSchema,
+  rateProviderCode: z.string().trim().toUpperCase().min(2).max(80),
+  settlementProviderId: z.string().uuid().nullable().optional(),
+  settlementMode: z.enum(['INTERNAL_LEDGER', 'EXTERNAL_LP', 'HYBRID']).default('INTERNAL_LEDGER'),
+  priority: z.coerce.number().int().min(1).max(999).default(100),
+  minAmount: z.coerce.number().nonnegative().nullable().optional(),
+  maxAmount: z.coerce.number().positive().nullable().optional(),
+  supportedCountries: z.array(z.string().trim().toUpperCase().min(2).max(3)).max(64).default([]),
+  status: z.enum(['ACTIVE', 'PAUSED', 'DISABLED']).default('ACTIVE'),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+}).refine((value) => value.fromCurrency !== value.toCurrency, {
+  message: 'FX corridor currencies must be different.',
+  path: ['toCurrency'],
+});
+
+const FxMarginPolicySchema = z.object({
+  fromCurrency: CurrencyCodeSchema,
+  toCurrency: CurrencyCodeSchema,
+  spreadMode: z.enum(['BPS', 'PIPS', 'FIXED_UNIT']).default('BPS'),
+  fixedPips: z.coerce.number().nonnegative().default(0),
+  marginBps: z.coerce.number().int().min(0).max(2500).default(75),
+  riskBufferBps: z.coerce.number().int().min(0).max(2500).default(25),
+  quoteLockSeconds: z.coerce.number().int().min(15).max(900).default(45),
+  minAmount: z.coerce.number().nonnegative().nullable().optional(),
+  maxAmount: z.coerce.number().positive().nullable().optional(),
+  status: z.enum(['ACTIVE', 'PAUSED', 'DISABLED']).default('ACTIVE'),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+}).refine((value) => value.fromCurrency !== value.toCurrency, {
+  message: 'FX margin policy currencies must be different.',
+  path: ['toCurrency'],
+});
+
+const FxExposureLimitSchema = z.object({
+  currency: CurrencyCodeSchema,
+  maxNetExposureUsd: z.coerce.number().nonnegative().default(0),
+  maxDailyVolumeUsd: z.coerce.number().nonnegative().default(0),
+  status: z.enum(['ACTIVE', 'PAUSED', 'DISABLED']).default('ACTIVE'),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+});
+
 type Deps = {
   authenticate: RequestHandler;
   adminOnly: RequestHandler;
@@ -130,6 +174,65 @@ function withPaySafeTimeout<T>(
 
 const isUuidLike = (value: unknown) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
+
+const normalizeFxConfigError = (error: unknown) => {
+  if (error instanceof z.ZodError) {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        error: 'FX_CONFIG_VALIDATION_FAILED',
+        details: error.issues.map((issue) => ({
+          path: issue.path,
+          message: issue.message,
+        })),
+      },
+    };
+  }
+  return {
+    status: 500,
+    body: {
+      success: false,
+      error: 'FX_CONFIG_OPERATION_FAILED',
+      message: String((error as any)?.message || error || 'FX configuration failed.'),
+    },
+  };
+};
+
+const requireFxAdminStore = () => {
+  const sb = getAdminSupabase() || getSupabase();
+  if (!sb) throw new Error('FX_CONFIG_STORE_UNAVAILABLE');
+  return sb;
+};
+
+const computeFxExposure = (rows: any[]) => {
+  const byCurrency = new Map<string, { currency: string; bought: number; sold: number; spread: number; count: number }>();
+  for (const row of rows || []) {
+    const from = String(row.from_currency || '').toUpperCase();
+    const to = String(row.to_currency || '').toUpperCase();
+    const sourceAmount = Number(row.source_amount || 0);
+    const targetAmount = Number(row.target_amount || 0);
+    const spreadAmount = Number(row.spread_amount || 0);
+    if (from) {
+      const current = byCurrency.get(from) || { currency: from, bought: 0, sold: 0, spread: 0, count: 0 };
+      current.sold += sourceAmount;
+      current.count += 1;
+      byCurrency.set(from, current);
+    }
+    if (to) {
+      const current = byCurrency.get(to) || { currency: to, bought: 0, sold: 0, spread: 0, count: 0 };
+      current.bought += targetAmount;
+      current.spread += spreadAmount;
+      current.count += 1;
+      byCurrency.set(to, current);
+    }
+  }
+  return Array.from(byCurrency.values()).map((row) => ({
+    ...row,
+    netPosition: Number((row.bought - row.sold).toFixed(6)),
+    spread: Number(row.spread.toFixed(6)),
+  }));
+};
 
 const enrichGatewayActors = async (rows: any[]) => {
   const sb = getAdminSupabase() || getSupabase();
@@ -855,6 +958,188 @@ export const registerOperationsRoutes = (v1: Router, deps: Deps) => {
       error: 'FX_MANUAL_RATES_DEPRECATED',
       message: 'Manual FX rates are not accepted. Use LiquidityProviderAdapter for market rates and fx_margin_policies for ORBI spread policy.',
     });
+  });
+
+  v1.get('/admin/config/fx/corridors', authenticate as any, requireSessionPermission(['config.fx.read', 'config.fx.write'], [...CONFIG_FX_VIEW_ROLES]), async (_req, res) => {
+    try {
+      const sb = requireFxAdminStore();
+      const { data, error } = await sb
+        .from('fx_corridors')
+        .select('*')
+        .order('priority', { ascending: true })
+        .order('from_currency', { ascending: true });
+      if (error) throw error;
+      res.json({ success: true, data: data || [] });
+    } catch (error) {
+      const payload = normalizeFxConfigError(error);
+      res.status(payload.status).json(payload.body);
+    }
+  });
+
+  v1.put('/admin/config/fx/corridors', authenticate as any, requireSessionPermission(['config.fx.write'], [...CONFIG_LEDGER_ADMIN_ROLES]), requireIdempotencyKey, async (req, res) => {
+    try {
+      const parsed = FxCorridorConfigSchema.parse(req.body || {});
+      const sb = requireFxAdminStore();
+      const row = {
+        from_currency: parsed.fromCurrency,
+        to_currency: parsed.toCurrency,
+        rate_provider_code: parsed.rateProviderCode,
+        settlement_provider_id: parsed.settlementProviderId || null,
+        settlement_mode: parsed.settlementMode,
+        priority: parsed.priority,
+        min_amount: parsed.minAmount ?? null,
+        max_amount: parsed.maxAmount ?? null,
+        supported_countries: parsed.supportedCountries,
+        status: parsed.status,
+        metadata: parsed.metadata,
+        updated_at: new Date().toISOString(),
+      };
+      const { data, error } = await sb
+        .from('fx_corridors')
+        .upsert(row, { onConflict: 'from_currency,to_currency,rate_provider_code' })
+        .select('*')
+        .single();
+      if (error) throw error;
+      res.json({ success: true, data });
+    } catch (error) {
+      const payload = normalizeFxConfigError(error);
+      res.status(payload.status).json(payload.body);
+    }
+  });
+
+  v1.get('/admin/config/fx/margins', authenticate as any, requireSessionPermission(['config.fx.read', 'config.fx.write'], [...CONFIG_FX_VIEW_ROLES]), async (_req, res) => {
+    try {
+      const sb = requireFxAdminStore();
+      const { data, error } = await sb
+        .from('fx_margin_policies')
+        .select('*')
+        .order('from_currency', { ascending: true })
+        .order('to_currency', { ascending: true });
+      if (error) throw error;
+      res.json({ success: true, data: data || [] });
+    } catch (error) {
+      const payload = normalizeFxConfigError(error);
+      res.status(payload.status).json(payload.body);
+    }
+  });
+
+  v1.put('/admin/config/fx/margins', authenticate as any, requireSessionPermission(['config.fx.write'], [...CONFIG_LEDGER_ADMIN_ROLES]), requireIdempotencyKey, async (req, res) => {
+    try {
+      const parsed = FxMarginPolicySchema.parse(req.body || {});
+      const sb = requireFxAdminStore();
+      const row = {
+        from_currency: parsed.fromCurrency,
+        to_currency: parsed.toCurrency,
+        spread_mode: parsed.spreadMode,
+        fixed_pips: parsed.fixedPips,
+        margin_bps: parsed.marginBps,
+        risk_buffer_bps: parsed.riskBufferBps,
+        quote_lock_seconds: parsed.quoteLockSeconds,
+        min_amount: parsed.minAmount ?? null,
+        max_amount: parsed.maxAmount ?? null,
+        status: parsed.status,
+        metadata: parsed.metadata,
+        updated_at: new Date().toISOString(),
+      };
+      const { data, error } = await sb
+        .from('fx_margin_policies')
+        .upsert(row, { onConflict: 'from_currency,to_currency' })
+        .select('*')
+        .single();
+      if (error) throw error;
+      res.json({ success: true, data });
+    } catch (error) {
+      const payload = normalizeFxConfigError(error);
+      res.status(payload.status).json(payload.body);
+    }
+  });
+
+  v1.get('/admin/config/fx/providers/health', authenticate as any, requireSessionPermission(['config.fx.read', 'config.fx.write'], [...CONFIG_FX_VIEW_ROLES]), async (_req, res) => {
+    try {
+      const sb = requireFxAdminStore();
+      const [{ data: health, error: healthError }, { data: corridors, error: corridorError }] = await Promise.all([
+        sb.from('fx_provider_health').select('*').order('updated_at', { ascending: false }),
+        sb.from('fx_corridors').select('rate_provider_code,status'),
+      ]);
+      if (healthError) throw healthError;
+      if (corridorError) throw corridorError;
+      const activeProviders = new Set((corridors || []).map((row: any) => String(row.rate_provider_code || '').toUpperCase()).filter(Boolean));
+      res.json({
+        success: true,
+        data: Array.from(activeProviders).map((providerCode) => ({
+          providerCode,
+          corridorCount: (corridors || []).filter((row: any) => String(row.rate_provider_code || '').toUpperCase() === providerCode).length,
+          health: (health || []).find((row: any) => String(row.provider_code || '').toUpperCase() === providerCode) || null,
+        })),
+      });
+    } catch (error) {
+      const payload = normalizeFxConfigError(error);
+      res.status(payload.status).json(payload.body);
+    }
+  });
+
+  v1.get('/admin/config/fx/exposure', authenticate as any, requireSessionPermission(['config.fx.read', 'config.fx.write'], [...CONFIG_FX_VIEW_ROLES]), async (_req, res) => {
+    try {
+      const sb = requireFxAdminStore();
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const [{ data: events, error: eventError }, { data: limits, error: limitError }] = await Promise.all([
+        sb.from('fx_reconciliation_events').select('*').gte('created_at', since).order('created_at', { ascending: false }).limit(1000),
+        sb.from('fx_treasury_exposure_limits').select('*').order('currency', { ascending: true }),
+      ]);
+      if (eventError) throw eventError;
+      if (limitError) throw limitError;
+      res.json({
+        success: true,
+        data: {
+          window: '24h',
+          exposure: computeFxExposure(events || []),
+          limits: limits || [],
+        },
+      });
+    } catch (error) {
+      const payload = normalizeFxConfigError(error);
+      res.status(payload.status).json(payload.body);
+    }
+  });
+
+  v1.put('/admin/config/fx/exposure-limits', authenticate as any, requireSessionPermission(['config.fx.write'], [...CONFIG_LEDGER_ADMIN_ROLES]), requireIdempotencyKey, async (req, res) => {
+    try {
+      const parsed = FxExposureLimitSchema.parse(req.body || {});
+      const sb = requireFxAdminStore();
+      const { data, error } = await sb
+        .from('fx_treasury_exposure_limits')
+        .upsert({
+          currency: parsed.currency,
+          max_net_exposure_usd: parsed.maxNetExposureUsd,
+          max_daily_volume_usd: parsed.maxDailyVolumeUsd,
+          status: parsed.status,
+          metadata: parsed.metadata,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'currency' })
+        .select('*')
+        .single();
+      if (error) throw error;
+      res.json({ success: true, data });
+    } catch (error) {
+      const payload = normalizeFxConfigError(error);
+      res.status(payload.status).json(payload.body);
+    }
+  });
+
+  v1.get('/admin/config/fx/reconciliation', authenticate as any, requireSessionPermission(['reconciliation.reports.read', 'config.fx.read'], [...RECONCILIATION_REPORT_ROLES, ...CONFIG_FX_VIEW_ROLES]), async (req, res) => {
+    try {
+      const sb = requireFxAdminStore();
+      const limit = Math.min(Number(req.query.limit || 100), 500);
+      const status = String(req.query.status || '').trim().toUpperCase();
+      let query = sb.from('fx_reconciliation_events').select('*').order('created_at', { ascending: false }).limit(limit);
+      if (status) query = query.eq('status', status);
+      const { data, error } = await query;
+      if (error) throw error;
+      res.json({ success: true, data: data || [] });
+    } catch (error) {
+      const payload = normalizeFxConfigError(error);
+      res.status(payload.status).json(payload.body);
+    }
   });
 
   v1.post('/admin/kms/rewrap', authenticate as any, adminOnly as any, async (req, res) => {

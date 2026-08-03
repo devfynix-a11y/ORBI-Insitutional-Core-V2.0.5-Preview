@@ -297,6 +297,19 @@ To maintain ledger integrity across different currencies, the system utilizes an
 ### 12.3 Global Policy Enforcement
 All transaction limits and risk assessments are normalized to **USD** using the `FXEngine` before being evaluated by the `PolicyEngine`. This ensures consistent enforcement of institutional rules regardless of the transaction currency.
 
+### 12.4 FX Operations Control Plane
+FX is operated through controlled admin endpoints rather than manual database edits:
+- `GET /v1/admin/config/fx/corridors`: review active and paused FX corridors.
+- `PUT /v1/admin/config/fx/corridors`: create or update a corridor using an idempotency key.
+- `GET /v1/admin/config/fx/margins`: review spread, pips, risk buffer, quote lock, and amount-limit policies.
+- `PUT /v1/admin/config/fx/margins`: update customer pricing protection for a currency pair using an idempotency key.
+- `GET /v1/admin/config/fx/providers/health`: review configured liquidity providers and current health snapshots.
+- `GET /v1/admin/config/fx/exposure`: review 24-hour currency exposure and configured treasury limits.
+- `PUT /v1/admin/config/fx/exposure-limits`: update currency exposure limits using an idempotency key.
+- `GET /v1/admin/config/fx/reconciliation`: review FX reconciliation events by status.
+
+Every locked FX quote creates a reconciliation event with the quote id, source amount, target amount, customer rate, market rate, spread amount, provider code, and settlement mode. When the quote settles, the reconciliation event moves to `MATCHED`; if settlement fails, it moves to `FAILED`. This keeps customer conversion, treasury exposure, and ledger audit aligned without exposing internal pricing internals to the mobile user.
+
 ## 13. Future Capabilities Unlocked
 By implementing this architecture, ORBI is now capable of:
 - **White-labeling**: Partners can launch their own branded wallets on our infrastructure.

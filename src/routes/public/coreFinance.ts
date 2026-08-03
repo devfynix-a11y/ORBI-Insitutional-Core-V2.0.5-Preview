@@ -1616,6 +1616,31 @@ export const registerCoreFinanceRoutes = (v1: Router, deps: Deps) => {
         expires_at: result.expiresAt,
       });
       if (insertError) throw insertError;
+
+      const { error: reconciliationError } = await sb.from('fx_reconciliation_events').insert({
+        quote_id: quoteId,
+        user_id: session.sub,
+        from_currency: from,
+        to_currency: to,
+        source_amount: amount,
+        target_amount: Number(result.finalAmount || 0),
+        customer_rate: Number(result.customerRate || result.exchangeRate || 0),
+        market_rate: Number(result.marketRate || result.baseRate || 0),
+        spread_amount: Number(result.spreadAmount || 0),
+        spread_currency: result.spreadCurrency || to,
+        provider_code: result.liquidityProvider?.providerCode || null,
+        settlement_mode: result.liquidityProvider?.settlementMode || null,
+        status: 'PENDING',
+        metadata: {
+          quoteExpiresAt: result.expiresAt,
+          liquidityProvider: result.liquidityProvider,
+          marginBps: result.marginBps,
+          riskBufferBps: result.riskBufferBps,
+          protectionBps: result.protectionBps,
+        },
+      });
+      if (reconciliationError) throw reconciliationError;
+
       res.json({
         success: true,
         data: {

@@ -441,7 +441,7 @@ export class TransactionQuoteService {
       : null;
     const challenge = args.result?.error === 'SECURITY_CHALLENGE' || args.result?.challengeRequired === true;
 
-    await sb
+    const { error: quoteUpdateError } = await sb
       .from('transaction_quotes')
       .update({
         status: success ? (settlementStatus || (transactionId ? 'SETTLED' : 'SETTLING')) : (challenge ? 'CONFIRMED' : 'FAILED'),
@@ -452,6 +452,23 @@ export class TransactionQuoteService {
       })
       .eq('id', quoteId)
       .eq('user_id', args.userId);
+    if (quoteUpdateError) throw quoteUpdateError;
+
+    const { error: reconciliationUpdateError } = await sb
+      .from('fx_reconciliation_events')
+      .update({
+        transaction_id: transactionId,
+        status: success ? (settlementStatus === 'SETTLED' ? 'MATCHED' : 'PENDING') : (challenge ? 'PENDING' : 'FAILED'),
+        metadata: {
+          settlementStatus: settlementStatus || null,
+          challengeRequired: challenge,
+          settlementResult: args.result || null,
+        },
+        updated_at: new Date().toISOString(),
+      })
+      .eq('quote_id', quoteId)
+      .eq('user_id', args.userId);
+    if (reconciliationUpdateError) throw reconciliationUpdateError;
   }
 
   private async persistQuote(args: {
