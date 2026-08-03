@@ -129,6 +129,21 @@ export const createIdempotencyMiddleware = ({
     }
   };
 
+  const clearIdempotencyCache = async (key: string) => {
+    if (redisClient) {
+      try {
+        await redisClient.del(`idempotency:${key}`);
+        return;
+      } catch (e) {
+        console.warn('[Idempotency] Redis clear failed:', e);
+      }
+    }
+
+    if (allowProcessLocalIdempotency) {
+      idempotencyCache.delete(key);
+    }
+  };
+
   return async (req: Request, res: Response, next: NextFunction) => {
     const rawKey = resolveIdempotencyHeader(req);
     if (!rawKey) return next();
@@ -159,6 +174,11 @@ export const createIdempotencyMiddleware = ({
 
     const originalJson = res.json;
     res.json = function (body: any) {
+      if (body?.error === 'SECURITY_CHALLENGE' || body?.challengeRequired === true) {
+        void clearIdempotencyCache(key);
+        return originalJson.call(this, body);
+      }
+
       void writeIdempotencyCache(key, { status: res.statusCode, body, state: 'COMPLETED' });
       return originalJson.call(this, body);
     };
