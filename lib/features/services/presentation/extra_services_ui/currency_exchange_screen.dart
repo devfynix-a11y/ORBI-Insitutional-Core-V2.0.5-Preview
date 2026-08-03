@@ -550,6 +550,8 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
   @override
   Widget build(BuildContext context) {
     final ui = OrbiTheme.uiOf(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final backgroundColor = isDark ? const Color(0xFF061316) : const Color(0xFFF4FAF8);
     final currencies = <String>{
       'TZS',
       'USD',
@@ -569,7 +571,7 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
       ..sort();
 
     return Scaffold(
-      backgroundColor: ui.sheet,
+      backgroundColor: backgroundColor,
       appBar: AppBar(
         title: Text(
           _t('Currency Exchange', 'Kubadili Sarafu'),
@@ -578,41 +580,116 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
         centerTitle: false,
         elevation: 0,
         foregroundColor: ui.textPrimary,
-        backgroundColor: ui.sheet,
+        backgroundColor: backgroundColor,
         surfaceTintColor: Colors.transparent,
         systemOverlayStyle: SystemUiOverlayStyle(
-          statusBarColor: ui.sheet,
+          statusBarColor: backgroundColor,
           statusBarIconBrightness:
               Theme.of(context).brightness == Brightness.dark ? Brightness.light : Brightness.dark,
           statusBarBrightness:
               Theme.of(context).brightness == Brightness.dark ? Brightness.dark : Brightness.light,
         ),
       ),
-      body: OrbiBackground(
-        child: OrbiResponsiveContent(
-          child: _loading
-              ? OrbiOrbitLoadingPane(
-                  label: _t('Loading exchange desk', 'Inapakia sarafu'),
-                  centerIcon: Icons.currency_exchange_rounded,
-                )
-              : RefreshIndicator(
-                  onRefresh: _loadWallets,
-                  color: ui.accent,
-                  child: ListView(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-                    children: [
-                      _heroHeader(ui),
-                      const SizedBox(height: 20),
-                      _liveQuoteBoard(ui),
-                      const SizedBox(height: 20),
-                      _exchangeTicket(ui, currencies),
-                      if (_quote != null) ...[
-                        const SizedBox(height: 20),
-                        _quoteResultCard(ui),
-                      ],
+      body: Stack(
+        children: [
+          _fxAtmosphere(ui, isDark: isDark),
+          OrbiBackground(
+            child: OrbiResponsiveContent(
+              child: _loading
+                  ? OrbiOrbitLoadingPane(
+                      label: _t('Loading exchange desk', 'Inapakia sarafu'),
+                      centerIcon: Icons.currency_exchange_rounded,
+                    )
+                  : RefreshIndicator(
+                      onRefresh: _loadWallets,
+                      color: ui.accent,
+                      child: ListView(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+                        children: [
+                          _heroHeader(ui),
+                          const SizedBox(height: 20),
+                          _liveQuoteBoard(ui),
+                          const SizedBox(height: 20),
+                          _exchangeTicket(ui, currencies),
+                          if (_quote != null) ...[
+                            const SizedBox(height: 20),
+                            _quoteResultCard(ui),
+                          ],
+                        ],
+                      ),
+                    ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _fxAtmosphere(OrbiUiTokens ui, {required bool isDark}) {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: isDark
+                  ? const [
+                      Color(0xFF061316),
+                      Color(0xFF082127),
+                      Color(0xFF071017),
+                    ]
+                  : const [
+                      Color(0xFFF4FAF8),
+                      Color(0xFFEAF8F3),
+                      Color(0xFFF8FCFF),
                     ],
-                  ),
+            ),
+          ),
+          child: Stack(
+            children: [
+              Positioned(
+                top: -120,
+                left: -80,
+                child: _fxGlow(
+                  color: ui.accent.withValues(alpha: isDark ? 0.24 : 0.18),
+                  size: 260,
                 ),
+              ),
+              Positioned(
+                top: 180,
+                right: -110,
+                child: _fxGlow(
+                  color: const Color(0xFF0EA5E9).withValues(alpha: isDark ? 0.22 : 0.15),
+                  size: 300,
+                ),
+              ),
+              Positioned(
+                bottom: -120,
+                left: 40,
+                child: _fxGlow(
+                  color: const Color(0xFF22C55E).withValues(alpha: isDark ? 0.12 : 0.10),
+                  size: 260,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _fxGlow({required Color color, required double size}) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: RadialGradient(
+          colors: [
+            color,
+            color.withValues(alpha: 0),
+          ],
         ),
       ),
     );
@@ -634,21 +711,26 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
           end: Alignment.bottomRight,
           colors: isDark
               ? const [
-                  Color(0xFF052E2B),
-                  Color(0xFF083C5A),
-                  Color(0xFF0F172A),
+                  Color(0xFF042F2E),
+                  Color(0xFF075985),
+                  Color(0xFF08111F),
                 ]
               : const [
-                  Color(0xFF0F766E),
-                  Color(0xFF0284C7),
-                  Color(0xFF0F172A),
+                  Color(0xFF087A72),
+                  Color(0xFF0EA5E9),
+                  Color(0xFF12365A),
                 ],
         ),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF0284C7).withValues(alpha: 0.22),
-            blurRadius: 32,
-            offset: const Offset(0, 16),
+            color: const Color(0xFF0284C7).withValues(alpha: isDark ? 0.28 : 0.20),
+            blurRadius: 34,
+            offset: const Offset(0, 18),
+          ),
+          BoxShadow(
+            color: const Color(0xFF0F766E).withValues(alpha: isDark ? 0.20 : 0.12),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
           ),
         ],
       ),
@@ -684,10 +766,17 @@ class _CurrencyExchangeScreenState extends State<CurrencyExchangeScreen> {
                     width: 54,
                     height: 54,
                     decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.16),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Colors.white.withValues(alpha: 0.26),
+                          Colors.white.withValues(alpha: 0.10),
+                        ],
+                      ),
                       borderRadius: BorderRadius.circular(18),
                       border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.24),
+                        color: Colors.white.withValues(alpha: 0.28),
                       ),
                     ),
                     child: const Icon(
