@@ -964,6 +964,11 @@ export class BankingEngineService {
             
             const currency = tx.currency;
             const targetCurrency = tx.metadata?.target_currency || currency;
+            const isFxConversion =
+                tx.type === 'FX_CONVERSION' ||
+                tx.transaction_type === 'FX_CONVERSION' ||
+                tx.metadata?.transaction_type === 'FX_CONVERSION' ||
+                Boolean(tx.metadata?.fx_details);
             const occurredAtUtc = tx.created_at || tx.createdAt || tx.date || new Date().toISOString();
             const refId = tx.reference_id || tx.referenceId || txId;
 
@@ -972,7 +977,7 @@ export class BankingEngineService {
             const promises = [];
             
             // Notification for Recipient
-            if (recipientId) {
+            if (recipientId && !isFxConversion) {
                  const recipientLang = recipientProfile?.language || 'en';
                  const isSw = recipientLang === 'sw';
                  const recipientTime = formatMessageTime(occurredAtUtc, recipientProfile, recipientAuth?.user, recipientLang, tx.metadata);
@@ -1051,10 +1056,16 @@ export class BankingEngineService {
                 ? "Asante kwa kuichagua ORBI, tunathamini imani yako. Timu ya Kifedha ya ORBI"
                 : "Thank you For choosing ORBI, We value your trust. The ORBI Financial Team";
             const senderIsEscrow = tx.type === 'escrow';
-            const senderSubject = senderIsEscrow
+            const senderSubject = isFxConversion
+                ? (isSenderSw ? 'Fedha Zimebadilishwa' : 'Currency Converted')
+                : senderIsEscrow
                 ? (isSenderSw ? 'Orbi PaySafe imeundwa' : 'Orbi PaySafe created')
                 : (isSenderSw ? 'Uhamisho Umekamilika' : 'Transfer Completed');
-            const senderMsg = senderIsEscrow
+            const senderMsg = isFxConversion
+                ? (isSenderSw
+                    ? `Ndugu ${senderName}, umefanikiwa kubadilisha ${currency} ${amount.toLocaleString()}/= kuwa ${targetCurrency} ${targetAmount.toLocaleString()} saa ${senderTime.display}. Kumbukumbu ${refId}. ${senderFooter}`
+                    : `Dear ${senderName}, you have successfully converted ${currency} ${amount.toLocaleString()} to ${targetCurrency} ${targetAmount.toLocaleString()} at ${senderTime.display}. Reference ${refId}. ${senderFooter}`)
+                : senderIsEscrow
                 ? (isSenderSw
                     ? `Ndugu ${senderName}, umeunda Orbi PaySafe ya ${currency} ${amount.toLocaleString()}/= kwa ${recipientName}. Fedha ziko salama hadi uthibitishe release. Kumbukumbu ${refId}. ${senderFooter}`
                     : `Dear ${senderName}, you created an Orbi PaySafe of ${currency} ${amount.toLocaleString()}/= for ${recipientName}. Money is safe until you confirm release. Reference ${refId}. ${senderFooter}`)
@@ -1066,15 +1077,18 @@ export class BankingEngineService {
                 push: true,
                 sms: true,
                 email: true,
-                template: senderIsEscrow ? 'Escrow_Created' : 'Transfer_Sent',
+                template: isFxConversion ? 'Transactional_Message' : senderIsEscrow ? 'Escrow_Created' : 'Transfer_Sent',
                 variables: {
                     senderName,
                     amount: amount.toLocaleString(),
                     currency,
+                    targetAmount: targetAmount.toLocaleString(),
+                    targetCurrency,
                     recipientName,
                     timestamp: senderTime.display,
                     occurred_at_utc: senderTime.canonicalUtc,
                     display_timezone: senderTime.timezone,
+                    body: senderMsg,
                     refId
                 }
             }));
